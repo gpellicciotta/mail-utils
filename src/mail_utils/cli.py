@@ -3,6 +3,7 @@ import logging
 import platform
 import sqlite3
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from importlib.metadata import version as _package_version
@@ -52,13 +53,26 @@ logger = logging.getLogger("mail_utils")
 PROGRESS_LOG_INTERVAL = 50
 
 
+class _UTCFormatter(logging.Formatter):
+    """Formats log timestamps in UTC rather than the machine's local time zone."""
+
+    converter = time.gmtime
+
+
+_LOG_FORMAT = "%(asctime)s UTC [%(levelname)s] %(message)s"
+
+
 def _setup_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8"), logging.StreamHandler()],
-    )
+
+    file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+    file_handler.setFormatter(_UTCFormatter(_LOG_FORMAT))
+
+    # Same format on the console, but without milliseconds (default datefmt includes them).
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(_UTCFormatter(_LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
+
+    logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler])
 
 
 def _full_sync(service, conn) -> None:

@@ -5,6 +5,10 @@ if (-not (Test-Path .git)) {
     git init
 }
 
+# Ensure the (gitignored) data folder exists - credentials.json/token.json/*.db/logs/ all live under it.
+# Doesn't touch anything already there.
+New-Item -ItemType Directory -Force data | Out-Null
+
 # Create and activate virtual environment
 python -m venv .venv
 .venv\Scripts\Activate.ps1

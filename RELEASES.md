@@ -1,5 +1,21 @@
 # Release Notes
 
+## v0.19.0
+Released on 2026-08-19
+
+- All secrets/generated data (`credentials.json`, `token.json`, the SQLite database) now live under a single
+  gitignored `data/` folder by default (`data/credentials.json`, `data/token.json`, `data/gmail.db`), driven by
+  a new `DATA_DIR` in `config.py`. `logs/` stays a separate top-level gitignored folder. The default database
+  filename also changed from `gmail_index.db` to `gmail.db`, and the default log filename from
+  `mail_utils.log` to `mail-utils.log` (lowercase-with-dashes, matching the console script name).
+  **Existing setups**: move `credentials.json`, `token.json`, and your `.db` file(s) into `data/` (creating it
+  if needed), renaming the database to `data/gmail.db` (or keep any custom name and pass it via `--db`); any
+  existing `logs/mail_utils.log` can be renamed to `logs/mail-utils.log` or just left to age out. `setup.ps1`
+  now creates an empty `data/` folder on a fresh clone.
+- Logging now uses UTC timestamps (previously local time, unlabeled) on both the console and
+  `logs/mail-utils.log`; the console formatting also drops milliseconds (the file log keeps them for precise
+  diagnostics).
+
 ## v0.18.0
 Released on 2026-08-19
 

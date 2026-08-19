@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `mail-utils` polls a single personal Gmail account on a schedule and indexes new messages into a local SQLite
-database (`gmail_index.db`), using the Gmail API and OAuth 2.0. It's a personal, single-user tool — not a
+database (`data/gmail.db`), using the Gmail API and OAuth 2.0. It's a personal, single-user tool — not a
 package/library, no server, no multi-tenant concerns.
 
 **Read-only is a hard design invariant, not just a default:** the app only ever requests the `gmail.readonly`
@@ -33,7 +33,7 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 - `import`/`stats`/`export` accept `--filter "..."` (see README's "Filtering" — `import --filter` is passed
   straight through to Gmail's own search; `stats`/`export --filter` are evaluated locally by
   `mail_utils/filters.py`, a deliberately smaller subset) and `--db <path>` to point at a database other
-  than the default `gmail_index.db`.
+  than the default `data/gmail.db`.
 - Run the test suite: `.venv\Scripts\python -m pytest`; lint/format: `.venv\Scripts\ruff check .` /
   `.venv\Scripts\ruff format .` (line-length 132, `[tool.ruff]` in `pyproject.toml`; CI runs both plus
   `pytest` plus `python -m build`).
@@ -45,10 +45,12 @@ Dependencies are declared once, in `pyproject.toml` — there is no separate `re
 Seven modules under `src/mail_utils/` (src layout — see README's "Project layout" for the rationale),
 each with one job:
 
-- **`config.py`** — every path (`credentials.json`, `token.json`, `gmail_index.db`, `logs/mail_utils.log`) and
-  the OAuth `SCOPES` list. Single source of truth for both; nothing else in the codebase hardcodes a path.
-- **`auth.py`** — `get_credentials()`: loads/refreshes `token.json` silently when possible, otherwise runs the
-  one-time interactive `InstalledAppFlow` browser consent using `credentials.json`.
+- **`config.py`** — `DATA_DIR` (`BASE_DIR / "data"`, gitignored in full) holding the secrets/database
+  (`data/credentials.json`, `data/token.json`, `data/gmail.db`), plus a separate top-level, also gitignored,
+  `LOG_DIR` (`BASE_DIR / "logs"`, `logs/mail-utils.log`) and the OAuth `SCOPES` list. Single source of truth
+  for both; nothing else in the codebase hardcodes a path.
+- **`auth.py`** — `get_credentials()`: loads/refreshes `data/token.json` silently when possible, otherwise
+  runs the one-time interactive `InstalledAppFlow` browser consent using `data/credentials.json`.
 - **`gmail_client.py`** — thin wrapper over the Gmail API: paginated full-mailbox listing
   (`list_all_message_ids`), paginated History API diffing (`list_changed_message_ids`, raises
   `HistoryExpiredError` on a 404 so the caller can fall back to a full resync), label listing
@@ -106,7 +108,7 @@ each with one job:
   `build_parser()` before registering anything, so a typo'd flag fails immediately rather than at the next
   scheduled run), and `help` (prints usage, prefixed with a short one-line description of the tool set via
   `argparse`'s `description=`; so does running with no subcommand). `import`/`stats`/`export`
-  all take `--db <path>` (via `_resolve_db_path`) to override the default `gmail_index.db`. `stats --filter`/
+  all take `--db <path>` (via `_resolve_db_path`) to override the default `data/gmail.db`. `stats --filter`/
   `export --filter` compute a matching-id set once via `_compute_matching_ids` and either build a
   `filtered_ids` temp table (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just
   filter the already-fetched row list in Python (`export`, simpler since it's not doing SQL aggregation
@@ -120,21 +122,23 @@ are never captured at all) lives in `README.md`'s "Database contents" section. T
 schema reference, not this file — update it whenever `parse_message` or the schema in `db.py` changes.
 
 Schema changes to `messages` (like adding `cc`/`bcc`) need a migration, not just an edit to `SCHEMA` in `db.py` —
-`CREATE TABLE IF NOT EXISTS` only applies to a database that doesn't exist yet, so an existing `gmail_index.db`
-needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for the pattern to extend.
+`CREATE TABLE IF NOT EXISTS` only applies to a database that doesn't exist yet, so an existing
+`data/gmail.db` needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for the
+pattern to extend.
 
 `config.py`'s `BASE_DIR = Path(__file__).resolve().parent.parent.parent` is relative to `config.py`'s own
-location (`src/mail_utils/config.py` → up three levels → project root). Any future move of `config.py`
-itself, or another change to the directory depth between it and the project root, needs that `.parent` chain
-recounted to match — it broke silently in exactly this way during the `v0.10.0` src-layout migration (fixed in
-`v0.13.0`), because the test suite always monkeypatches `DB_PATH` directly rather than exercising the real
-computation, so nothing caught it until a real run would have. `tests/test_config.py` now guards against a
-repeat.
+location (`src/mail_utils/config.py` → up three levels → project root); `DATA_DIR = BASE_DIR / "data"` and
+every other path in `config.py` are derived from it. Any future move of `config.py` itself, or another change
+to the directory depth between it and the project root, needs that `.parent` chain recounted to match — it
+broke silently in exactly this way during the `v0.10.0` src-layout migration (fixed in `v0.13.0`), because the
+test suite always monkeypatches `DB_PATH` directly rather than exercising the real computation, so nothing
+caught it until a real run would have. `tests/test_config.py` now guards against a repeat.
 
 ## Conventions
 
-- `credentials.json`, `token.json`, `gmail_index.db`, and `logs/` are gitignored secrets/generated data — never
-  commit them, and never add code that logs their contents at INFO level or above.
+- Everything under `data/` (`credentials.json`, `token.json`, `gmail.db`, `logs/`) is gitignored in full
+  as secrets/generated data — never commit any of it, and never add code that logs its contents at INFO level
+  or above.
 - Keep `README.md`'s "Setup", "Project layout", and "Database contents" sections in sync with the code — they're
   written to be detailed enough that a first-time setup doesn't need external guidance (see the Google Cloud
   Console walkthrough in "Setup" step 1, which was expanded specifically because the console's own UI/naming
@@ -160,5 +164,5 @@ repeat.
   (design notes, detailed plans, investigation write-ups) belongs under `docs/` instead.
 - Any change that alters what's stored (new/changed/removed column, changed parsing behavior) must update both
   `README.md`'s "Database contents" tables and, if it's a behavior change to already-synced data, note whether
-  existing rows in someone's `gmail_index.db` need a resync to pick it up (they generally won't be
+  existing rows in someone's `data/gmail.db` need a resync to pick it up (they generally won't be
   auto-migrated — there's no schema migration mechanism here, only `CREATE TABLE IF NOT EXISTS`).

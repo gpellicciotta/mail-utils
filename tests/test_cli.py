@@ -1,4 +1,5 @@
 import argparse
+import logging
 from importlib.metadata import version as package_version
 
 import pytest
@@ -58,6 +59,28 @@ def test_main_handles_version_flag(monkeypatch, capsys):
     cli.main()
     out = capsys.readouterr().out
     assert out.startswith(f"mail-utils {package_version('mail-utils')}")
+
+
+def _log_record(created: float) -> logging.LogRecord:
+    record = logging.LogRecord("mail_utils", logging.INFO, "test.py", 1, "hello world", None, None)
+    record.created = created
+    record.msecs = (created - int(created)) * 1000
+    return record
+
+
+def test_utc_formatter_uses_utc_time():
+    record = _log_record(1735689600.5)  # 2025-01-01T00:00:00.5Z
+    formatted = cli._UTCFormatter(cli._LOG_FORMAT).format(record)
+    assert "2025-01-01 00:00:00" in formatted
+    assert "UTC" in formatted
+
+
+def test_console_formatter_omits_milliseconds():
+    record = _log_record(1735689600.5)
+    file_line = cli._UTCFormatter(cli._LOG_FORMAT).format(record)
+    console_line = cli._UTCFormatter(cli._LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S").format(record)
+    assert "," in file_line
+    assert "," not in console_line
 
 
 def test_import_subcommand_routes_to_run_import():

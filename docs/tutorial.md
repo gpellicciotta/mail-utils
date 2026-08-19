@@ -1,7 +1,7 @@
 # Tutorial
 
 A short walkthrough for a first-time user, after "Setup" in the top-level README has already been completed
-(venv created, `credentials.json` in place, dependencies installed).
+(venv created, `data/credentials.json` in place, dependencies installed).
 
 ## 1. Sanity-check the install
 
@@ -20,8 +20,8 @@ A short walkthrough for a first-time user, after "Setup" in the top-level README
 ```
 
 The first run opens a browser for the one-time Google consent screen, then does a full mailbox listing into
-`gmail_index.db`. Every run after that is incremental (Gmail's History API), with no browser prompt. Progress
-is logged to `logs/mail_utils.log`.
+`data/gmail.db`. Every run after that is incremental (Gmail's History API), with no browser prompt. Progress
+is logged to `logs/mail-utils.log`.
 
 ## 3. Look at what got indexed
 
@@ -29,7 +29,7 @@ is logged to `logs/mail_utils.log`.
 .venv\Scripts\mail-utils stats
 ```
 
-Offline (no Gmail API calls) — reads `gmail_index.db` directly. Prints message/thread counts, top labels, and
+Offline (no Gmail API calls) — reads `data/gmail.db` directly. Prints message/thread counts, top labels, and
 top senders/recipients. See README's "Database contents" for exactly what each column holds.
 
 ## 4. Try the local filter syntax

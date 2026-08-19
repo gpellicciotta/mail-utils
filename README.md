@@ -13,16 +13,16 @@ environment, so the setup commands below are PowerShell, but the underlying comm
 ## How it works
 
 - **Auth**: OAuth 2.0 "Installed App" flow. The browser consent screen is needed **once**. After that, a
-  refresh token cached in `token.json` is used to get new access tokens silently — scheduled/unattended runs
-  need no browser.
+  refresh token cached in `data/token.json` is used to get new access tokens silently — scheduled/unattended
+  runs need no browser.
 - **Sync**: the first run does a full mailbox listing and records the mailbox's current `historyId`. Every
   later run uses the Gmail History API (`users().history().list`) to fetch only messages added since the last
   run, instead of re-scanning everything. If the stored `historyId` becomes too old for Gmail to diff from,
-  the script automatically falls back to a full resync. Progress is logged to `logs/mail_utils.log` every 50
-  messages; during a full sync this includes a running `%` against the mailbox's reported message total (an
+  the script automatically falls back to a full resync. Progress is logged to `logs/mail-utils.log` every
+  50 messages; during a full sync this includes a running `%` against the mailbox's reported message total (an
   upper bound, since that total includes Spam/Trash which the sync itself skips, so the percentage may cap out
   just below 100%).
-- **Storage**: `gmail_index.db` (SQLite) — see "Database contents" below for the full schema. Upserts are
+- **Storage**: `data/gmail.db` (SQLite) — see "Database contents" below for the full schema. Upserts are
   keyed on Gmail's message id, so reruns are safe.
 
 ## Setup
@@ -48,8 +48,8 @@ environment, so the setup commands below are PowerShell, but the underlying comm
 4. Create credentials: **Clients** -> **Create Client** -> Application type **Desktop app** -> Create.
    - Try to download the JSON (a download icon on the client's row, or a **Download JSON** button on its
      detail page). If you can't find a download button, build the file yourself: note the **Client ID** and
-     **Client secret** shown in the console, then create `credentials.json` in this project's root folder
-     with:
+     **Client secret** shown in the console, then create `data/credentials.json` in this project (create the
+     `data/` folder first if it doesn't exist yet) with:
      ```json
      {
        "installed": {
@@ -84,8 +84,9 @@ This installs the project (from `pyproject.toml`) plus its `dev` extra (`pytest`
 don't need to run tests, `.venv\Scripts\pip install -e .` is enough.
 
 Alternatively, `. .\setup.ps1` does this step (venv, editable install, lint, tests, build) in one shot — useful
-after a fresh clone or when re-verifying the environment; it doesn't touch `credentials.json`/`token.json`/
-`gmail_index.db`/`logs/`, so it's safe to run without Gmail access configured yet.
+after a fresh clone or when re-verifying the environment; it creates an empty `data/` folder if missing but
+doesn't touch anything already inside it (`credentials.json`/`token.json`/`*.db`/`logs/`), so it's safe to run
+without Gmail access configured yet.
 
 ### 3. First run (interactive, does the one-time browser consent)
 
@@ -93,13 +94,13 @@ after a fresh clone or when re-verifying the environment; it doesn't touch `cred
 .venv\Scripts\mail-utils import
 ```
 
-A browser window opens for the Google consent screen. After approving, `token.json` is created and the script
-does a full initial sync into `gmail_index.db`. Check `logs/mail_utils.log` for a summary. Run it again to
-confirm it now does an incremental sync with no browser prompt.
+A browser window opens for the Google consent screen. After approving, `data/token.json` is created and the
+script does a full initial sync into `data/gmail.db`. Check `logs/mail-utils.log` for a summary.
+Run it again to confirm it now does an incremental sync with no browser prompt.
 
 ### 4. Schedule it
 
-Once step 3 works and `token.json` exists:
+Once step 3 works and `data/token.json` exists:
 
 ```powershell
 .venv\Scripts\mail-utils schedule -- import
@@ -132,10 +133,12 @@ mail-utils/
   CLAUDE.md
   RELEASES.md               # Version and release history
   TODO.md                   # Prioritized backlog    
-  credentials.json          # Provided - gitignored - credentials to access a Gmail account
-  token.json                # Generated on first run - gitignored - token to access Gmail account
-  gmail_index.db            # Generated - gitignored - Local SQlite database with imported mails
-  logs/                     # Generated - gitignored - Processing logs
+  data/                     # Gitignored - credentials/token/database (see below)
+    credentials.json        # Provided - credentials to access a Gmail account
+    token.json               # Generated on first run - token to access Gmail account
+    gmail.db                 # Generated - Local SQLite database with imported mails
+  logs/                     # Gitignored - Generated - Processing logs
+    mail-utils.log
 ```
 
 `src/` layout: the package lives under `src/mail_utils/`, not directly at the repo root. This is standard
@@ -143,11 +146,13 @@ modern Python packaging practice — it forces `pip install -e .` (and therefore
 actually-installed package rather than accidentally importing whatever's in the current working directory,
 which a flat root-level package layout can silently do instead.
 
-- **`config.py`**: every path used by the app (`credentials.json`, `token.json`, `gmail_index.db`,
-  `logs/mail_utils.log`), all resolved relative to the project root, plus `SCOPES` (just `gmail.readonly`).
-- **`auth.py`**: `get_credentials()` — loads `token.json` if present and returns it if still valid; refreshes
-  it silently via the stored refresh token if expired; otherwise runs the one-time interactive
-  `InstalledAppFlow` browser consent (using `credentials.json`) and writes the resulting `token.json`.
+- **`config.py`**: every path used by the app — `data/credentials.json`, `data/token.json`, `data/gmail.db`
+  (all under a single gitignored `data/` folder) and `logs/mail-utils.log` (a separate top-level, also
+  gitignored, `logs/` folder) — resolved relative to the project root, plus `SCOPES` (just `gmail.readonly`).
+- **`auth.py`**: `get_credentials()` — loads `data/token.json` if present and returns it if still valid;
+  refreshes it silently via the stored refresh token if expired; otherwise runs the one-time interactive
+  `InstalledAppFlow` browser consent (using `data/credentials.json`) and writes the resulting
+  `data/token.json`.
 - **`gmail_client.py`**: thin wrapper around the Gmail API — `list_all_message_ids` (paginated full-mailbox
   listing, used for the initial sync), `list_changed_message_ids` (paginated `history.list` diffing, raises
   `HistoryExpiredError` on a 404 so the caller can fall back to a full resync), `fetch_message` (fetches one
@@ -166,9 +171,9 @@ which a flat root-level package layout can silently do instead.
   `python -m mail_utils.cli <command>`; see `pyproject.toml`'s `[project.scripts]`). Subcommands:
   - `import` — sets up logging, decides full vs. incremental sync based on whether `sync_state` already has a
     `last_history_id`, and drives the fetch/parse/upsert loop. With `--filter`, see "Filtering" below.
-  - `stats` — reads `gmail_index.db` directly (no Gmail API calls, no credentials needed) and prints summary
-    stats.
-  - `export <output_dir>` — dumps every message as a `.md` file (offline, reads only `gmail_index.db`), one
+  - `stats` — reads `data/gmail.db` directly (no Gmail API calls, no credentials needed) and prints
+    summary stats.
+  - `export <output_dir>` — dumps every message as a `.md` file (offline, reads only `data/gmail.db`), one
     file per message under `<output_dir>/<YYYY>/<MM>/<message_id>.md` (bucketed by `internal_date_ms`;
     messages without one land under `<output_dir>/unknown/`). Each file is a YAML frontmatter block (id,
     thread_id, from/to/cc/bcc, subject, date, internal_date, labels resolved to names, attachments as
@@ -179,8 +184,8 @@ which a flat root-level package layout can silently do instead.
   - `help` (or no subcommand at all) — prints usage.
 
   `import`, `stats`, and `export` all accept `--db <path>` to point at a database other than the default
-  `gmail_index.db` — e.g. to maintain several independent databases, one per filter (see "Scheduling" below
-  for the multi-job pattern this enables).
+  `data/gmail.db` — e.g. to maintain several independent databases, one per filter (see "Scheduling"
+  below for the multi-job pattern this enables).
 
   `mail-utils --version` prints the installed version (read live from package metadata,
   `importlib.metadata.version("mail-utils")`, rather than a separately-maintained string, so it's always
@@ -267,7 +272,7 @@ them. CI (`.github/workflows/ci.yml`) runs all three, plus `python -m build`, on
 
 ## Database contents
 
-`gmail_index.db` has five tables. Several columns/tables were added after the first version and are
+`data/gmail.db` has five tables. Several columns/tables were added after the first version and are
 populated **only going forward** — existing rows synced before that code shipped stay `NULL`/absent for the
 new data until they're re-synced (a full resync, or a targeted re-fetch of specific messages); this caveat
 applies to anything below beyond the original `messages` columns (id, thread_id, sender, recipient, subject,
@@ -340,9 +345,9 @@ captures metadata (never the bytes), there's no reason to treat them differently
 
 ## Notes
 
-- `credentials.json` and `token.json` are secrets and are gitignored. Never commit them.
+- `data/` (credentials, token, database, logs) is gitignored in full. Never commit anything under it.
 - Gmail API personal-use quota (1B units/day) is far more than a 30-minute polling interval will ever use.
 - To inspect stored messages with the separate `sqlite3.exe` CLI:
-  `sqlite3 gmail_index.db "select date, sender, subject from messages order by fetched_at desc limit 20;"`.
+  `sqlite3 data/gmail.db "select date, sender, subject from messages order by fetched_at desc limit 20;"`.
   Without that installed, `mail-utils stats` covers the common cases using only Python's built-in `sqlite3`
   module.
