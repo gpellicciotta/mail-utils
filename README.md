@@ -134,13 +134,16 @@ Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false
 
 ```
 gmail-ingest/
-  gmail_ingest/
-    auth.py             # OAuth credential loading/refresh
-    gmail_client.py     # Gmail API calls + message parsing
-    db.py               # SQLite schema and upsert helpers
-    cli.py              # Entry point: update/stats/help subcommands
-    config.py           # Paths and scopes
+  src/
+    gmail_ingest/
+      auth.py             # OAuth credential loading/refresh
+      gmail_client.py     # Gmail API calls + message parsing
+      db.py               # SQLite schema and upsert helpers
+      filters.py          # Local --filter interpreter for stats/export
+      cli.py               # Entry point: import/stats/export/help subcommands
+      config.py            # Paths and scopes
   tests/                 # pytest suite (pure-function tests, no live API)
+  .github/workflows/ci.yml  # pytest + build, on push/PR
   pyproject.toml         # Project metadata and dependencies
   register_task.ps1     # One-time Task Scheduler registration
   RELEASES.md            # Version history
@@ -151,6 +154,11 @@ gmail-ingest/
   gmail_index.db        # generated - gitignored
   logs/                 # generated - gitignored
 ```
+
+`src/` layout: the package lives under `src/gmail_ingest/`, not directly at the repo root. This is
+standard modern Python packaging practice — it forces `pip install -e .` (and therefore tests) to
+exercise the actually-installed package rather than accidentally importing whatever's in the current
+working directory, which a flat root-level package layout can silently do instead.
 
 - **`config.py`**: defines every path used by the app (`credentials.json`,
   `token.json`, `gmail_index.db`, `logs/gmail_ingest.log`), all resolved

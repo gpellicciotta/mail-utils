@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gmail-ingest"
-version = "0.9.0"
+version = "0.10.0"
 description = "Polls a personal Gmail account on a schedule and indexes new messages into a local SQLite database."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,3 @@ dev = ["pytest>=8.0.0"]
 
 [project.scripts]
 gmail-ingest = "gmail_ingest.cli:main"
-
-[tool.setuptools.packages.find]
-include = ["gmail_ingest*"]

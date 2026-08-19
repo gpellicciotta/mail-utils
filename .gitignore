@@ -5,6 +5,7 @@ venv/
 *.egg-info/
 build/
 dist/
+.claude/
 
 # Secrets - never commit these
 credentials.json

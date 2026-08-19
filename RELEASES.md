@@ -1,5 +1,16 @@
 # Release Notes
 
+## v0.10.0
+Released on 2026-08-19
+
+Housekeeping, no behavior change: moved the package from a flat
+`gmail_ingest/` at the repo root to `src/gmail_ingest/` (src layout),
+matching `python-template-project`'s convention. `pyproject.toml` no
+longer needs an explicit `[tool.setuptools.packages.find]` — setuptools
+auto-detects the src layout, same as the template. Also added the
+template's CI "build" step (`python -m build`, after tests) to
+`.github/workflows/ci.yml`, verified locally.
+
 ## v0.9.0
 Released on 2026-08-19
 

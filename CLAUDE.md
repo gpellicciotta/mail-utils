@@ -36,7 +36,8 @@ Dependencies are declared once, in `pyproject.toml` — there is no separate `re
 
 ## Architecture
 
-Six modules under `gmail_ingest/`, each with one job:
+Six modules under `src/gmail_ingest/` (src layout — see README's "Project layout" for the rationale),
+each with one job:
 
 - **`config.py`** — every path (`credentials.json`, `token.json`, `gmail_index.db`, `logs/gmail_ingest.log`) and
   the OAuth `SCOPES` list. Single source of truth for both; nothing else in the codebase hardcodes a path.
