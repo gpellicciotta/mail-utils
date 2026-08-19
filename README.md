@@ -80,8 +80,12 @@ python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 ```
 
-This installs the project (from `pyproject.toml`) plus its `dev` extra (`pytest`, `ruff`). If you don't need
-to run tests, `.venv\Scripts\pip install -e .` is enough.
+This installs the project (from `pyproject.toml`) plus its `dev` extra (`pytest`, `ruff`, `build`). If you
+don't need to run tests, `.venv\Scripts\pip install -e .` is enough.
+
+Alternatively, `. .\setup.ps1` does this step (venv, editable install, lint, tests, build) in one shot — useful
+after a fresh clone or when re-verifying the environment; it doesn't touch `credentials.json`/`token.json`/
+`gmail_index.db`/`logs/`, so it's safe to run without Gmail access configured yet.
 
 ### 3. First run (interactive, does the one-time browser consent)
 
@@ -111,23 +115,27 @@ multiple named jobs, and removing one.
 mail-utils/
   src/
     mail_utils/
-      auth.py           # OAuth credential loading/refresh
-      gmail_client.py   # Gmail API calls + message parsing
-      db.py             # SQLite schema and upsert helpers
-      filters.py        # Local --filter interpreter for stats/export
-      scheduling.py     # Windows Task Scheduler / cron job registration
-      cli.py             # Entry point: import/stats/export/schedule/unschedule/help
-      config.py          # Paths and scopes
-  tests/                     # pytest suite (pure-function tests, no live API)
+      auth.py               # OAuth credential loading/refresh
+      gmail_client.py       # Gmail API calls + message parsing
+      db.py                 # SQLite schema and upsert helpers
+      filters.py            # Local --filter interpreter for stats/export
+      scheduling.py         # Windows Task Scheduler / cron job registration
+      cli.py                # Entry point: import/stats/export/schedule/unschedule/help
+      config.py             # Paths and scopes
+  tests/                    # pytest suite (pure-function tests, no live API)
+  docs/                     # Design notes, detailed plans - created as needed
+  LICENSE
+  setup.ps1                 # One-shot bootstrap: venv, editable install, lint, tests, build
   .github/workflows/ci.yml  # ruff + pytest + build, on push/PR
-  pyproject.toml         # Project metadata, dependencies, ruff config
-  RELEASES.md            # Version history
-  TODO.md                 # Prioritized backlog
+  .editorconfig             # Indent/charset/line-length, mirrors the ruff config for non-Python files/editors
+  pyproject.toml            # Project metadata, dependencies, ruff config 
   CLAUDE.md
-  credentials.json      # you provide this - gitignored
-  token.json            # generated on first run - gitignored
-  gmail_index.db        # generated - gitignored
-  logs/                  # generated - gitignored
+  RELEASES.md               # Version and release history
+  TODO.md                   # Prioritized backlog    
+  credentials.json          # Provided - gitignored - credentials to access a Gmail account
+  token.json                # Generated on first run - gitignored - token to access Gmail account
+  gmail_index.db            # Generated - gitignored - Local SQlite database with imported mails
+  logs/                     # Generated - gitignored - Processing logs
 ```
 
 `src/` layout: the package lives under `src/mail_utils/`, not directly at the repo root. This is standard

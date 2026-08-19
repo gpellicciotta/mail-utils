@@ -1,5 +1,23 @@
 # Release Notes
 
+## v0.17.0
+Released on 2026-08-19
+
+Aligned with `python-project-template` v1.0.0:
+
+- Added `build` to the `dev` extra — it was missing, so `python -m build` failed with "No module named build"
+  outside of CI (which papered over it with a separate `pip install build`). CI's build step now just runs
+  `python -m build`.
+- Added `.editorconfig` (4-space indent, spaces only, UTF-8, 132-char lines) to enforce at the editor level
+  what `ruff`'s `line-length` already enforces for linting.
+- Added `docs/` (with a short explainer) — `CLAUDE.md`'s Conventions section already referenced it, but the
+  folder didn't exist.
+- Added `.pytest_cache/` and `.ruff_cache/` to `.gitignore`.
+- Added `setup.ps1`, a one-shot bootstrap (venv, editable install, lint, tests, build) that doesn't touch
+  `credentials.json`/`token.json`/`gmail_index.db`/`logs/`.
+- Removed a stale note in `CLAUDE.md` claiming the template hand-maintains a duplicate `__version__` — it
+  doesn't, as of the template's v1.0.0.
+
 ## v0.16.0
 Released on 2026-08-19
 
@@ -11,10 +29,6 @@ comment (`# gmail-ingest:<job>` → `# mail-utils:<job>`). Anything invoking the
 script name needs to switch; any already-registered `GmailIngest-*` scheduled task or `# gmail-ingest:`
 crontab line needs re-registering under the new name (`mail-utils schedule ...`) after upgrading — nothing
 migrates those automatically.
-
-**Not renamed, deliberately:** the default database filename `gmail_index.db` (describes its content — a
-Gmail index — not the tool's name) and the `gmail.readonly` OAuth scope. This is a project/branding rename,
-not a change of what the tool does — it's still Gmail-specific.
 
 Also pushed to a new GitHub repository: https://github.com/gpellicciotta/mail-utils.
 

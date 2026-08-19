@@ -6,6 +6,8 @@ venv/
 build/
 dist/
 .claude/
+.pytest_cache/
+.ruff_cache/
 
 # Secrets - never commit these
 credentials.json

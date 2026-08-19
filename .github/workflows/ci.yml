@@ -16,4 +16,4 @@ jobs:
       - name: Run tests
         run: pytest -q
       - name: Build
-        run: pip install build && python -m build
+        run: python -m build

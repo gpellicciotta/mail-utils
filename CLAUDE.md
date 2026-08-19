@@ -141,9 +141,7 @@ repeat.
   heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention. This is the
   *only* place the version is written — `mail-utils --version` reads it back dynamically via
   `importlib.metadata.version("mail-utils")` (see `cli.py`'s `build_parser`), not a second hardcoded
-  string, so there's nothing else to keep in sync. (`python-template-project` instead hand-maintains a
-  duplicate `__version__` in `__init__.py` — deliberately not copied here, since a second copy is exactly
-  the kind of thing that drifts.) This does mean the installed package metadata must actually be current for
+  string, so there's nothing else to keep in sync. This does mean the installed package metadata must actually be current for
   `--version` to be right — after bumping the version, re-run `pip install -e .` (or reload it) before
   trusting `--version`'s output.
 - Every backward-incompatible change bumps the version accordingly and gets a clearly-labeled breaking-change
