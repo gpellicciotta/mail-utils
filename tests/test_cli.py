@@ -5,7 +5,15 @@ import pytest
 import yaml
 
 import gmail_ingest.cli as cli
-from gmail_ingest.cli import _run_export, _run_import, _run_stats, build_parser
+from gmail_ingest.cli import (
+    _run_export,
+    _run_import,
+    _run_schedule,
+    _run_stats,
+    _run_unschedule,
+    _validate_inner_command,
+    build_parser,
+)
 from gmail_ingest.db import (
     init_db,
     upsert_addresses,
@@ -46,6 +54,68 @@ def test_export_subcommand_routes_to_run_export():
     assert args.command == "export"
     assert args.output_dir == "some_dir"
     assert args.func is _run_export
+
+
+def test_import_stats_export_accept_db_override():
+    assert build_parser().parse_args(["import", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["stats", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["export", "out", "--db", "work.db"]).db == "work.db"
+
+
+def test_schedule_subcommand_routes_and_captures_inner_command():
+    args = build_parser().parse_args(
+        ["schedule", "--job-name", "work", "--interval-minutes", "15", "--", "import", "--filter", "label:Work"]
+    )
+    assert args.command == "schedule"
+    assert args.job_name == "work"
+    assert args.interval_minutes == 15
+    assert args.func is _run_schedule
+    assert args.inner_command == ["--", "import", "--filter", "label:Work"]
+
+
+def test_schedule_defaults():
+    args = build_parser().parse_args(["schedule", "--", "import"])
+    assert args.job_name == "default"
+    assert args.interval_minutes == 30
+    assert args.list is False
+
+
+def test_unschedule_subcommand_routes_to_run_unschedule():
+    args = build_parser().parse_args(["unschedule", "--job-name", "work"])
+    assert args.command == "unschedule"
+    assert args.job_name == "work"
+    assert args.func is _run_unschedule
+
+
+def test_validate_inner_command_rejects_empty():
+    with pytest.raises(cli.ScheduleError):
+        _validate_inner_command([])
+
+
+def test_validate_inner_command_rejects_disallowed_subcommand():
+    with pytest.raises(cli.ScheduleError):
+        _validate_inner_command(["stats"])
+    with pytest.raises(cli.ScheduleError):
+        _validate_inner_command(["schedule", "--", "import"])
+
+
+def test_validate_inner_command_rejects_bad_flags():
+    with pytest.raises(cli.ScheduleError):
+        _validate_inner_command(["import", "--not-a-real-flag"])
+
+
+def test_validate_inner_command_accepts_valid_import_and_export():
+    _validate_inner_command(["import", "--filter", "label:Work"])
+    _validate_inner_command(["export", "/some/dir", "--filter", "has:attachment"])
+
+
+def test_run_schedule_rejects_invalid_command_without_registering_anything(capsys, monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "schedule_windows", lambda *a, **k: called.append("windows"))
+    monkeypatch.setattr(cli, "schedule_cron", lambda *a, **k: called.append("cron"))
+    _run_schedule(argparse.Namespace(list=False, inner_command=["--", "stats"], job_name="x", interval_minutes=30))
+    assert "Error:" in capsys.readouterr().out
+    assert called == []
 
 
 def test_help_subcommand_has_no_func():

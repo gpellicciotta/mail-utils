@@ -1,6 +1,8 @@
 import argparse
 import logging
+import platform
 import sqlite3
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from importlib.metadata import version as _package_version
@@ -9,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from .auth import get_credentials
-from .config import DB_PATH, LOG_DIR, LOG_PATH
+from .config import BASE_DIR, DB_PATH, LOG_DIR, LOG_PATH
 from .db import (
     get_sync_state,
     init_db,
@@ -32,6 +34,17 @@ from .gmail_client import (
     parse_addresses,
     parse_attachments,
     parse_message,
+)
+from .scheduling import (
+    ALLOWED_COMMANDS,
+    ScheduleError,
+    list_cron_jobs,
+    list_windows_jobs,
+    schedule_cron,
+    schedule_windows,
+    unschedule_cron,
+    unschedule_windows,
+    windows_task_name,
 )
 
 logger = logging.getLogger("gmail_ingest")
@@ -119,13 +132,19 @@ def _filtered_import(service, conn, query: str) -> None:
     logger.info("Filtered import complete: %d messages indexed", count)
 
 
+def _resolve_db_path(args: argparse.Namespace) -> Path:
+    db = getattr(args, "db", None)
+    return Path(db) if db else DB_PATH
+
+
 def _run_import(args: argparse.Namespace) -> None:
     _setup_logging()
     logger.info("Starting gmail_ingest run")
 
+    db_path = _resolve_db_path(args)
     creds = get_credentials()
     service = build_gmail_service(creds)
-    conn = init_db(DB_PATH)
+    conn = init_db(db_path)
 
     upsert_labels(conn, list_labels(service))
 
@@ -208,11 +227,12 @@ def _create_filtered_ids_table(conn: sqlite3.Connection, matching_ids: set) -> N
 
 
 def _run_stats(args: argparse.Namespace) -> None:
-    if not DB_PATH.exists():
-        print(f"No database found at {DB_PATH}")
+    db_path = _resolve_db_path(args)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
         return
 
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
 
     filter_str = getattr(args, "filter", None)
@@ -242,7 +262,7 @@ def _run_stats(args: argparse.Namespace) -> None:
     last_history_id = row[0] if row else None
 
     fields = [
-        ("Database", DB_PATH),
+        ("Database", db_path),
         ("Total messages", total),
         ("Distinct threads", threads),
         ("First indexed", first_fetched),
@@ -328,12 +348,13 @@ EXPORT_PROGRESS_INTERVAL = 500
 
 
 def _run_export(args: argparse.Namespace) -> None:
-    if not DB_PATH.exists():
-        print(f"No database found at {DB_PATH}")
+    db_path = _resolve_db_path(args)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
         return
 
     output_dir = Path(args.output_dir)
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
 
     filter_str = getattr(args, "filter", None)
@@ -412,6 +433,82 @@ def _run_export(args: argparse.Namespace) -> None:
     print(f"Exported {count} messages to {output_dir}")
 
 
+def _validate_inner_command(command: list) -> None:
+    if not command:
+        raise ScheduleError(
+            "No command given - e.g. 'gmail-ingest schedule -- import' or "
+            "'gmail-ingest schedule -- export /path/to/export'."
+        )
+    if command[0] not in ALLOWED_COMMANDS:
+        raise ScheduleError(f"Can only schedule {' or '.join(ALLOWED_COMMANDS)}, not {command[0]!r}.")
+    try:
+        build_parser().parse_args(command)
+    except SystemExit:
+        raise ScheduleError(
+            f"Invalid command {' '.join(command)!r} - check it against 'gmail-ingest {command[0]} --help'."
+        )
+
+
+def _run_schedule(args: argparse.Namespace) -> None:
+    system = platform.system()
+
+    if args.list:
+        if system == "Windows":
+            output = list_windows_jobs()
+            print(output or "No gmail-ingest scheduled tasks found.")
+        elif system in ("Linux", "Darwin"):
+            jobs = list_cron_jobs()
+            if not jobs:
+                print("No gmail-ingest crontab entries found.")
+            for name, command_str in jobs:
+                print(f"{name}: {command_str}")
+        else:
+            print(f"Unsupported platform: {system}")
+        return
+
+    command = list(args.inner_command)
+    if command and command[0] == "--":
+        command = command[1:]
+
+    try:
+        _validate_inner_command(command)
+    except ScheduleError as e:
+        print(f"Error: {e}")
+        return
+
+    python_exe = sys.executable
+
+    try:
+        if system == "Windows":
+            schedule_windows(args.job_name, args.interval_minutes, python_exe, BASE_DIR, command)
+            print(
+                f"Registered Windows Scheduled Task {windows_task_name(args.job_name)!r} "
+                f"(every {args.interval_minutes} min): {' '.join(command)}"
+            )
+        elif system in ("Linux", "Darwin"):
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            line = schedule_cron(
+                args.job_name, args.interval_minutes, python_exe, BASE_DIR, LOG_DIR / "cron.log", command
+            )
+            print(f"Added crontab entry for job {args.job_name!r}:\n  {line}")
+        else:
+            print(f"Unsupported platform: {system}. Only Windows and Linux/macOS are supported.")
+    except ScheduleError as e:
+        print(f"Error: {e}")
+
+
+def _run_unschedule(args: argparse.Namespace) -> None:
+    system = platform.system()
+    if system == "Windows":
+        unschedule_windows(args.job_name)
+        print(f"Removed Windows Scheduled Task {windows_task_name(args.job_name)!r} (if it existed).")
+    elif system in ("Linux", "Darwin"):
+        removed = unschedule_cron(args.job_name)
+        print(f"{'Removed' if removed else 'No'} crontab entry for job {args.job_name!r}.")
+    else:
+        print(f"Unsupported platform: {system}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gmail-ingest")
     parser.add_argument(
@@ -427,22 +524,49 @@ def build_parser() -> argparse.ArgumentParser:
         "has:attachment, and bare words/\"quoted phrases\" (subject+body substring)."
     )
 
+    db_help = "Path to the SQLite database (default: gmail_index.db in the project root)."
+
     import_cmd = subparsers.add_parser("import", help="Import new mail into the local database")
     import_cmd.add_argument(
         "--filter",
         help=filter_help + " Passed straight through to Gmail's own search; forces a filtered full "
         "listing instead of incremental sync, and does not update sync_state.",
     )
+    import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
 
     stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
     stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
+    stats.add_argument("--db", help=db_help)
     stats.set_defaults(func=_run_stats)
 
     export = subparsers.add_parser("export", help="Export all messages as markdown files")
     export.add_argument("output_dir", help="Directory to write .md files into (created if missing)")
     export.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
+    export.add_argument("--db", help=db_help)
     export.set_defaults(func=_run_export)
+
+    schedule_cmd = subparsers.add_parser(
+        "schedule", help="Register a recurring gmail-ingest command (Windows Task Scheduler or cron)"
+    )
+    schedule_cmd.add_argument("--job-name", default="default", help="Identifies this job (default: 'default')")
+    schedule_cmd.add_argument(
+        "--interval-minutes", type=int, default=30, help="How often to run, in minutes (default: 30)"
+    )
+    schedule_cmd.add_argument(
+        "--list", action="store_true", help="List currently scheduled jobs instead of registering a new one"
+    )
+    schedule_cmd.add_argument(
+        "inner_command",
+        nargs=argparse.REMAINDER,
+        help="The command to schedule: 'import [...]' or 'export <output_dir> [...]'. Put -- before it if it "
+        "has flags of its own, e.g.: gmail-ingest schedule --job-name work -- import --filter 'label:Work'",
+    )
+    schedule_cmd.set_defaults(func=_run_schedule)
+
+    unschedule_cmd = subparsers.add_parser("unschedule", help="Remove a job registered by 'schedule'")
+    unschedule_cmd.add_argument("--job-name", default="default", help="Which job to remove (default: 'default')")
+    unschedule_cmd.set_defaults(func=_run_unschedule)
 
     return parser
 

@@ -10,9 +10,8 @@ The app itself is cross-platform (verified in a `python:3.11-slim` Docker
 container). The setup instructions below use PowerShell since that's the
 primary development environment, but the underlying commands (`python -m
 venv`, `pip install`, `gmail-ingest <command>`) work the same on Linux/macOS
-with their shell equivalents. Scheduling a recurring run currently only has
-a documented path on Windows (`register_task.ps1`) — see `TODO.md` for a
-planned cross-platform `schedule` command.
+with their shell equivalents, including `gmail-ingest schedule` — see
+"Scheduling" below.
 
 ## How it works
 
@@ -120,23 +119,17 @@ A browser window opens for the Google consent screen. After approving,
 Run it again to confirm it now does an incremental sync with no browser
 prompt.
 
-### 4. Schedule it (Windows Task Scheduler)
+### 4. Schedule it
 
 Once step 3 works and `token.json` exists:
 
 ```powershell
-.\register_task.ps1
+gmail-ingest schedule -- import
 ```
 
-This registers a "GmailIngest" task that runs every 30 minutes. Edit the
-`-RepetitionInterval` in `register_task.ps1` before registering to change the
-frequency, or adjust it afterwards in Task Scheduler.
-
-To remove it later:
-
-```powershell
-Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false
-```
+This registers a recurring `import` every 30 minutes (the default) — a Windows Scheduled Task named
+`GmailIngest-default` on Windows, a crontab entry on Linux/macOS. See "Scheduling" below for custom
+intervals, multiple named jobs, and removing one.
 
 ## Project layout
 
@@ -148,12 +141,12 @@ gmail-ingest/
       gmail_client.py     # Gmail API calls + message parsing
       db.py               # SQLite schema and upsert helpers
       filters.py          # Local --filter interpreter for stats/export
-      cli.py               # Entry point: import/stats/export/help subcommands
-      config.py            # Paths and scopes
+      scheduling.py        # Windows Task Scheduler / cron job registration
+      cli.py                 # Entry point: import/stats/export/schedule/... subcommands
+      config.py               # Paths and scopes
   tests/                 # pytest suite (pure-function tests, no live API)
   .github/workflows/ci.yml  # pytest + build, on push/PR
   pyproject.toml         # Project metadata and dependencies
-  register_task.ps1     # One-time Task Scheduler registration
   RELEASES.md            # Version history
   TODO.md                 # Prioritized backlog
   CLAUDE.md
@@ -189,13 +182,15 @@ working directory, which a flat root-level package layout can silently do instea
   `get_sync_state` / `set_sync_state` / `upsert_message` helpers.
   `upsert_message` keys on Gmail's message `id`, so re-running never
   duplicates rows.
+- **`scheduling.py`**: pure command-construction (`build_windows_register_script`, `build_cron_line`, etc.,
+  each testable without touching a real crontab/Task Scheduler) plus thin `subprocess`-calling wrappers, used
+  by `cli.py`'s `schedule`/`unschedule`. See "Scheduling" below.
 - **`cli.py`**: the entry point, `python -m gmail_ingest.cli <command>`
   (or `gmail-ingest <command>` after `pip install -e .` — see
-  `pyproject.toml`'s `[project.scripts]`). Four subcommands:
+  `pyproject.toml`'s `[project.scripts]`). Subcommands:
   - `import` — sets up logging to `logs/gmail_ingest.log`, decides full
     vs. incremental sync based on whether `sync_state` already has a
-    `last_history_id`, and drives the fetch/parse/upsert loop. This is
-    what `register_task.ps1` schedules. With `--filter`, see "Filtering"
+    `last_history_id`, and drives the fetch/parse/upsert loop. With `--filter`, see "Filtering"
     below.
   - `stats` — reads `gmail_index.db` directly (no Gmail API calls, no
     credentials needed) and prints summary stats.
@@ -211,7 +206,12 @@ working directory, which a flat root-level package layout can silently do instea
     message body as the document content. Reruns just overwrite files
     with identical content — messages are immutable, so there's nothing
     to reconcile.
+  - `schedule`/`unschedule` — register/remove a recurring `import` or `export`. See "Scheduling" below.
   - `help` (or no subcommand at all) — prints usage.
+
+  `import`, `stats`, and `export` all accept `--db <path>` to point at a database other than the default
+  `gmail_index.db` — e.g. to maintain several independent databases, one per filter (see "Scheduling" below
+  for the multi-job pattern this enables).
 
   `gmail-ingest --version` prints the installed version, read live from package metadata
   (`importlib.metadata.version("gmail-ingest")`) rather than a separately-maintained string — so it's always
@@ -257,6 +257,46 @@ deliberate rather than an oversight:
   boundaries, `after` inclusive/`before` exclusive) and never match a row
   where it's `NULL`. `has:attachment` checks membership in the
   `attachments` table.
+
+### Scheduling
+
+`gmail-ingest schedule` registers a recurring `import` or `export` — a Windows Scheduled Task on Windows, a
+crontab entry on Linux/macOS (also expected to work on macOS, though only Linux has actually been tested, in
+a `python:3.11-slim` container). Any flags belonging to the inner command (`--filter`, `--db`, an `export`
+output directory, ...) go after a literal `--`, since otherwise there's no way to tell them apart from
+`schedule`'s own flags:
+
+```powershell
+gmail-ingest schedule --job-name work --interval-minutes 15 -- import --filter "label:Work" --db work.db
+gmail-ingest schedule --job-name nightly-export --interval-minutes 1440 -- export C:\exports --filter has:attachment
+gmail-ingest schedule --list
+gmail-ingest unschedule --job-name work
+```
+
+- `--job-name` (default `default`) identifies the job — Task Scheduler task `GmailIngest-<job-name>`, or a
+  crontab line tagged with a trailing `# gmail-ingest:<job-name>` marker comment. Multiple job names can
+  coexist, so you can run several independently-filtered imports (into different `--db` files) or exports
+  side by side. Re-running `schedule` with the same job name replaces that job; different job names don't
+  touch each other.
+- `--interval-minutes` (default 30). **Windows** accepts any positive value — Task Scheduler's repetition
+  interval is true elapsed time. **cron** cannot express an arbitrary interval — its minute/hour/day fields
+  are independent modulo-wheels, not elapsed time — so values are translated to plain cron fields and
+  rejected with a clear error if they don't divide evenly: under 60 must divide 60 (1, 2, 3, 4, 5, 6, 10, 12,
+  15, 20, 30, ...), a whole number of hours must divide 24 (1, 2, 3, 4, 6, 8, 12), and above that must be a
+  whole number of days. (`--interval-minutes 1440` for a daily job is exactly the case that first exposed
+  this — cron doesn't accept `*/1440` as a minute step, since minutes only run 0-59; it becomes `0 0 */1 * *`
+  instead.)
+- Only `import` and `export` can be scheduled — `stats` just prints to stdout, and `schedule`/`unschedule`/
+  `help` recursively make no sense. The inner command is validated (parsed against `gmail-ingest`'s own
+  argument definitions) *before* registering, so a typo'd flag fails immediately rather than at 3am.
+- `schedule --list` / a bare `unschedule` don't need `--job-name` unless you want a specific one (default
+  `default`); `--list` shows every currently-registered `GmailIngest-*` job.
+- Windows registration shells out to PowerShell running the equivalent of the old `register_task.ps1` script
+  (`Register-ScheduledTask`, with `-StartWhenAvailable`, `-DontStopOnIdleEnd`, a 10-minute execution limit) —
+  that script is gone now that `schedule` supersedes it. One fix along the way: the original repetition
+  duration (`[TimeSpan]::MaxValue`, meant as "indefinitely") produces a value Task Scheduler's XML schema
+  rejects outright; `schedule` uses a 10-year duration instead, which is effectively indefinite for any real
+  use and was never actually exercised in `register_task.ps1` (nothing had run it end-to-end before now).
 
 ## Development
 

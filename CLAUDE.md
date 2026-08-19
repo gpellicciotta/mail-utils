@@ -12,11 +12,11 @@ package/library, no server, no multi-tenant concerns.
 scope (`config.py`'s `SCOPES`). It never sends, labels, or deletes anything. Don't add write/send/delete
 capability without explicitly discussing it first — that's a deliberate scope decision, not an oversight.
 
-The core app itself is cross-platform (pure Python/stdlib + pathlib, no Windows-specific code) — verified by
-running the full test suite and CLI in a `python:3.11-slim` Docker container. What's currently Windows-only is
-the *scheduling* story: `register_task.ps1` (PowerShell, Windows Task Scheduler) and the Setup walkthrough's
-PowerShell command examples. A cross-platform `schedule` CLI subcommand (Task Scheduler on Windows, cron
-elsewhere) is tracked in `TODO.md` to close that gap.
+The app is cross-platform (pure Python/stdlib + pathlib, no Windows-specific code) — verified by running the
+full test suite and CLI in a `python:3.11-slim` Docker container. Scheduling is cross-platform too:
+`gmail-ingest schedule` dispatches to Windows Task Scheduler (via PowerShell) or cron, by `platform.system()`.
+The Setup walkthrough's shell examples are still PowerShell since that's the primary dev environment, but
+nothing about the app itself assumes Windows.
 
 ## Commands
 
@@ -29,19 +29,23 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 - Print database stats (message count, threads, last sync state, top labels, recipients, attachments):
   `.venv\Scripts\python -m gmail_ingest.cli stats`
 - Export every message as markdown (offline, reads only the local DB): `.venv\Scripts\python -m gmail_ingest.cli export <output_dir>`
-- All three of the above accept `--filter "..."` — see README's "Filtering" section for the syntax and the
-  important semantic difference between `import --filter` (passed straight through to Gmail's own search) and
-  `stats`/`export --filter` (evaluated locally by `gmail_ingest/filters.py`, a deliberately smaller subset).
+- `import`, `stats`, and `export` all accept `--filter "..."` — see README's "Filtering" section for the syntax
+  and the important semantic difference between `import --filter` (passed straight through to Gmail's own
+  search) and `stats`/`export --filter` (evaluated locally by `gmail_ingest/filters.py`, a deliberately smaller
+  subset) — and `--db <path>` to point at a database other than the default `gmail_index.db`.
+- Register/remove a recurring job (Windows Task Scheduler or cron, dispatched by `platform.system()`):
+  `gmail-ingest schedule --job-name <name> --interval-minutes N -- import|export [flags...]` /
+  `gmail-ingest unschedule --job-name <name>` — see README's "Scheduling" section for the full syntax, the
+  `--` requirement, and cron's interval constraints (only exact divisors of 60/24 translate to a simple
+  expression).
 - Check the installed version: `gmail-ingest --version` (reads live package metadata — see Conventions below)
 - Run the test suite: `.venv\Scripts\python -m pytest`
-- Register the 30-minute scheduled task: `.\register_task.ps1`
-- Unregister it: `Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false`
 
 Dependencies are declared once, in `pyproject.toml` — there is no separate `requirements.txt` to keep in sync.
 
 ## Architecture
 
-Six modules under `src/gmail_ingest/` (src layout — see README's "Project layout" for the rationale),
+Seven modules under `src/gmail_ingest/` (src layout — see README's "Project layout" for the rationale),
 each with one job:
 
 - **`config.py`** — every path (`credentials.json`, `token.json`, `gmail_index.db`, `logs/gmail_ingest.log`) and
@@ -76,23 +80,41 @@ each with one job:
   README's "Filtering" section for the full rationale and the exact semantics of each token (label match is
   exact-name not substring; `from:`/etc. match against `message_addresses`, not the raw header; `after:`/
   `before:` compare `internal_date_ms` and never match a `NULL`).
+- **`scheduling.py`** — cross-platform recurring-job registration, dispatched by `platform.system()` in
+  `cli.py`. Command-construction is deliberately split from execution: `build_windows_register_script`,
+  `build_cron_line`, `cron_schedule_fields`, etc. are pure functions (no subprocess calls) so they're testable
+  without touching a real crontab/Task Scheduler; `schedule_windows`/`schedule_cron`/`unschedule_*`/`list_*`
+  are the thin `subprocess`-calling wrappers around them. Jobs are named (`--job-name`, default `default`) so
+  several can coexist: Windows task `GmailIngest-<job-name>`; a crontab line tagged with a trailing
+  `# gmail-ingest:<job-name>` marker comment, used to find-and-replace just that line on re-schedule/remove.
+  `cron_schedule_fields` translates `--interval-minutes` into cron's minute/hour/day fields and rejects values
+  that don't divide evenly (60 minutes ÷ N, 24 hours ÷ N) — cron's fields are independent modulo-wheels, not a
+  true elapsed-time interval like Windows Task Scheduler's, so e.g. `*/1440` (attempting "once a day" as a
+  minute-step) is simply invalid; it becomes `0 0 */1 * *` instead. Also fixed a real bug caught while building
+  this: the old `register_task.ps1`'s `-RepetitionDuration ([TimeSpan]::MaxValue)` (meant as "indefinitely")
+  produces a value Task Scheduler's XML schema rejects outright — `schedule_windows` uses a 10-year duration
+  instead. That script was never actually run end-to-end before, so the bug had never been caught.
 - **`cli.py`** — the entry point (`python -m gmail_ingest.cli <command>`, or `gmail-ingest <command>` once
-  installed). `argparse`-based, four subcommands: `import` (sets up logging, refreshes the `labels` table,
+  installed). `argparse`-based subcommands: `import` (sets up logging, refreshes the `labels` table,
   decides full vs. incremental sync from whether `sync_state` has a `last_history_id` yet, drives the
-  fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages — this is what
-  `register_task.ps1` schedules; `--filter` switches to a filtered full listing that skips `sync_state`
-  entirely, see `filters.py` above), `stats` (read-only reporting straight off the local SQLite file; no Gmail
-  API calls, so it works offline and needs no credentials), `export <output_dir>` (also offline/local-DB-only —
-  writes one YAML-frontmatter `.md` file per message, bucketed into `<YYYY>/<MM>/` subdirectories by
-  `internal_date_ms`, `unknown/` for rows that don't have one yet; uses PyYAML's `safe_dump` rather than
-  hand-rolled string formatting specifically so subjects/names with colons, quotes, or unicode serialize
-  correctly), and `help` (prints usage; so does running with no subcommand). `stats --filter`/`export --filter`
-  compute a matching-id set once via `_compute_matching_ids` and either build a `filtered_ids` temp table
-  (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just filter the already-fetched
-  row list in Python (`export`, simpler since it's not doing SQL aggregation anyway). Used to be two separate
-  modules (`main.py`/`stats.py`) — merged here so there's one entry point with real subcommands instead of
-  separately invoked scripts. `import` was originally named `update`; renamed for clarity once `export` and
-  filtering existed too and "update" no longer distinctly described what it did.
+  fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages; `--filter`
+  switches to a filtered full listing that skips `sync_state` entirely, see `filters.py` above), `stats`
+  (read-only reporting straight off the local SQLite file; no Gmail API calls, so it works offline and needs
+  no credentials), `export <output_dir>` (also offline/local-DB-only — writes one YAML-frontmatter `.md` file
+  per message, bucketed into `<YYYY>/<MM>/` subdirectories by `internal_date_ms`, `unknown/` for rows that
+  don't have one yet; uses PyYAML's `safe_dump` rather than hand-rolled string formatting specifically so
+  subjects/names with colons, quotes, or unicode serialize correctly), `schedule`/`unschedule` (thin wrappers
+  around `scheduling.py` — `schedule` validates its inner command by parsing it against this same
+  `build_parser()` before registering anything, so a typo'd flag fails immediately rather than at the next
+  scheduled run), and `help` (prints usage; so does running with no subcommand). `import`/`stats`/`export`
+  all take `--db <path>` (via `_resolve_db_path`) to override the default `gmail_index.db`. `stats --filter`/
+  `export --filter` compute a matching-id set once via `_compute_matching_ids` and either build a
+  `filtered_ids` temp table (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just
+  filter the already-fetched row list in Python (`export`, simpler since it's not doing SQL aggregation
+  anyway). Used to be two separate modules (`main.py`/`stats.py`) — merged here so there's one entry point
+  with real subcommands instead of separately invoked scripts. `import` was originally named `update`;
+  renamed for clarity once `export` and filtering existed too and "update" no longer distinctly described
+  what it did.
 
 Full column-by-column documentation of what's actually stored (and, importantly, what *isn't* — e.g. attachments
 are never captured at all) lives in `README.md`'s "Database contents" section. Treat that as the authoritative
@@ -101,6 +123,14 @@ schema reference, not this file — update it whenever `parse_message` or the sc
 Schema changes to `messages` (like adding `cc`/`bcc`) need a migration, not just an edit to `SCHEMA` in `db.py` —
 `CREATE TABLE IF NOT EXISTS` only applies to a database that doesn't exist yet, so an existing `gmail_index.db`
 needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for the pattern to extend.
+
+`config.py`'s `BASE_DIR = Path(__file__).resolve().parent.parent.parent` is relative to `config.py`'s own
+location (`src/gmail_ingest/config.py` → up three levels → project root). Any future move of `config.py`
+itself, or another change to the directory depth between it and the project root, needs that `.parent` chain
+recounted to match — it broke silently in exactly this way during the `v0.10.0` src-layout migration (fixed in
+`v0.13.0`), because the test suite always monkeypatches `DB_PATH` directly rather than exercising the real
+computation, so nothing caught it until a real run would have. `tests/test_config.py` now guards against a
+repeat.
 
 ## Conventions
 

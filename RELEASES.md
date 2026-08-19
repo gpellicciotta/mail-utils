@@ -1,5 +1,39 @@
 # Release Notes
 
+## v0.14.0
+Released on 2026-08-19
+
+**Breaking change:** `register_task.ps1` is gone, replaced by a cross-platform `schedule`/`unschedule`
+CLI subcommand pair (Windows Task Scheduler via PowerShell, or cron on Linux/macOS, dispatched by
+`platform.system()`):
+
+```powershell
+gmail-ingest schedule --job-name work --interval-minutes 15 -- import --filter "label:Work" --db work.db
+gmail-ingest schedule --list
+gmail-ingest unschedule --job-name work
+```
+
+- Jobs are named (`--job-name`, default `default`), so multiple independently-filtered/independently-databased
+  jobs can coexist — Windows task `GmailIngest-<job-name>`, or a crontab line tagged with a
+  `# gmail-ingest:<job-name>` marker comment.
+- Schedules either `import` or `export` (whichever you put after `--`); the inner command is validated
+  (parsed against `gmail-ingest`'s own argument definitions) before registering anything, so a typo'd flag
+  fails immediately rather than at the next scheduled run.
+- New `gmail_ingest/scheduling.py`: command-construction kept pure/testable, separate from the
+  `subprocess`-calling execution.
+- Found and fixed two real bugs along the way, both verified against a real Windows Task Scheduler
+  registration and a Linux container's crontab:
+  - The original `-RepetitionDuration ([TimeSpan]::MaxValue)` (meant as "run indefinitely") produces a
+    duration value Task Scheduler's XML schema rejects outright. `register_task.ps1` had never actually been
+    run end-to-end before, so this had never been caught. Now uses a 10-year duration instead.
+  - cron's minute/hour/day fields are independent modulo-wheels (minutes wrap at 60), not a true
+    elapsed-time interval — `*/1440` (attempting "once a day" as a minute step) is simply invalid and cron
+    silently misbehaves rather than erroring. `--interval-minutes` now translates to proper cron fields (e.g.
+    `0 0 */1 * *` for 1440) and is rejected up front with a clear error for values that don't divide evenly.
+
+`import`, `stats`, and `export` also gained `--db <path>`, to point at a database other than the default
+`gmail_index.db` — what makes the multi-job pattern above useful in the first place.
+
 ## v0.13.0
 Released on 2026-08-19
 
