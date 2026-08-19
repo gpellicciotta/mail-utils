@@ -18,12 +18,15 @@ Windows-first: setup docs and `register_task.ps1` assume PowerShell and Windows 
 
 All commands use the project's venv (`.venv`, created once via `python -m venv .venv`).
 
-- Install/update dependencies: `.venv\Scripts\pip install -r requirements.txt`
+- Install/update in editable mode, with the `dev` extra (pytest): `.venv\Scripts\pip install -e ".[dev]"`
+  (drop `[dev]` if you only need to run the app, not the tests)
 - Run one sync (full on first run, incremental after): `.venv\Scripts\python -m gmail_ingest.main`
 - Print database stats (message count, threads, last sync state, top labels): `.venv\Scripts\python -m gmail_ingest.stats`
+- Run the test suite: `.venv\Scripts\python -m pytest`
 - Register the 30-minute scheduled task: `.\register_task.ps1`
 - Unregister it: `Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false`
-- No automated test suite yet — see `docs/todo.md`.
+
+Dependencies are declared once, in `pyproject.toml` — there is no separate `requirements.txt` to keep in sync.
 
 ## Architecture
 
@@ -62,8 +65,12 @@ in `db.py` changes.
   written to be detailed enough that a first-time setup doesn't need external guidance (see the Google Cloud
   Console walkthrough in "Setup" step 1, which was expanded specifically because the console's own UI/naming
   drifted from what the original short version assumed).
-- No build-config file carries a version number (this isn't a published package). `docs/release-notes.md`'s
-  newest heading is the single source of truth for the current version.
+- `pyproject.toml`'s `version` field drives what actually gets installed; keep `docs/release-notes.md`'s newest
+  heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention.
+- Every backward-incompatible change bumps the version accordingly and gets a clearly-labeled breaking-change
+  note in its `docs/release-notes.md` entry — this project is pre-1.0 (`0.x.y`), so in practice that means: a
+  breaking change bumps the **minor** number (the `x` in `0.x.y`), same as every other feature addition does at
+  this stage, but call out that it's breaking explicitly rather than letting it read as a routine addition.
 - When adding a feature or fixing a documented limitation, add a corresponding entry to
   `docs/release-notes.md` (version heading, date, bullet list) and update/remove the matching item in
   `docs/todo.md`.

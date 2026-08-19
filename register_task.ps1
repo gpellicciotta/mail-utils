@@ -6,7 +6,7 @@ Run this manually, once, from an elevated or normal PowerShell prompt
     .\register_task.ps1
 
 Prerequisites before running this:
-  1. python -m venv .venv ; .venv\Scripts\pip install -r requirements.txt
+  1. python -m venv .venv ; .venv\Scripts\pip install -e .
   2. credentials.json placed in this folder (from Google Cloud Console)
   3. Run once manually so the OAuth browser consent happens interactively:
         .venv\Scripts\python -m gmail_ingest.main

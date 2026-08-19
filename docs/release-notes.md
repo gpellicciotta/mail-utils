@@ -27,6 +27,11 @@ First working version.
   using only Python's built-in `sqlite3` module.
 - `register_task.ps1`: one-time Windows Task Scheduler registration,
   running the sync every 30 minutes.
+- Packaged as a proper `pyproject.toml` project (PEP 621), installed
+  editable (`pip install -e .`); `requirements.txt` is gone, `pyproject.toml`
+  is now the single source of truth for dependencies. Added a `dev` extra
+  (`pytest`) and an initial test suite under `tests/` covering the
+  pure-function message-parsing logic in `gmail_client.py`.
 
 Known limitations (tracked in `docs/todo.md`): `Cc`/`Bcc` headers aren't
 captured, HTML-only message bodies are stored as raw unparsed HTML,

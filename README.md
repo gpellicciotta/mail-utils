@@ -92,8 +92,12 @@ entirely.
 ```powershell
 cd C:\Dev-Projects\gmail-ingest
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -e ".[dev]"
 ```
+
+This installs the project (from `pyproject.toml`) plus its `dev` extra
+(currently just `pytest`, for running the test suite in `tests/`). If you
+don't need to run tests, `.venv\Scripts\pip install -e .` is enough.
 
 ### 3. First run (interactive, does the one-time browser consent)
 
@@ -135,9 +139,15 @@ gmail-ingest/
     gmail_client.py     # Gmail API calls + message parsing
     db.py               # SQLite schema and upsert helpers
     main.py             # Orchestrates a single sync run
+    stats.py            # Offline reporting off the local database
     config.py           # Paths and scopes
+  tests/                 # pytest suite (pure-function tests, no live API)
+  docs/
+    release-notes.md      # Version history
+    todo.md                # Prioritized backlog
+  pyproject.toml         # Project metadata and dependencies
   register_task.ps1     # One-time Task Scheduler registration
-  requirements.txt
+  CLAUDE.md
   credentials.json      # you provide this - gitignored
   token.json            # generated on first run - gitignored
   gmail_index.db        # generated - gitignored
@@ -169,6 +179,21 @@ gmail-ingest/
   `logs/gmail_ingest.log`, decides full vs. incremental sync based on
   whether `sync_state` already has a `last_history_id`, and drives the
   fetch/parse/upsert loop.
+- **`stats.py`**: `python -m gmail_ingest.stats` — reads `gmail_index.db`
+  directly (no Gmail API calls, no credentials needed) and prints summary
+  stats.
+
+## Development
+
+Run the test suite with:
+
+```powershell
+.venv\Scripts\python -m pytest
+```
+
+Tests live in `tests/` and currently cover the pure-function message
+parsing logic in `gmail_client.py` (no live Gmail credentials needed to
+run them).
 
 ## Database contents
 
