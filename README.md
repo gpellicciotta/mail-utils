@@ -1,4 +1,4 @@
-# gmail-ingest
+# mail-utils
 
 Polls a personal Gmail account on a schedule and indexes new messages into a local SQLite database, using the
 Gmail API and OAuth 2.0.
@@ -7,8 +7,8 @@ Read-only: the app only requests the `gmail.readonly` scope. It never sends, lab
 
 The app is cross-platform (verified in a `python:3.11-slim` Docker container; Windows is the primary dev
 environment, so the setup commands below are PowerShell, but the underlying commands — `python -m venv`,
-`pip install`, `gmail-ingest <command>` — work the same on Linux/macOS with their shell equivalents, including
-`gmail-ingest schedule`, see "Scheduling" below).
+`pip install`, `mail-utils <command>` — work the same on Linux/macOS with their shell equivalents, including
+`mail-utils schedule`, see "Scheduling" below).
 
 ## How it works
 
@@ -18,7 +18,7 @@ environment, so the setup commands below are PowerShell, but the underlying comm
 - **Sync**: the first run does a full mailbox listing and records the mailbox's current `historyId`. Every
   later run uses the Gmail History API (`users().history().list`) to fetch only messages added since the last
   run, instead of re-scanning everything. If the stored `historyId` becomes too old for Gmail to diff from,
-  the script automatically falls back to a full resync. Progress is logged to `logs/gmail_ingest.log` every 50
+  the script automatically falls back to a full resync. Progress is logged to `logs/mail_utils.log` every 50
   messages; during a full sync this includes a running `%` against the mailbox's reported message total (an
   upper bound, since that total includes Spam/Trash which the sync itself skips, so the percentage may cap out
   just below 100%).
@@ -75,7 +75,7 @@ account during consent (use an incognito window if you have multiple Google acco
 ### 2. Python environment
 
 ```powershell
-cd C:\Dev-Projects\gmail-ingest
+cd C:\Dev-Projects\mail-utils
 python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 ```
@@ -86,11 +86,11 @@ to run tests, `.venv\Scripts\pip install -e .` is enough.
 ### 3. First run (interactive, does the one-time browser consent)
 
 ```powershell
-.venv\Scripts\gmail-ingest import
+.venv\Scripts\mail-utils import
 ```
 
 A browser window opens for the Google consent screen. After approving, `token.json` is created and the script
-does a full initial sync into `gmail_index.db`. Check `logs/gmail_ingest.log` for a summary. Run it again to
+does a full initial sync into `gmail_index.db`. Check `logs/mail_utils.log` for a summary. Run it again to
 confirm it now does an incremental sync with no browser prompt.
 
 ### 4. Schedule it
@@ -98,19 +98,19 @@ confirm it now does an incremental sync with no browser prompt.
 Once step 3 works and `token.json` exists:
 
 ```powershell
-.venv\Scripts\gmail-ingest schedule -- import
+.venv\Scripts\mail-utils schedule -- import
 ```
 
 This registers a recurring `import` every 30 minutes (the default) — a Windows Scheduled Task named
-`GmailIngest-default` on Windows, a crontab entry on Linux/macOS. See "Scheduling" below for custom intervals,
+`MailUtils-default` on Windows, a crontab entry on Linux/macOS. See "Scheduling" below for custom intervals,
 multiple named jobs, and removing one.
 
 ## Project layout
 
 ```
-gmail-ingest/
+mail-utils/
   src/
-    gmail_ingest/
+    mail_utils/
       auth.py           # OAuth credential loading/refresh
       gmail_client.py   # Gmail API calls + message parsing
       db.py             # SQLite schema and upsert helpers
@@ -130,13 +130,13 @@ gmail-ingest/
   logs/                  # generated - gitignored
 ```
 
-`src/` layout: the package lives under `src/gmail_ingest/`, not directly at the repo root. This is standard
+`src/` layout: the package lives under `src/mail_utils/`, not directly at the repo root. This is standard
 modern Python packaging practice — it forces `pip install -e .` (and therefore tests) to exercise the
 actually-installed package rather than accidentally importing whatever's in the current working directory,
 which a flat root-level package layout can silently do instead.
 
 - **`config.py`**: every path used by the app (`credentials.json`, `token.json`, `gmail_index.db`,
-  `logs/gmail_ingest.log`), all resolved relative to the project root, plus `SCOPES` (just `gmail.readonly`).
+  `logs/mail_utils.log`), all resolved relative to the project root, plus `SCOPES` (just `gmail.readonly`).
 - **`auth.py`**: `get_credentials()` — loads `token.json` if present and returns it if still valid; refreshes
   it silently via the stored refresh token if expired; otherwise runs the one-time interactive
   `InstalledAppFlow` browser consent (using `credentials.json`) and writes the resulting `token.json`.
@@ -154,8 +154,8 @@ which a flat root-level package layout can silently do instead.
 - **`scheduling.py`**: pure command-construction (`build_windows_register_script`, `build_cron_line`, etc. —
   each testable without touching a real crontab/Task Scheduler) plus thin `subprocess`-calling wrappers, used
   by `cli.py`'s `schedule`/`unschedule`. See "Scheduling" below.
-- **`cli.py`**: the entry point — `gmail-ingest <command>` once installed (equivalent to
-  `python -m gmail_ingest.cli <command>`; see `pyproject.toml`'s `[project.scripts]`). Subcommands:
+- **`cli.py`**: the entry point — `mail-utils <command>` once installed (equivalent to
+  `python -m mail_utils.cli <command>`; see `pyproject.toml`'s `[project.scripts]`). Subcommands:
   - `import` — sets up logging, decides full vs. incremental sync based on whether `sync_state` already has a
     `last_history_id`, and drives the fetch/parse/upsert loop. With `--filter`, see "Filtering" below.
   - `stats` — reads `gmail_index.db` directly (no Gmail API calls, no credentials needed) and prints summary
@@ -174,8 +174,8 @@ which a flat root-level package layout can silently do instead.
   `gmail_index.db` — e.g. to maintain several independent databases, one per filter (see "Scheduling" below
   for the multi-job pattern this enables).
 
-  `gmail-ingest --version` prints the installed version, read live from package metadata
-  (`importlib.metadata.version("gmail-ingest")`) rather than a separately-maintained string, so it's always
+  `mail-utils --version` prints the installed version, read live from package metadata
+  (`importlib.metadata.version("mail-utils")`) rather than a separately-maintained string, so it's always
   exactly what `pip` thinks is installed. `pyproject.toml`'s `version` field is the one place the version is
   actually written; bump it, add a matching `RELEASES.md` entry, and re-run `pip install -e .` to pick it up.
 
@@ -195,7 +195,7 @@ words/`"quoted phrases"` (substring match against subject + body). Multiple toke
   runs' incremental bookkeeping. You can run a sequence of differently-filtered imports to build up a database
   containing just the subsets of your mailbox you care about; each run only adds/updates rows matching its
   own filter (upserts never delete), so the database accumulates the *union* across runs.
-- `stats --filter` and `export --filter` are evaluated **locally**, in `gmail_ingest/filters.py`, against
+- `stats --filter` and `export --filter` are evaluated **locally**, in `mail_utils/filters.py`, against
   columns already in the database — they never call the Gmail API. This only supports the token subset listed
   above (no `OR`, no negation, no other Gmail operators); an unrecognized `key:` prefix is a hard error rather
   than being silently ignored, so a filter that matches nothing can't masquerade as one that matches
@@ -208,21 +208,21 @@ words/`"quoted phrases"` (substring match against subject + body). Multiple toke
 
 ### Scheduling
 
-`gmail-ingest schedule` registers a recurring `import` or `export` — a Windows Scheduled Task on Windows, a
+`mail-utils schedule` registers a recurring `import` or `export` — a Windows Scheduled Task on Windows, a
 crontab entry on Linux/macOS (also expected to work on macOS, though only Linux has actually been tested, in
 a `python:3.11-slim` container). Any flags belonging to the inner command (`--filter`, `--db`, an `export`
 output directory, ...) go after a literal `--`, since otherwise there's no way to tell them apart from
 `schedule`'s own flags:
 
 ```powershell
-gmail-ingest schedule --job-name work --interval-minutes 15 -- import --filter "label:Work" --db work.db
-gmail-ingest schedule --job-name nightly-export --interval-minutes 1440 -- export C:\exports --filter has:attachment
-gmail-ingest schedule --list
-gmail-ingest unschedule --job-name work
+mail-utils schedule --job-name work --interval-minutes 15 -- import --filter "label:Work" --db work.db
+mail-utils schedule --job-name nightly-export --interval-minutes 1440 -- export C:\exports --filter has:attachment
+mail-utils schedule --list
+mail-utils unschedule --job-name work
 ```
 
-- `--job-name` (default `default`) identifies the job — Task Scheduler task `GmailIngest-<job-name>`, or a
-  crontab line tagged with a trailing `# gmail-ingest:<job-name>` marker comment. Multiple job names can
+- `--job-name` (default `default`) identifies the job — Task Scheduler task `MailUtils-<job-name>`, or a
+  crontab line tagged with a trailing `# mail-utils:<job-name>` marker comment. Multiple job names can
   coexist, so you can run several independently-filtered imports (into different `--db` files) or exports
   side by side. Re-running `schedule` with the same job name replaces that job; different job names don't
   touch each other.
@@ -235,10 +235,10 @@ gmail-ingest unschedule --job-name work
   this — cron doesn't accept `*/1440` as a minute step, since minutes only run 0-59; it becomes `0 0 */1 * *`
   instead.)
 - Only `import` and `export` can be scheduled — `stats` just prints to stdout, and `schedule`/`unschedule`/
-  `help` recursively make no sense. The inner command is validated (parsed against `gmail-ingest`'s own
+  `help` recursively make no sense. The inner command is validated (parsed against `mail-utils`'s own
   argument definitions) *before* registering, so a typo'd flag fails immediately rather than at 3am.
 - `schedule --list` / a bare `unschedule` don't need `--job-name` unless you want a specific one (default
-  `default`); `--list` shows every currently-registered `GmailIngest-*` job.
+  `default`); `--list` shows every currently-registered `MailUtils-*` job.
 - Windows registration shells out to PowerShell running `Register-ScheduledTask` with `-StartWhenAvailable`,
   `-DontStopOnIdleEnd`, and a 10-minute execution limit — a 10-year repetition duration is used for "runs
   indefinitely", since Task Scheduler's XML schema rejects `[TimeSpan]::MaxValue` outright.
@@ -334,5 +334,5 @@ captures metadata (never the bytes), there's no reason to treat them differently
 - Gmail API personal-use quota (1B units/day) is far more than a 30-minute polling interval will ever use.
 - To inspect stored messages with the separate `sqlite3.exe` CLI:
   `sqlite3 gmail_index.db "select date, sender, subject from messages order by fetched_at desc limit 20;"`.
-  Without that installed, `gmail-ingest stats` covers the common cases using only Python's built-in `sqlite3`
+  Without that installed, `mail-utils stats` covers the common cases using only Python's built-in `sqlite3`
   module.

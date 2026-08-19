@@ -3,8 +3,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gmail-ingest"
-version = "0.15.0"
+name = "mail-utils"
+version = "0.16.0"
 description = "Polls a personal Gmail account on a schedule and indexes new messages into a local SQLite database."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,7 +19,7 @@ dependencies = [
 dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
 
 [project.scripts]
-gmail-ingest = "gmail_ingest.cli:main"
+mail-utils = "mail_utils.cli:main"
 
 [tool.ruff]
 line-length = 132

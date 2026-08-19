@@ -1,6 +1,6 @@
 import pytest
 
-from gmail_ingest.filters import FilterError, message_matches, parse_filter
+from mail_utils.filters import FilterError, message_matches, parse_filter
 
 
 def test_parse_filter_splits_bare_words_and_key_value_pairs():

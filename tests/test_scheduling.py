@@ -1,6 +1,6 @@
 import pytest
 
-from gmail_ingest.scheduling import (
+from mail_utils.scheduling import (
     ScheduleError,
     build_cron_line,
     build_windows_register_script,
@@ -13,13 +13,13 @@ from gmail_ingest.scheduling import (
 
 
 def test_windows_task_name_prefixes_job_name():
-    assert windows_task_name("work") == "GmailIngest-work"
+    assert windows_task_name("work") == "MailUtils-work"
 
 
 def test_windows_register_script_contains_task_name_and_argument():
     script = build_windows_register_script("work", 15, "C:\\venv\\python.exe", "C:\\proj", ["import", "--filter", "label:Work"])
-    assert "GmailIngest-work" in script
-    assert "-m gmail_ingest.cli import --filter" in script
+    assert "MailUtils-work" in script
+    assert "-m mail_utils.cli import --filter" in script
     assert "New-TimeSpan -Minutes 15" in script
     assert "-Force" in script
 
@@ -32,7 +32,7 @@ def test_windows_register_script_escapes_embedded_single_quotes():
 
 def test_windows_unregister_script_targets_correct_task():
     script = build_windows_unregister_script("work")
-    assert "GmailIngest-work" in script
+    assert "MailUtils-work" in script
     assert "Unregister-ScheduledTask" in script
 
 
@@ -69,7 +69,7 @@ def test_cron_schedule_fields_rejects_non_positive():
 def test_cron_line_has_correct_interval_and_marker():
     line = build_cron_line("work", 15, "/venv/bin/python", "/proj", "/proj/logs/cron.log", ["import"])
     assert line.startswith("*/15 * * * *")
-    assert "gmail_ingest.cli import" in line
+    assert "mail_utils.cli import" in line
     assert line.endswith(cron_marker("work"))
 
 
@@ -98,7 +98,7 @@ def test_cron_line_different_job_names_have_distinct_markers():
 
 
 def test_list_cron_jobs_parses_job_name_and_command(monkeypatch):
-    from gmail_ingest import scheduling
+    from mail_utils import scheduling
 
     fake_line = build_cron_line("work", 15, "/venv/bin/python", "/proj", "/proj/logs/cron.log", ["import"])
     monkeypatch.setattr(scheduling, "read_crontab", lambda: ["# unrelated line", fake_line])
@@ -107,4 +107,4 @@ def test_list_cron_jobs_parses_job_name_and_command(monkeypatch):
     assert len(jobs) == 1
     name, command = jobs[0]
     assert name == "work"
-    assert "gmail_ingest.cli import" in command
+    assert "mail_utils.cli import" in command

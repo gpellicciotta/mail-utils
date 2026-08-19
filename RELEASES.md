@@ -1,5 +1,23 @@
 # Release Notes
 
+## v0.16.0
+Released on 2026-08-19
+
+**Breaking change:** the project is renamed from `gmail-ingest` to `mail-utils` — package
+`src/gmail_ingest/` → `src/mail_utils/`, `pyproject.toml`'s `name`/`[project.scripts]`, the console script
+(`gmail-ingest` → `mail-utils`), every import, the log filename (`gmail_ingest.log` → `mail_utils.log`), the
+Windows Task Scheduler task-name prefix (`GmailIngest-<job>` → `MailUtils-<job>`), and the cron marker
+comment (`# gmail-ingest:<job>` → `# mail-utils:<job>`). Anything invoking the old module path or console
+script name needs to switch; any already-registered `GmailIngest-*` scheduled task or `# gmail-ingest:`
+crontab line needs re-registering under the new name (`mail-utils schedule ...`) after upgrading — nothing
+migrates those automatically.
+
+**Not renamed, deliberately:** the default database filename `gmail_index.db` (describes its content — a
+Gmail index — not the tool's name) and the `gmail.readonly` OAuth scope. This is a project/branding rename,
+not a change of what the tool does — it's still Gmail-specific.
+
+Also pushed to a new GitHub repository: https://github.com/gpellicciotta/mail-utils.
+
 ## v0.15.0
 Released on 2026-08-19
 

@@ -47,7 +47,7 @@ from .scheduling import (
     windows_task_name,
 )
 
-logger = logging.getLogger("gmail_ingest")
+logger = logging.getLogger("mail_utils")
 
 PROGRESS_LOG_INTERVAL = 50
 
@@ -141,7 +141,7 @@ def _resolve_db_path(args: argparse.Namespace) -> Path:
 
 def _run_import(args: argparse.Namespace) -> None:
     _setup_logging()
-    logger.info("Starting gmail_ingest run")
+    logger.info("Starting mail_utils run")
 
     db_path = _resolve_db_path(args)
     creds = get_credentials()
@@ -425,14 +425,14 @@ def _run_export(args: argparse.Namespace) -> None:
 def _validate_inner_command(command: list) -> None:
     if not command:
         raise ScheduleError(
-            "No command given - e.g. 'gmail-ingest schedule -- import' or 'gmail-ingest schedule -- export /path/to/export'."
+            "No command given - e.g. 'mail-utils schedule -- import' or 'mail-utils schedule -- export /path/to/export'."
         )
     if command[0] not in ALLOWED_COMMANDS:
         raise ScheduleError(f"Can only schedule {' or '.join(ALLOWED_COMMANDS)}, not {command[0]!r}.")
     try:
         build_parser().parse_args(command)
     except SystemExit:
-        raise ScheduleError(f"Invalid command {' '.join(command)!r} - check it against 'gmail-ingest {command[0]} --help'.")
+        raise ScheduleError(f"Invalid command {' '.join(command)!r} - check it against 'mail-utils {command[0]} --help'.")
 
 
 def _run_schedule(args: argparse.Namespace) -> None:
@@ -441,11 +441,11 @@ def _run_schedule(args: argparse.Namespace) -> None:
     if args.list:
         if system == "Windows":
             output = list_windows_jobs()
-            print(output or "No gmail-ingest scheduled tasks found.")
+            print(output or "No mail-utils scheduled tasks found.")
         elif system in ("Linux", "Darwin"):
             jobs = list_cron_jobs()
             if not jobs:
-                print("No gmail-ingest crontab entries found.")
+                print("No mail-utils crontab entries found.")
             for name, command_str in jobs:
                 print(f"{name}: {command_str}")
         else:
@@ -494,8 +494,8 @@ def _run_unschedule(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="gmail-ingest")
-    parser.add_argument("--version", action="version", version=f"gmail-ingest {_package_version('gmail-ingest')}")
+    parser = argparse.ArgumentParser(prog="mail-utils")
+    parser.add_argument("--version", action="version", version=f"mail-utils {_package_version('mail-utils')}")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("help", help="Show this help message")
@@ -529,7 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
     export.set_defaults(func=_run_export)
 
     schedule_cmd = subparsers.add_parser(
-        "schedule", help="Register a recurring gmail-ingest command (Windows Task Scheduler or cron)"
+        "schedule", help="Register a recurring mail-utils command (Windows Task Scheduler or cron)"
     )
     schedule_cmd.add_argument("--job-name", default="default", help="Identifies this job (default: 'default')")
     schedule_cmd.add_argument("--interval-minutes", type=int, default=30, help="How often to run, in minutes (default: 30)")
@@ -538,7 +538,7 @@ def build_parser() -> argparse.ArgumentParser:
         "inner_command",
         nargs=argparse.REMAINDER,
         help="The command to schedule: 'import [...]' or 'export <output_dir> [...]'. Put -- before it if it "
-        "has flags of its own, e.g.: gmail-ingest schedule --job-name work -- import --filter 'label:Work'",
+        "has flags of its own, e.g.: mail-utils schedule --job-name work -- import --filter 'label:Work'",
     )
     schedule_cmd.set_defaults(func=_run_schedule)
 

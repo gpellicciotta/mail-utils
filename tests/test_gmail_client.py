@@ -1,6 +1,6 @@
 import base64
 
-from gmail_ingest.gmail_client import _extract_body_text, parse_addresses, parse_attachments, parse_message
+from mail_utils.gmail_client import _extract_body_text, parse_addresses, parse_attachments, parse_message
 
 
 def _b64(text: str) -> str:

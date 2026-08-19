@@ -25,14 +25,14 @@ def _ps_quote(value) -> str:
 
 
 def windows_task_name(job_name: str) -> str:
-    return f"GmailIngest-{job_name}"
+    return f"MailUtils-{job_name}"
 
 
 def build_windows_register_script(job_name: str, interval_minutes: int, python_exe: str, working_dir, inner_args: list) -> str:
-    full_args = ["-m", "gmail_ingest.cli", *inner_args]
+    full_args = ["-m", "mail_utils.cli", *inner_args]
     argument_string = subprocess.list2cmdline(full_args)
     task_name = windows_task_name(job_name)
-    description = f"gmail-ingest scheduled job '{job_name}': {' '.join(inner_args)}"
+    description = f"mail-utils scheduled job '{job_name}': {' '.join(inner_args)}"
     return f"""
 $Action = New-ScheduledTaskAction -Execute {_ps_quote(python_exe)} -Argument {_ps_quote(argument_string)} -WorkingDirectory {_ps_quote(working_dir)}
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes {interval_minutes}) -RepetitionDuration (New-TimeSpan -Days 3650)
@@ -48,7 +48,7 @@ def build_windows_unregister_script(job_name: str) -> str:
 
 def build_windows_list_script() -> str:
     return (
-        'Get-ScheduledTask -TaskName "GmailIngest-*" -ErrorAction SilentlyContinue '
+        'Get-ScheduledTask -TaskName "MailUtils-*" -ErrorAction SilentlyContinue '
         "| Format-Table TaskName, State -AutoSize | Out-String -Width 200"
     )
 
@@ -71,7 +71,7 @@ def list_windows_jobs() -> str:
     return result.stdout.strip()
 
 
-CRON_MARKER_PREFIX = "# gmail-ingest:"
+CRON_MARKER_PREFIX = "# mail-utils:"
 
 
 def cron_marker(job_name: str) -> str:
@@ -124,7 +124,7 @@ def cron_schedule_fields(interval_minutes: int) -> str:
 
 def build_cron_line(job_name: str, interval_minutes: int, python_exe: str, working_dir, log_path, inner_args: list) -> str:
     schedule_fields = cron_schedule_fields(interval_minutes)
-    full_args = ["-m", "gmail_ingest.cli", *inner_args]
+    full_args = ["-m", "mail_utils.cli", *inner_args]
     cmd = f"cd {shlex.quote(str(working_dir))} && {shlex.quote(python_exe)} {shlex.join(full_args)}"
     return f"{schedule_fields} {cmd} >> {shlex.quote(str(log_path))} 2>&1 {cron_marker(job_name)}"
 

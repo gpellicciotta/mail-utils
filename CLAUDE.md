@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`gmail-ingest` polls a single personal Gmail account on a schedule and indexes new messages into a local SQLite
+`mail-utils` polls a single personal Gmail account on a schedule and indexes new messages into a local SQLite
 database (`gmail_index.db`), using the Gmail API and OAuth 2.0. It's a personal, single-user tool — not a
 package/library, no server, no multi-tenant concerns.
 
@@ -14,7 +14,7 @@ capability without explicitly discussing it first — that's a deliberate scope 
 
 The app is cross-platform (pure Python/stdlib + pathlib, no Windows-specific code) — verified by running the
 full test suite and CLI in a `python:3.11-slim` Docker container. Scheduling is cross-platform too:
-`gmail-ingest schedule` dispatches to Windows Task Scheduler (via PowerShell) or cron, by `platform.system()`.
+`mail-utils schedule` dispatches to Windows Task Scheduler (via PowerShell) or cron, by `platform.system()`.
 The Setup walkthrough's shell examples are still PowerShell since that's the primary dev environment, but
 nothing about the app itself assumes Windows.
 
@@ -24,15 +24,15 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 
 - Install/update in editable mode, with the `dev` extra (pytest, ruff): `.venv\Scripts\pip install -e ".[dev]"`
   (drop `[dev]` if you only need to run the app, not the tests/linter)
-- `gmail-ingest <command>` once installed (equivalent to `.venv\Scripts\python -m gmail_ingest.cli <command>`):
+- `mail-utils <command>` once installed (equivalent to `.venv\Scripts\python -m mail_utils.cli <command>`):
   `import` (full sync first run, incremental after), `stats` (offline summary), `export <output_dir>`
   (offline markdown dump), `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or
-  cron, dispatched by `platform.system()`; `gmail-ingest schedule --job-name <name> --interval-minutes N --
+  cron, dispatched by `platform.system()`; `mail-utils schedule --job-name <name> --interval-minutes N --
   import|export [flags...]`, see README's "Scheduling" section for the `--` requirement and cron's interval
   constraints), `--version` (reads live package metadata, see Conventions below).
 - `import`/`stats`/`export` accept `--filter "..."` (see README's "Filtering" — `import --filter` is passed
   straight through to Gmail's own search; `stats`/`export --filter` are evaluated locally by
-  `gmail_ingest/filters.py`, a deliberately smaller subset) and `--db <path>` to point at a database other
+  `mail_utils/filters.py`, a deliberately smaller subset) and `--db <path>` to point at a database other
   than the default `gmail_index.db`.
 - Run the test suite: `.venv\Scripts\python -m pytest`; lint/format: `.venv\Scripts\ruff check .` /
   `.venv\Scripts\ruff format .` (line-length 132, `[tool.ruff]` in `pyproject.toml`; CI runs both plus
@@ -42,10 +42,10 @@ Dependencies are declared once, in `pyproject.toml` — there is no separate `re
 
 ## Architecture
 
-Seven modules under `src/gmail_ingest/` (src layout — see README's "Project layout" for the rationale),
+Seven modules under `src/mail_utils/` (src layout — see README's "Project layout" for the rationale),
 each with one job:
 
-- **`config.py`** — every path (`credentials.json`, `token.json`, `gmail_index.db`, `logs/gmail_ingest.log`) and
+- **`config.py`** — every path (`credentials.json`, `token.json`, `gmail_index.db`, `logs/mail_utils.log`) and
   the OAuth `SCOPES` list. Single source of truth for both; nothing else in the codebase hardcodes a path.
 - **`auth.py`** — `get_credentials()`: loads/refreshes `token.json` silently when possible, otherwise runs the
   one-time interactive `InstalledAppFlow` browser consent using `credentials.json`.
@@ -82,8 +82,8 @@ each with one job:
   `build_cron_line`, `cron_schedule_fields`, etc. are pure functions (no subprocess calls) so they're testable
   without touching a real crontab/Task Scheduler; `schedule_windows`/`schedule_cron`/`unschedule_*`/`list_*`
   are the thin `subprocess`-calling wrappers around them. Jobs are named (`--job-name`, default `default`) so
-  several can coexist: Windows task `GmailIngest-<job-name>`; a crontab line tagged with a trailing
-  `# gmail-ingest:<job-name>` marker comment, used to find-and-replace just that line on re-schedule/remove.
+  several can coexist: Windows task `MailUtils-<job-name>`; a crontab line tagged with a trailing
+  `# mail-utils:<job-name>` marker comment, used to find-and-replace just that line on re-schedule/remove.
   `cron_schedule_fields` translates `--interval-minutes` into cron's minute/hour/day fields and rejects values
   that don't divide evenly (60 minutes ÷ N, 24 hours ÷ N) — cron's fields are independent modulo-wheels, not a
   true elapsed-time interval like Windows Task Scheduler's, so e.g. `*/1440` (attempting "once a day" as a
@@ -91,7 +91,7 @@ each with one job:
   this: the old `register_task.ps1`'s `-RepetitionDuration ([TimeSpan]::MaxValue)` (meant as "indefinitely")
   produces a value Task Scheduler's XML schema rejects outright — `schedule_windows` uses a 10-year duration
   instead. That script was never actually run end-to-end before, so the bug had never been caught.
-- **`cli.py`** — the entry point (`python -m gmail_ingest.cli <command>`, or `gmail-ingest <command>` once
+- **`cli.py`** — the entry point (`python -m mail_utils.cli <command>`, or `mail-utils <command>` once
   installed). `argparse`-based subcommands: `import` (sets up logging, refreshes the `labels` table,
   decides full vs. incremental sync from whether `sync_state` has a `last_history_id` yet, drives the
   fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages; `--filter`
@@ -122,7 +122,7 @@ Schema changes to `messages` (like adding `cc`/`bcc`) need a migration, not just
 needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for the pattern to extend.
 
 `config.py`'s `BASE_DIR = Path(__file__).resolve().parent.parent.parent` is relative to `config.py`'s own
-location (`src/gmail_ingest/config.py` → up three levels → project root). Any future move of `config.py`
+location (`src/mail_utils/config.py` → up three levels → project root). Any future move of `config.py`
 itself, or another change to the directory depth between it and the project root, needs that `.parent` chain
 recounted to match — it broke silently in exactly this way during the `v0.10.0` src-layout migration (fixed in
 `v0.13.0`), because the test suite always monkeypatches `DB_PATH` directly rather than exercising the real
@@ -139,8 +139,8 @@ repeat.
   drifted from what the original short version assumed).
 - `pyproject.toml`'s `version` field drives what actually gets installed; keep `RELEASES.md`'s newest
   heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention. This is the
-  *only* place the version is written — `gmail-ingest --version` reads it back dynamically via
-  `importlib.metadata.version("gmail-ingest")` (see `cli.py`'s `build_parser`), not a second hardcoded
+  *only* place the version is written — `mail-utils --version` reads it back dynamically via
+  `importlib.metadata.version("mail-utils")` (see `cli.py`'s `build_parser`), not a second hardcoded
   string, so there's nothing else to keep in sync. (`python-template-project` instead hand-maintains a
   duplicate `__version__` in `__init__.py` — deliberately not copied here, since a second copy is exactly
   the kind of thing that drifts.) This does mean the installed package metadata must actually be current for
