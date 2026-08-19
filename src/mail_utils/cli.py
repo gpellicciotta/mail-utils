@@ -276,23 +276,17 @@ def _run_stats(args: argparse.Namespace) -> None:
     for (label_ids,) in cur.execute(f"SELECT label_ids FROM messages {msg_join} WHERE label_ids != ''"):
         label_counts.update(label_ids.split(","))
 
-    if label_counts:
-        top = label_counts.most_common(15)
-        resolved = [(label_names.get(label_id, label_id), count) for label_id, count in top]
-        name_width = max(len(name) for name, _ in resolved)
-
-        print("\nTop labels:")
-        for name, count in resolved:
-            print(f"  {name:<{name_width}} {count:>6}")
-
-        if not label_names:
-            print("\n(Label names unavailable - run a sync with the current code at least once to populate the labels table.)")
-
     try:
         cur.execute("SELECT 1 FROM message_addresses LIMIT 1")
         has_addresses = True
     except sqlite3.OperationalError:
         has_addresses = False
+
+    sections = []
+    if label_counts:
+        top = label_counts.most_common(15)
+        resolved = [(label_names.get(label_id, label_id), count) for label_id, count in top]
+        sections.append(("Top labels", resolved))
 
     if has_addresses:
         for role, title in (
@@ -309,11 +303,20 @@ def _run_stats(args: argparse.Namespace) -> None:
             if not rows:
                 continue
             labeled = [(f"{name} <{address}>" if name else address, n) for address, name, n in rows]
-            width = max(len(label) for label, _ in labeled)
+            sections.append((title, labeled))
+
+    if sections:
+        # One global width across every section, so the value columns line up down the whole printed page.
+        name_width = max(len(name) for _, rows in sections for name, _ in rows)
+        for title, rows in sections:
             print(f"\n{title}:")
-            for label, n in labeled:
-                print(f"  {label:<{width}} {n:>6}")
-    else:
+            for name, count in rows:
+                print(f"  {name:<{name_width}} {count:>6}")
+
+    if label_counts and not label_names:
+        print("\n(Label names unavailable - run a sync with the current code at least once to populate the labels table.)")
+
+    if not has_addresses:
         print(
             "\n(Recipient stats unavailable - run a sync with the current "
             "code at least once to populate the message_addresses table.)"
@@ -494,8 +497,12 @@ def _run_unschedule(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="mail-utils")
-    parser.add_argument("--version", action="version", version=f"mail-utils {_package_version('mail-utils')}")
+    parser = argparse.ArgumentParser(
+        prog="mail-utils",
+        description="Polls a personal Gmail account and indexes new messages into a local, read-only SQLite database.",
+    )
+    parser.add_argument("--version", action="store_true", help="Show version and exit")
+    parser.add_argument("--verbose", action="store_true", help="With --version, also print the matching RELEASES.md entry")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("help", help="Show this help message")
@@ -549,9 +556,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _find_release_entry(version: str) -> str | None:
+    """Return the RELEASES.md section for the given version (heading through the next '## ' heading), or None."""
+    path = BASE_DIR / "RELEASES.md"
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8")
+    marker = f"## v{version}"
+    start = text.find(marker)
+    if start == -1:
+        return None
+    rest = text[start:]
+    next_heading = rest.find("\n## ", 1)
+    entry = rest if next_heading == -1 else rest[:next_heading]
+    return entry.strip()
+
+
+def _print_version(verbose: bool) -> None:
+    ver = _package_version("mail-utils")
+    print(f"mail-utils {ver}")
+    print("Copyright (c) Giovanni Pellicciotta")
+    if verbose:
+        entry = _find_release_entry(ver)
+        if entry:
+            print()
+            print(entry)
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.version:
+        _print_version(args.verbose)
+        return
 
     if args.command is None or args.command == "help":
         parser.print_help()

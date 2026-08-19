@@ -1,5 +1,24 @@
 # Release Notes
 
+## v0.18.0
+Released on 2026-08-19
+
+Small usability polish, from `TODO.md`:
+
+- `help` (and running with no subcommand) now starts with a short one-line description of what the tool does,
+  via `argparse`'s `description=`.
+- `--version` now also prints a `Copyright (c) Giovanni Pellicciotta` line; add `--verbose` to additionally
+  print the matching `## v<version>` entry read straight from `RELEASES.md`. `--version` and `--verbose` are
+  now plain flags handled in `main()` rather than argparse's built-in `action="version"`, so the two can
+  combine regardless of order.
+- Added `docs/tutorial.md`, a short first-time-user walkthrough (import, stats, filter, export, schedule).
+  Renamed `docs/README.md` to `docs/index.md` for consistency with the same rename in
+  `python-template-project`.
+- `stats`'s "Top labels"/"Top senders"/"Top To/Cc/Bcc recipients" lists now share one global column width, so
+  the count column lines up down the whole printed page instead of each list aligning only against itself.
+- `--filter "label:X"` (on `stats`/`export`) now matches labels **containing** `X`, not just an exact name —
+  e.g. `label:investing` now matches both `to-read/investing` and `to-remember/investing`.
+
 ## v0.17.0
 Released on 2026-08-19
 

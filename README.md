@@ -182,9 +182,10 @@ which a flat root-level package layout can silently do instead.
   `gmail_index.db` — e.g. to maintain several independent databases, one per filter (see "Scheduling" below
   for the multi-job pattern this enables).
 
-  `mail-utils --version` prints the installed version, read live from package metadata
-  (`importlib.metadata.version("mail-utils")`) rather than a separately-maintained string, so it's always
-  exactly what `pip` thinks is installed. `pyproject.toml`'s `version` field is the one place the version is
+  `mail-utils --version` prints the installed version (read live from package metadata,
+  `importlib.metadata.version("mail-utils")`, rather than a separately-maintained string, so it's always
+  exactly what `pip` thinks is installed) and a copyright line; add `--verbose` to also print the matching
+  `RELEASES.md` entry for that version. `pyproject.toml`'s `version` field is the one place the version is
   actually written; bump it, add a matching `RELEASES.md` entry, and re-run `pip install -e .` to pick it up.
 
 ### Filtering
@@ -208,7 +209,8 @@ words/`"quoted phrases"` (substring match against subject + body). Multiple toke
   above (no `OR`, no negation, no other Gmail operators); an unrecognized `key:` prefix is a hard error rather
   than being silently ignored, so a filter that matches nothing can't masquerade as one that matches
   everything.
-- `label:` matches an exact (case-insensitive) resolved label name. `from:`/`to:`/`cc:`/`bcc:` match
+- `label:` matches a case-insensitive **substring** of a resolved label name (e.g. `label:investing` matches
+  both `to-read/investing` and `to-remember/investing`), not just an exact name. `from:`/`to:`/`cc:`/`bcc:` match
   substrings of either the address or display name, using the `message_addresses` table (so they only work on
   rows synced after that table existed — see the caveat under "Database contents"). `after:`/`before:`
   compare against `internal_date_ms` (UTC midnight boundaries, `after` inclusive/`before` exclusive) and never

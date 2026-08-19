@@ -23,12 +23,41 @@ from mail_utils.db import (
 )
 
 
-def test_version_flag_prints_installed_version(capsys):
-    with pytest.raises(SystemExit) as exc_info:
-        build_parser().parse_args(["--version"])
-    assert exc_info.value.code == 0
+def test_version_flag_parses():
+    args = build_parser().parse_args(["--version"])
+    assert args.version is True
+    assert args.verbose is False
+
+
+def test_print_version_shows_version_and_copyright(capsys):
+    cli._print_version(verbose=False)
     out = capsys.readouterr().out
-    assert out.strip() == f"mail-utils {package_version('mail-utils')}"
+    assert out.splitlines() == [
+        f"mail-utils {package_version('mail-utils')}",
+        "Copyright (c) Giovanni Pellicciotta",
+    ]
+
+
+def test_print_version_verbose_includes_release_entry(tmp_path, monkeypatch, capsys):
+    ver = package_version("mail-utils")
+    monkeypatch.setattr(cli, "BASE_DIR", tmp_path)
+    (tmp_path / "RELEASES.md").write_text(
+        f"# Release Notes\n\n## v{ver}\nReleased on 2026-08-19\n\n- Did a thing.\n\n## v0.0.1\nOlder.\n",
+        encoding="utf-8",
+    )
+
+    cli._print_version(verbose=True)
+
+    out = capsys.readouterr().out
+    assert "Did a thing." in out
+    assert "v0.0.1" not in out
+
+
+def test_main_handles_version_flag(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["mail-utils", "--version"])
+    cli.main()
+    out = capsys.readouterr().out
+    assert out.startswith(f"mail-utils {package_version('mail-utils')}")
 
 
 def test_import_subcommand_routes_to_run_import():
@@ -241,3 +270,27 @@ def test_stats_filter_restricts_total_count(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Total messages:" in out
     assert out.split("Total messages:", 1)[1].split("\n", 1)[0].strip() == "1"
+
+
+def test_stats_aligns_value_columns_across_all_top_lists(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(id="msg1", label_ids="Label_1"))
+    upsert_labels(conn, [{"id": "Label_1", "name": "A"}])
+    upsert_addresses(
+        conn,
+        "msg1",
+        [{"message_id": "msg1", "role": "from", "address": "a@example.com", "name": "A Very Long Display Name Indeed"}],
+    )
+    conn.close()
+
+    _run_stats(argparse.Namespace(filter=None))
+    out = capsys.readouterr().out
+
+    # "Top labels" has a short name ("A"), "Top senders" has a much longer one - both value columns
+    # should still land in the same place, i.e. every "  <name> <count>" data line is the same width.
+    data_lines = [line for line in out.splitlines() if line.startswith("  ")]
+    assert len(data_lines) >= 2
+    assert len({len(line) for line in data_lines}) == 1

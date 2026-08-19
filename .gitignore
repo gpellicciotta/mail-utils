@@ -14,6 +14,7 @@ credentials.json
 token.json
 
 # Local data
-gmail_index.db
+*.db
 logs/
 export/
+data/

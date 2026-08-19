@@ -72,7 +72,7 @@ def message_matches(
                 return False
 
         elif key == "label":
-            if value_l not in label_names_l:
+            if not any(value_l in name for name in label_names_l):
                 return False
 
         elif key in ("from", "to", "cc", "bcc"):

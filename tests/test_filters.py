@@ -37,9 +37,16 @@ def test_bare_word_matches_subject_or_body():
     assert not message_matches(parse_filter("invoice"), **_ctx())
 
 
-def test_label_match_is_exact_case_insensitive():
+def test_label_match_is_substring_case_insensitive():
     assert message_matches(parse_filter("label:work"), **_ctx())
-    assert not message_matches(parse_filter("label:wor"), **_ctx())
+    assert message_matches(parse_filter("label:wor"), **_ctx())
+    assert not message_matches(parse_filter("label:personal"), **_ctx())
+
+
+def test_label_match_matches_nested_label_paths():
+    assert message_matches(parse_filter("label:investing"), **_ctx(labels=["to-read/investing"]))
+    assert message_matches(parse_filter("label:investing"), **_ctx(labels=["to-remember/investing"]))
+    assert not message_matches(parse_filter("label:investing"), **_ctx(labels=["to-read/other"]))
 
 
 def test_from_matches_address_or_name():

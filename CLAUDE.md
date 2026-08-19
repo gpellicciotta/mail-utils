@@ -74,9 +74,10 @@ each with one job:
   words/quoted phrases (subject+body substring), all ANDed. `parse_filter` raises `FilterError` on an
   unrecognized `key:` prefix rather than silently ignoring it. `import --filter` does *not* use this module —
   it passes the raw string straight to Gmail's own search instead, getting Gmail's full grammar for free. See
-  README's "Filtering" section for the full rationale and the exact semantics of each token (label match is
-  exact-name not substring; `from:`/etc. match against `message_addresses`, not the raw header; `after:`/
-  `before:` compare `internal_date_ms` and never match a `NULL`).
+  README's "Filtering" section for the full rationale and the exact semantics of each token (label match is a
+  substring of a resolved label name, not an exact name — e.g. `label:investing` matches `to-read/investing`;
+  `from:`/etc. match against `message_addresses`, not the raw header; `after:`/`before:` compare
+  `internal_date_ms` and never match a `NULL`).
 - **`scheduling.py`** — cross-platform recurring-job registration, dispatched by `platform.system()` in
   `cli.py`. Command-construction is deliberately split from execution: `build_windows_register_script`,
   `build_cron_line`, `cron_schedule_fields`, etc. are pure functions (no subprocess calls) so they're testable
@@ -103,7 +104,8 @@ each with one job:
   subjects/names with colons, quotes, or unicode serialize correctly), `schedule`/`unschedule` (thin wrappers
   around `scheduling.py` — `schedule` validates its inner command by parsing it against this same
   `build_parser()` before registering anything, so a typo'd flag fails immediately rather than at the next
-  scheduled run), and `help` (prints usage; so does running with no subcommand). `import`/`stats`/`export`
+  scheduled run), and `help` (prints usage, prefixed with a short one-line description of the tool set via
+  `argparse`'s `description=`; so does running with no subcommand). `import`/`stats`/`export`
   all take `--db <path>` (via `_resolve_db_path`) to override the default `gmail_index.db`. `stats --filter`/
   `export --filter` compute a matching-id set once via `_compute_matching_ids` and either build a
   `filtered_ids` temp table (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just
@@ -143,7 +145,10 @@ repeat.
   `importlib.metadata.version("mail-utils")` (see `cli.py`'s `build_parser`), not a second hardcoded
   string, so there's nothing else to keep in sync. This does mean the installed package metadata must actually be current for
   `--version` to be right — after bumping the version, re-run `pip install -e .` (or reload it) before
-  trusting `--version`'s output.
+  trusting `--version`'s output. `--version --verbose` additionally looks up the `## v<version>` heading in
+  `RELEASES.md` directly off disk (not packaged metadata) and prints that section, which is exactly why the
+  heading has to match the `pyproject.toml` version exactly — a mismatch means `--verbose` silently finds
+  nothing to print.
 - Every backward-incompatible change bumps the version accordingly and gets a clearly-labeled breaking-change
   note in its `RELEASES.md` entry — this project is pre-1.0 (`0.x.y`), so in practice that means: a
   breaking change bumps the **minor** number (the `x` in `0.x.y`), same as every other feature addition does at
