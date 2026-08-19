@@ -84,8 +84,7 @@ def get_sync_state(conn: sqlite3.Connection, key: str, default=None):
 
 def set_sync_state(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute(
-        "INSERT INTO sync_state (key, value) VALUES (?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        "INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
     )
     conn.commit()
@@ -93,8 +92,7 @@ def set_sync_state(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 def upsert_labels(conn: sqlite3.Connection, labels: list[dict]) -> None:
     conn.executemany(
-        "INSERT INTO labels (id, name) VALUES (:id, :name) "
-        "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+        "INSERT INTO labels (id, name) VALUES (:id, :name) ON CONFLICT(id) DO UPDATE SET name = excluded.name",
         labels,
     )
     conn.commit()
@@ -110,8 +108,7 @@ def upsert_addresses(conn: sqlite3.Connection, message_id: str, addresses: list)
     conn.execute("DELETE FROM message_addresses WHERE message_id = ?", (message_id,))
     if addresses:
         conn.executemany(
-            "INSERT INTO message_addresses (message_id, role, address, name) "
-            "VALUES (:message_id, :role, :address, :name)",
+            "INSERT INTO message_addresses (message_id, role, address, name) VALUES (:message_id, :role, :address, :name)",
             addresses,
         )
     conn.commit()

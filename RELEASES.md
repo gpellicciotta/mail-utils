@@ -1,5 +1,22 @@
 # Release Notes
 
+## v0.15.0
+Released on 2026-08-19
+
+Added `ruff` (dev dependency, `[tool.ruff]` `line-length = 132` in `pyproject.toml`) — ran `ruff format`
+across all source and tests, and applied its default lint fixes (modernized `Optional[str]`/`Iterator` typing
+imports, explicit `check=False` on `subprocess.run` calls that intentionally don't raise on non-zero exit,
+minor import-style cleanup). CI now runs `ruff check` + `ruff format --check` alongside `pytest` and the
+build.
+
+Also did a full README.md review and condense pass: fixed a stale "How it works" storage description
+(pre-dated `cc`/`bcc`/`internal_date_ms`/`body_mime_type`/the `labels`/`message_addresses`/`attachments`
+tables), consolidated the "populated going forward only" caveat — previously repeated near-verbatim in three
+separate table sections — into one explanation, standardized on the `gmail-ingest <command>` console-script
+form throughout instead of mixing it with the more verbose `python -m gmail_ingest.cli <command>`, and
+reflowed everything to the new 132-character line width (433 → 338 lines). `CLAUDE.md` got a lighter version
+of the same pass. No functional/behavior change.
+
 ## v0.14.0
 Released on 2026-08-19
 

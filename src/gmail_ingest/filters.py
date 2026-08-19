@@ -77,10 +77,7 @@ def message_matches(
 
         elif key in ("from", "to", "cc", "bcc"):
             role_addresses = addresses.get(key, [])
-            if not any(
-                value_l in (addr or "").lower() or value_l in (name or "").lower()
-                for addr, name in role_addresses
-            ):
+            if not any(value_l in (addr or "").lower() or value_l in (name or "").lower() for addr, name in role_addresses):
                 return False
 
         elif key == "after":

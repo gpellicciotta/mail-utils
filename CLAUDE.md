@@ -22,24 +22,21 @@ nothing about the app itself assumes Windows.
 
 All commands use the project's venv (`.venv`, created once via `python -m venv .venv`).
 
-- Install/update in editable mode, with the `dev` extra (pytest): `.venv\Scripts\pip install -e ".[dev]"`
-  (drop `[dev]` if you only need to run the app, not the tests)
-- Run one sync (full on first run, incremental after): `.venv\Scripts\python -m gmail_ingest.cli import`
-  (or `gmail-ingest import` after install — see `pyproject.toml`'s `[project.scripts]`)
-- Print database stats (message count, threads, last sync state, top labels, recipients, attachments):
-  `.venv\Scripts\python -m gmail_ingest.cli stats`
-- Export every message as markdown (offline, reads only the local DB): `.venv\Scripts\python -m gmail_ingest.cli export <output_dir>`
-- `import`, `stats`, and `export` all accept `--filter "..."` — see README's "Filtering" section for the syntax
-  and the important semantic difference between `import --filter` (passed straight through to Gmail's own
-  search) and `stats`/`export --filter` (evaluated locally by `gmail_ingest/filters.py`, a deliberately smaller
-  subset) — and `--db <path>` to point at a database other than the default `gmail_index.db`.
-- Register/remove a recurring job (Windows Task Scheduler or cron, dispatched by `platform.system()`):
-  `gmail-ingest schedule --job-name <name> --interval-minutes N -- import|export [flags...]` /
-  `gmail-ingest unschedule --job-name <name>` — see README's "Scheduling" section for the full syntax, the
-  `--` requirement, and cron's interval constraints (only exact divisors of 60/24 translate to a simple
-  expression).
-- Check the installed version: `gmail-ingest --version` (reads live package metadata — see Conventions below)
-- Run the test suite: `.venv\Scripts\python -m pytest`
+- Install/update in editable mode, with the `dev` extra (pytest, ruff): `.venv\Scripts\pip install -e ".[dev]"`
+  (drop `[dev]` if you only need to run the app, not the tests/linter)
+- `gmail-ingest <command>` once installed (equivalent to `.venv\Scripts\python -m gmail_ingest.cli <command>`):
+  `import` (full sync first run, incremental after), `stats` (offline summary), `export <output_dir>`
+  (offline markdown dump), `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or
+  cron, dispatched by `platform.system()`; `gmail-ingest schedule --job-name <name> --interval-minutes N --
+  import|export [flags...]`, see README's "Scheduling" section for the `--` requirement and cron's interval
+  constraints), `--version` (reads live package metadata, see Conventions below).
+- `import`/`stats`/`export` accept `--filter "..."` (see README's "Filtering" — `import --filter` is passed
+  straight through to Gmail's own search; `stats`/`export --filter` are evaluated locally by
+  `gmail_ingest/filters.py`, a deliberately smaller subset) and `--db <path>` to point at a database other
+  than the default `gmail_index.db`.
+- Run the test suite: `.venv\Scripts\python -m pytest`; lint/format: `.venv\Scripts\ruff check .` /
+  `.venv\Scripts\ruff format .` (line-length 132, `[tool.ruff]` in `pyproject.toml`; CI runs both plus
+  `pytest` plus `python -m build`).
 
 Dependencies are declared once, in `pyproject.toml` — there is no separate `requirements.txt` to keep in sync.
 

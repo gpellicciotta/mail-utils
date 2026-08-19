@@ -84,7 +84,9 @@ def _full_sync(service, conn) -> None:
             if total:
                 logger.info(
                     "Full sync progress: %d/%d messages (%.1f%%)",
-                    count, total, 100 * count / total,
+                    count,
+                    total,
+                    100 * count / total,
                 )
             else:
                 logger.info("Full sync progress: %d messages indexed so far", count)
@@ -182,17 +184,13 @@ def _load_filter_context(cur: sqlite3.Cursor):
 
     addresses_by_message = {}
     try:
-        for message_id, role, address, name in cur.execute(
-            "SELECT message_id, role, address, name FROM message_addresses"
-        ):
+        for message_id, role, address, name in cur.execute("SELECT message_id, role, address, name FROM message_addresses"):
             addresses_by_message.setdefault(message_id, {}).setdefault(role, []).append((address, name))
     except sqlite3.OperationalError:
         pass
 
     try:
-        attachment_message_ids = {
-            row[0] for row in cur.execute("SELECT DISTINCT message_id FROM attachments")
-        }
+        attachment_message_ids = {row[0] for row in cur.execute("SELECT DISTINCT message_id FROM attachments")}
     except sqlite3.OperationalError:
         attachment_message_ids = set()
 
@@ -253,12 +251,8 @@ def _run_stats(args: argparse.Namespace) -> None:
 
     (total,) = cur.execute(f"SELECT COUNT(*) FROM messages {msg_join}").fetchone()
     (threads,) = cur.execute(f"SELECT COUNT(DISTINCT thread_id) FROM messages {msg_join}").fetchone()
-    first_fetched, last_fetched = cur.execute(
-        f"SELECT MIN(fetched_at), MAX(fetched_at) FROM messages {msg_join}"
-    ).fetchone()
-    row = cur.execute(
-        "SELECT value FROM sync_state WHERE key = 'last_history_id'"
-    ).fetchone()
+    first_fetched, last_fetched = cur.execute(f"SELECT MIN(fetched_at), MAX(fetched_at) FROM messages {msg_join}").fetchone()
+    row = cur.execute("SELECT value FROM sync_state WHERE key = 'last_history_id'").fetchone()
     last_history_id = row[0] if row else None
 
     fields = [
@@ -279,9 +273,7 @@ def _run_stats(args: argparse.Namespace) -> None:
         label_names = {}
 
     label_counts = Counter()
-    for (label_ids,) in cur.execute(
-        f"SELECT label_ids FROM messages {msg_join} WHERE label_ids != ''"
-    ):
+    for (label_ids,) in cur.execute(f"SELECT label_ids FROM messages {msg_join} WHERE label_ids != ''"):
         label_counts.update(label_ids.split(","))
 
     if label_counts:
@@ -294,10 +286,7 @@ def _run_stats(args: argparse.Namespace) -> None:
             print(f"  {name:<{name_width}} {count:>6}")
 
         if not label_names:
-            print(
-                "\n(Label names unavailable - run a sync with the current "
-                "code at least once to populate the labels table.)"
-            )
+            print("\n(Label names unavailable - run a sync with the current code at least once to populate the labels table.)")
 
     try:
         cur.execute("SELECT 1 FROM message_addresses LIMIT 1")
@@ -331,14 +320,11 @@ def _run_stats(args: argparse.Namespace) -> None:
         )
 
     try:
-        att_count, att_size = cur.execute(
-            f"SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments {att_join}"
-        ).fetchone()
+        att_count, att_size = cur.execute(f"SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments {att_join}").fetchone()
         print(f"\nAttachments: {att_count} total, {_format_size(att_size)}")
     except sqlite3.OperationalError:
         print(
-            "\n(Attachment stats unavailable - run a sync with the current "
-            "code at least once to populate the attachments table.)"
+            "\n(Attachment stats unavailable - run a sync with the current code at least once to populate the attachments table.)"
         )
 
     conn.close()
@@ -374,9 +360,7 @@ def _run_export(args: argparse.Namespace) -> None:
     for message_id, filename, mime_type, size in cur.execute(
         "SELECT message_id, filename, mime_type, size FROM attachments ORDER BY message_id"
     ):
-        attachments_by_message.setdefault(message_id, []).append(
-            {"filename": filename, "mime_type": mime_type, "size": size}
-        )
+        attachments_by_message.setdefault(message_id, []).append({"filename": filename, "mime_type": mime_type, "size": size})
 
     rows = cur.execute(
         "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
@@ -386,8 +370,18 @@ def _run_export(args: argparse.Namespace) -> None:
 
     count = 0
     for (
-        msg_id, thread_id, sender, recipient, cc, bcc, subject, date,
-        internal_date_ms, label_ids, body_text, body_mime_type,
+        msg_id,
+        thread_id,
+        sender,
+        recipient,
+        cc,
+        bcc,
+        subject,
+        date,
+        internal_date_ms,
+        label_ids,
+        body_text,
+        body_mime_type,
     ) in rows:
         if matching_ids is not None and msg_id not in matching_ids:
             continue
@@ -418,12 +412,7 @@ def _run_export(args: argparse.Namespace) -> None:
         }
         frontmatter = {k: v for k, v in frontmatter.items() if v not in (None, [], "")}
 
-        content = (
-            "---\n"
-            + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
-            + "---\n\n"
-            + (body_text or "")
-        )
+        content = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True) + "---\n\n" + (body_text or "")
         (subdir / f"{msg_id}.md").write_text(content, encoding="utf-8")
 
         count += 1
@@ -436,17 +425,14 @@ def _run_export(args: argparse.Namespace) -> None:
 def _validate_inner_command(command: list) -> None:
     if not command:
         raise ScheduleError(
-            "No command given - e.g. 'gmail-ingest schedule -- import' or "
-            "'gmail-ingest schedule -- export /path/to/export'."
+            "No command given - e.g. 'gmail-ingest schedule -- import' or 'gmail-ingest schedule -- export /path/to/export'."
         )
     if command[0] not in ALLOWED_COMMANDS:
         raise ScheduleError(f"Can only schedule {' or '.join(ALLOWED_COMMANDS)}, not {command[0]!r}.")
     try:
         build_parser().parse_args(command)
     except SystemExit:
-        raise ScheduleError(
-            f"Invalid command {' '.join(command)!r} - check it against 'gmail-ingest {command[0]} --help'."
-        )
+        raise ScheduleError(f"Invalid command {' '.join(command)!r} - check it against 'gmail-ingest {command[0]} --help'.")
 
 
 def _run_schedule(args: argparse.Namespace) -> None:
@@ -487,9 +473,7 @@ def _run_schedule(args: argparse.Namespace) -> None:
             )
         elif system in ("Linux", "Darwin"):
             LOG_DIR.mkdir(parents=True, exist_ok=True)
-            line = schedule_cron(
-                args.job_name, args.interval_minutes, python_exe, BASE_DIR, LOG_DIR / "cron.log", command
-            )
+            line = schedule_cron(args.job_name, args.interval_minutes, python_exe, BASE_DIR, LOG_DIR / "cron.log", command)
             print(f"Added crontab entry for job {args.job_name!r}:\n  {line}")
         else:
             print(f"Unsupported platform: {system}. Only Windows and Linux/macOS are supported.")
@@ -511,9 +495,7 @@ def _run_unschedule(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gmail-ingest")
-    parser.add_argument(
-        "--version", action="version", version=f"gmail-ingest {_package_version('gmail-ingest')}"
-    )
+    parser.add_argument("--version", action="version", version=f"gmail-ingest {_package_version('gmail-ingest')}")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("help", help="Show this help message")
@@ -521,7 +503,7 @@ def build_parser() -> argparse.ArgumentParser:
     filter_help = (
         "Gmail-style filter, e.g. 'label:Work from:jane after:2026/01/01 has:attachment'. "
         "Supported: label:, from:, to:, cc:, bcc:, subject:, after:YYYY/MM/DD, before:YYYY/MM/DD, "
-        "has:attachment, and bare words/\"quoted phrases\" (subject+body substring)."
+        'has:attachment, and bare words/"quoted phrases" (subject+body substring).'
     )
 
     db_help = "Path to the SQLite database (default: gmail_index.db in the project root)."
@@ -550,12 +532,8 @@ def build_parser() -> argparse.ArgumentParser:
         "schedule", help="Register a recurring gmail-ingest command (Windows Task Scheduler or cron)"
     )
     schedule_cmd.add_argument("--job-name", default="default", help="Identifies this job (default: 'default')")
-    schedule_cmd.add_argument(
-        "--interval-minutes", type=int, default=30, help="How often to run, in minutes (default: 30)"
-    )
-    schedule_cmd.add_argument(
-        "--list", action="store_true", help="List currently scheduled jobs instead of registering a new one"
-    )
+    schedule_cmd.add_argument("--interval-minutes", type=int, default=30, help="How often to run, in minutes (default: 30)")
+    schedule_cmd.add_argument("--list", action="store_true", help="List currently scheduled jobs instead of registering a new one")
     schedule_cmd.add_argument(
         "inner_command",
         nargs=argparse.REMAINDER,

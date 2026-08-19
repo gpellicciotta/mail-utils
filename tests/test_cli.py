@@ -4,7 +4,7 @@ from importlib.metadata import version as package_version
 import pytest
 import yaml
 
-import gmail_ingest.cli as cli
+from gmail_ingest import cli
 from gmail_ingest.cli import (
     _run_export,
     _run_import,
@@ -157,7 +157,9 @@ def test_export_writes_year_month_bucketed_file_with_frontmatter(tmp_path, monke
     upsert_message(conn, _sample_message())
     upsert_labels(conn, [{"id": "Label_1", "name": "Work"}])
     upsert_attachments(
-        conn, "msg1", [{"message_id": "msg1", "attachment_id": "a1", "filename": "f.pdf", "mime_type": "application/pdf", "size": 100}]
+        conn,
+        "msg1",
+        [{"message_id": "msg1", "attachment_id": "a1", "filename": "f.pdf", "mime_type": "application/pdf", "size": 100}],
     )
     conn.close()
 
@@ -197,17 +199,15 @@ def _two_message_db(tmp_path, monkeypatch):
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message(id="msg1", subject="Work update"))
-    upsert_addresses(
-        conn, "msg1", [{"message_id": "msg1", "role": "from", "address": "jane@x.com", "name": "Jane"}]
-    )
+    upsert_addresses(conn, "msg1", [{"message_id": "msg1", "role": "from", "address": "jane@x.com", "name": "Jane"}])
     upsert_attachments(
-        conn, "msg1", [{"message_id": "msg1", "attachment_id": "a1", "filename": "f.pdf", "mime_type": "application/pdf", "size": 100}]
+        conn,
+        "msg1",
+        [{"message_id": "msg1", "attachment_id": "a1", "filename": "f.pdf", "mime_type": "application/pdf", "size": 100}],
     )
 
     upsert_message(conn, _sample_message(id="msg2", subject="Personal note"))
-    upsert_addresses(
-        conn, "msg2", [{"message_id": "msg2", "role": "from", "address": "bob@x.com", "name": "Bob"}]
-    )
+    upsert_addresses(conn, "msg2", [{"message_id": "msg2", "role": "from", "address": "bob@x.com", "name": "Bob"}])
     conn.close()
     return db_path
 

@@ -55,19 +55,19 @@ def build_windows_list_script() -> str:
 
 def schedule_windows(job_name: str, interval_minutes: int, python_exe: str, working_dir, inner_args: list) -> None:
     script = build_windows_register_script(job_name, interval_minutes, python_exe, working_dir, inner_args)
-    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise ScheduleError(f"Failed to register scheduled task: {result.stderr.strip()}")
 
 
 def unschedule_windows(job_name: str) -> None:
     script = build_windows_unregister_script(job_name)
-    subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, check=False)
 
 
 def list_windows_jobs() -> str:
     script = build_windows_list_script()
-    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, check=False)
     return result.stdout.strip()
 
 
@@ -130,7 +130,7 @@ def build_cron_line(job_name: str, interval_minutes: int, python_exe: str, worki
 
 
 def read_crontab() -> list:
-    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
     if result.returncode != 0:
         return []
     return result.stdout.splitlines()
@@ -163,6 +163,6 @@ def list_cron_jobs() -> list:
     for line in read_crontab():
         if CRON_MARKER_PREFIX in line:
             marker_idx = line.index(CRON_MARKER_PREFIX)
-            job_name = line[marker_idx + len(CRON_MARKER_PREFIX):].strip()
+            job_name = line[marker_idx + len(CRON_MARKER_PREFIX) :].strip()
             jobs.append((job_name, line[:marker_idx].strip()))
     return jobs

@@ -1,6 +1,6 @@
 import base64
+from collections.abc import Iterator
 from email.utils import getaddresses
-from typing import Iterator, Optional
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -30,16 +30,11 @@ def get_profile(service) -> dict:
     return service.users().getProfile(userId="me").execute()
 
 
-def list_all_message_ids(service, query: Optional[str] = None) -> Iterator[str]:
+def list_all_message_ids(service, query: str | None = None) -> Iterator[str]:
     """Yield every message id in the mailbox (used for the initial full sync)."""
     page_token = None
     while True:
-        resp = (
-            service.users()
-            .messages()
-            .list(userId="me", q=query, pageToken=page_token, maxResults=500)
-            .execute()
-        )
+        resp = service.users().messages().list(userId="me", q=query, pageToken=page_token, maxResults=500).execute()
         for m in resp.get("messages", []):
             yield m["id"]
         page_token = resp.get("nextPageToken")

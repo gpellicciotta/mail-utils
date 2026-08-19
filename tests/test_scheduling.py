@@ -17,9 +17,7 @@ def test_windows_task_name_prefixes_job_name():
 
 
 def test_windows_register_script_contains_task_name_and_argument():
-    script = build_windows_register_script(
-        "work", 15, "C:\\venv\\python.exe", "C:\\proj", ["import", "--filter", "label:Work"]
-    )
+    script = build_windows_register_script("work", 15, "C:\\venv\\python.exe", "C:\\proj", ["import", "--filter", "label:Work"])
     assert "GmailIngest-work" in script
     assert "-m gmail_ingest.cli import --filter" in script
     assert "New-TimeSpan -Minutes 15" in script
@@ -27,9 +25,7 @@ def test_windows_register_script_contains_task_name_and_argument():
 
 
 def test_windows_register_script_escapes_embedded_single_quotes():
-    script = build_windows_register_script(
-        "o'brien", 30, "python.exe", "C:\\proj", ["import", "--filter", "from:o'brien"]
-    )
+    script = build_windows_register_script("o'brien", 30, "python.exe", "C:\\proj", ["import", "--filter", "from:o'brien"])
     # A single quote inside a PowerShell single-quoted string must be doubled.
     assert "o''brien" in script
 
@@ -84,7 +80,11 @@ def test_cron_line_daily_export_uses_hour_field_not_broken_minute_step():
 
 def test_cron_line_quotes_filter_with_spaces():
     line = build_cron_line(
-        "work", 30, "/venv/bin/python", "/proj", "/proj/logs/cron.log",
+        "work",
+        30,
+        "/venv/bin/python",
+        "/proj",
+        "/proj/logs/cron.log",
         ["import", "--filter", "label:Work from:jane"],
     )
     assert "'label:Work from:jane'" in line
@@ -98,7 +98,7 @@ def test_cron_line_different_job_names_have_distinct_markers():
 
 
 def test_list_cron_jobs_parses_job_name_and_command(monkeypatch):
-    import gmail_ingest.scheduling as scheduling
+    from gmail_ingest import scheduling
 
     fake_line = build_cron_line("work", 15, "/venv/bin/python", "/proj", "/proj/logs/cron.log", ["import"])
     monkeypatch.setattr(scheduling, "read_crontab", lambda: ["# unrelated line", fake_line])
