@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.6.0
+Released on 2026-08-19
+
+Capture Gmail's own `internalDate` (epoch milliseconds, UTC) into a new
+`internal_date_ms` column — the reliable, server-side receipt timestamp,
+unlike the existing `date` column (the raw, client-supplied `Date:`
+header, which can be missing, malformed, or spoofed). Migrated onto
+existing databases automatically via `_ensure_column`, same as `cc`/`bcc`
+in `v0.2.0`; existing rows are `NULL` until re-synced.
+
 ## v0.5.0
 Released on 2026-08-19
 

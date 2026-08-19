@@ -35,6 +35,7 @@ def test_parse_message_maps_headers_and_metadata():
         "threadId": "thread1",
         "snippet": "a short preview",
         "labelIds": ["INBOX", "UNREAD"],
+        "internalDate": "1566230400000",
         "payload": {
             "headers": [
                 {"name": "From", "value": "Jane Doe <jane@example.com>"},
@@ -55,10 +56,17 @@ def test_parse_message_maps_headers_and_metadata():
         "bcc": None,
         "subject": "Hello",
         "date": "Wed, 19 Aug 2026 10:00:00 -0700",
+        "internal_date_ms": 1566230400000,
         "snippet": "a short preview",
         "label_ids": "INBOX,UNREAD",
         "body_text": "Body text",
     }
+
+
+def test_parse_message_internal_date_ms_is_none_when_absent():
+    raw = {"id": "msg1", "payload": {"headers": []}}
+    parsed = parse_message(raw)
+    assert parsed["internal_date_ms"] is None
 
 
 def test_parse_message_captures_cc_and_bcc_headers():

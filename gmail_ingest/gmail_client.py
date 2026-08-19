@@ -136,6 +136,7 @@ def parse_message(raw: dict) -> dict:
         "bcc": headers.get("bcc"),
         "subject": headers.get("subject"),
         "date": headers.get("date"),
+        "internal_date_ms": int(raw["internalDate"]) if raw.get("internalDate") else None,
         "snippet": raw.get("snippet"),
         "label_ids": ",".join(raw.get("labelIds", [])),
         "body_text": _extract_body_text(raw.get("payload", {})),

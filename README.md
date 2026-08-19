@@ -215,7 +215,8 @@ duplicate rows). Columns, and exactly what each one holds:
 | `cc`         | `Cc` header, raw                 | `NULL` if the message has no `Cc` line. |
 | `bcc`        | `Bcc` header, raw                | See caveat below — usually `NULL` even on messages that genuinely had Bcc recipients. |
 | `subject`    | `Subject` header, raw             | |
-| `date`       | `Date` header, raw string         | As set by the *sending* client — not normalized, and not Gmail's own server-side receipt timestamp (`internalDate`, which this app doesn't currently capture). |
+| `date`       | `Date` header, raw string         | As set by the *sending* client — not normalized, can be missing or malformed, and not trustworthy for sorting. Prefer `internal_date_ms` below. |
+| `internal_date_ms` | Gmail's `internalDate` | Epoch **milliseconds**, UTC — Gmail's own server-side receipt timestamp, reliable and always present (unlike `date`). A `Date.fromtimestamp(internal_date_ms / 1000)` (Python) or `new Date(internal_date_ms)` (JS) converts it. `NULL` only on rows synced before this column existed. |
 | `snippet`    | Gmail's own `snippet` field       | Gmail's short auto-generated preview (~100–200 chars) — separate from, and much shorter than, `body_text`. |
 | `label_ids`  | Comma-joined `labelIds`           | Gmail's internal label IDs (e.g. `INBOX,UNREAD,IMPORTANT`). Custom user labels appear as opaque IDs like `Label_12345` — join against the `labels` table (below) to get display names. |
 | `body_text`  | Decoded message body              | See "Body text" below. |

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS messages (
     bcc         TEXT,
     subject     TEXT,
     date        TEXT,
+    internal_date_ms INTEGER,
     snippet     TEXT,
     label_ids   TEXT,
     body_text   TEXT,
@@ -70,6 +71,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn.commit()
     _ensure_column(conn, "messages", "cc", "TEXT")
     _ensure_column(conn, "messages", "bcc", "TEXT")
+    _ensure_column(conn, "messages", "internal_date_ms", "INTEGER")
     return conn
 
 
@@ -131,8 +133,8 @@ def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: l
 def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
     conn.execute(
         """
-        INSERT INTO messages (id, thread_id, sender, recipient, cc, bcc, subject, date, snippet, label_ids, body_text)
-        VALUES (:id, :thread_id, :sender, :recipient, :cc, :bcc, :subject, :date, :snippet, :label_ids, :body_text)
+        INSERT INTO messages (id, thread_id, sender, recipient, cc, bcc, subject, date, internal_date_ms, snippet, label_ids, body_text)
+        VALUES (:id, :thread_id, :sender, :recipient, :cc, :bcc, :subject, :date, :internal_date_ms, :snippet, :label_ids, :body_text)
         ON CONFLICT(id) DO UPDATE SET
             thread_id = excluded.thread_id,
             sender = excluded.sender,
@@ -141,6 +143,7 @@ def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
             bcc = excluded.bcc,
             subject = excluded.subject,
             date = excluded.date,
+            internal_date_ms = excluded.internal_date_ms,
             snippet = excluded.snippet,
             label_ids = excluded.label_ids,
             body_text = excluded.body_text
