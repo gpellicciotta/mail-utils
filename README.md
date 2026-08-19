@@ -102,7 +102,7 @@ don't need to run tests, `.venv\Scripts\pip install -e .` is enough.
 ### 3. First run (interactive, does the one-time browser consent)
 
 ```powershell
-.venv\Scripts\python -m gmail_ingest.main
+.venv\Scripts\python -m gmail_ingest.cli update
 ```
 
 A browser window opens for the Google consent screen. After approving,
@@ -138,8 +138,7 @@ gmail-ingest/
     auth.py             # OAuth credential loading/refresh
     gmail_client.py     # Gmail API calls + message parsing
     db.py               # SQLite schema and upsert helpers
-    main.py             # Orchestrates a single sync run
-    stats.py            # Offline reporting off the local database
+    cli.py              # Entry point: update/stats/help subcommands
     config.py           # Paths and scopes
   tests/                 # pytest suite (pure-function tests, no live API)
   docs/
@@ -175,13 +174,16 @@ gmail-ingest/
   `get_sync_state` / `set_sync_state` / `upsert_message` helpers.
   `upsert_message` keys on Gmail's message `id`, so re-running never
   duplicates rows.
-- **`main.py`**: orchestrates one run — sets up logging to
-  `logs/gmail_ingest.log`, decides full vs. incremental sync based on
-  whether `sync_state` already has a `last_history_id`, and drives the
-  fetch/parse/upsert loop.
-- **`stats.py`**: `python -m gmail_ingest.stats` — reads `gmail_index.db`
-  directly (no Gmail API calls, no credentials needed) and prints summary
-  stats.
+- **`cli.py`**: the entry point, `python -m gmail_ingest.cli <command>`
+  (or `gmail-ingest <command>` after `pip install -e .` — see
+  `pyproject.toml`'s `[project.scripts]`). Three subcommands:
+  - `update` — sets up logging to `logs/gmail_ingest.log`, decides full
+    vs. incremental sync based on whether `sync_state` already has a
+    `last_history_id`, and drives the fetch/parse/upsert loop. This is
+    what `register_task.ps1` schedules.
+  - `stats` — reads `gmail_index.db` directly (no Gmail API calls, no
+    credentials needed) and prints summary stats.
+  - `help` (or no subcommand at all) — prints usage.
 
 ## Development
 
@@ -261,7 +263,7 @@ Maps Gmail label id -> display name (`id`, `name`), covering both system
 labels (`INBOX`, `SENT`, ...) and the user's own custom labels. Refreshed
 in full from `users().labels().list()` at the start of every run, so it
 stays in sync with any label renames/additions. Used by
-`python -m gmail_ingest.stats` to show real label names instead of opaque
+`python -m gmail_ingest.cli stats` to show real label names instead of opaque
 `Label_NNNNNNN` ids — a database from before this table existed will just
 show raw ids until it's synced again with the current code.
 
@@ -277,9 +279,9 @@ does this via `email.utils.getaddresses`, so a header like
 lowercase-normalized rows rather than one raw string. `name` is whatever
 display name was on that particular message (not normalized — the same
 address can show a different `name` across rows if senders varied it).
-Populated once per message at ingest time (`main.py`, alongside
-`upsert_message`), replacing that message's rows on every rerun rather
-than accumulating duplicates. `python -m gmail_ingest.stats` reads this
+Populated once per message at ingest time (`cli.py`'s `update` command,
+alongside `upsert_message`), replacing that message's rows on every rerun rather
+than accumulating duplicates. `python -m gmail_ingest.cli stats` reads this
 table directly for its "Top senders"/"Top To/Cc/Bcc recipients"
 breakdowns — same caveat as `labels`: a database from before this table
 existed needs a resync (or a targeted re-fetch of specific messages)
@@ -295,7 +297,7 @@ their MIME part, and since this only captures metadata (never the
 attachment's actual bytes), there's no reason to treat them differently.
 Populated at ingest time the same way as `message_addresses`
 (delete-then-insert per message on every rerun). `python -m
-gmail_ingest.stats` shows a one-line total count and total size; same
+gmail_ingest.cli stats` shows a one-line total count and total size; same
 "populated going forward only" caveat as `labels`/`message_addresses`
 applies to existing rows.
 
@@ -305,7 +307,7 @@ applies to existing rows.
 - Gmail API personal-use quota (1B units/day) is far more than a 30-minute polling interval will ever use.
 - To inspect stored messages: `sqlite3 gmail_index.db "select date, sender, subject from messages order by fetched_at desc limit 20;"`
   (requires the separate `sqlite3.exe` CLI). If you don't have that
-  installed, `.venv\Scripts\python -m gmail_ingest.stats` prints summary
+  installed, `.venv\Scripts\python -m gmail_ingest.cli stats` prints summary
   stats (total message count, distinct threads, first/last indexed time,
   current `last_history_id`, and a label breakdown) using only Python's
   built-in `sqlite3` module — no extra install needed.

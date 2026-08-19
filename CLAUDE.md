@@ -20,8 +20,10 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 
 - Install/update in editable mode, with the `dev` extra (pytest): `.venv\Scripts\pip install -e ".[dev]"`
   (drop `[dev]` if you only need to run the app, not the tests)
-- Run one sync (full on first run, incremental after): `.venv\Scripts\python -m gmail_ingest.main`
-- Print database stats (message count, threads, last sync state, top labels): `.venv\Scripts\python -m gmail_ingest.stats`
+- Run one sync (full on first run, incremental after): `.venv\Scripts\python -m gmail_ingest.cli update`
+  (or `gmail-ingest update` after install — see `pyproject.toml`'s `[project.scripts]`)
+- Print database stats (message count, threads, last sync state, top labels, recipients, attachments):
+  `.venv\Scripts\python -m gmail_ingest.cli stats`
 - Run the test suite: `.venv\Scripts\python -m pytest`
 - Register the 30-minute scheduled task: `.\register_task.ps1`
 - Unregister it: `Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false`
@@ -52,11 +54,14 @@ Five modules under `gmail_ingest/`, each with one job:
   message/attachment, replaced in full for a given message on every rerun via `upsert_addresses`/
   `upsert_attachments` — delete-then-insert, not an upsert, since Gmail messages are immutable so there's
   nothing to merge).
-- **`main.py`** — orchestrates one run: sets up logging, refreshes the `labels` table, decides full vs.
-  incremental sync from whether `sync_state` has a `last_history_id` yet, drives the fetch/parse/upsert loop with
-  progress logging every `PROGRESS_LOG_INTERVAL` (50) messages.
-- **`stats.py`** — read-only reporting straight off the local SQLite file via Python's built-in `sqlite3` module;
-  no Gmail API calls, so it works offline and needs no credentials.
+- **`cli.py`** — the entry point (`python -m gmail_ingest.cli <command>`, or `gmail-ingest <command>` once
+  installed). `argparse`-based, three subcommands: `update` (sets up logging, refreshes the `labels` table,
+  decides full vs. incremental sync from whether `sync_state` has a `last_history_id` yet, drives the
+  fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages — this is what
+  `register_task.ps1` schedules), `stats` (read-only reporting straight off the local SQLite file; no Gmail API
+  calls, so it works offline and needs no credentials), and `help` (prints usage; so does running with no
+  subcommand). Used to be two separate modules (`main.py`/`stats.py`) — merged here so there's one entry point
+  with real subcommands instead of two separately-invoked scripts.
 
 Full column-by-column documentation of what's actually stored (and, importantly, what *isn't* — e.g. attachments
 are never captured at all) lives in `README.md`'s "Database contents" section. Treat that as the authoritative

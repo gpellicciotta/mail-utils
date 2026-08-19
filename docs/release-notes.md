@@ -1,5 +1,19 @@
 # Release Notes
 
+## v0.5.0
+Released on 2026-08-19
+
+**Breaking change:** `main.py` and `stats.py` are gone, replaced by a single `cli.py` entry point with
+subcommands: `update` (was `python -m gmail_ingest.main`, now `python -m gmail_ingest.cli update`), `stats`
+(was `python -m gmail_ingest.stats`, now `python -m gmail_ingest.cli stats`), and `help`. Anything invoking the
+old module paths directly (a scheduled task, a saved command) needs to switch to the new form —
+`register_task.ps1` has been updated, but nothing external is migrated automatically.
+
+Also:
+- `pyproject.toml` gained a `[project.scripts]` entry, so after `pip install -e .`, `gmail-ingest update` /
+  `gmail-ingest stats` work directly — no `python -m` needed.
+- New `tests/test_cli.py` covers the subcommand-routing logic (no live credentials needed).
+
 ## v0.4.0
 Released on 2026-08-19
 
