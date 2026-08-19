@@ -37,6 +37,17 @@ CREATE TABLE IF NOT EXISTS message_addresses (
 
 CREATE INDEX IF NOT EXISTS idx_message_addresses_role_address
     ON message_addresses (role, address);
+
+CREATE TABLE IF NOT EXISTS attachments (
+    message_id     TEXT NOT NULL,
+    attachment_id  TEXT,
+    filename       TEXT NOT NULL,
+    mime_type      TEXT,
+    size           INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_message_id
+    ON attachments (message_id);
 """
 
 
@@ -98,6 +109,21 @@ def upsert_addresses(conn: sqlite3.Connection, message_id: str, addresses: list)
             "INSERT INTO message_addresses (message_id, role, address, name) "
             "VALUES (:message_id, :role, :address, :name)",
             addresses,
+        )
+    conn.commit()
+
+
+def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: list) -> None:
+    """Replace message_id's rows in attachments with `attachments`.
+
+    Same delete-then-insert rationale as upsert_addresses.
+    """
+    conn.execute("DELETE FROM attachments WHERE message_id = ?", (message_id,))
+    if attachments:
+        conn.executemany(
+            "INSERT INTO attachments (message_id, attachment_id, filename, mime_type, size) "
+            "VALUES (:message_id, :attachment_id, :filename, :mime_type, :size)",
+            attachments,
         )
     conn.commit()
 

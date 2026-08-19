@@ -42,14 +42,16 @@ Five modules under `gmail_ingest/`, each with one job:
   (`list_labels`), single-message fetch (`fetch_message`, `format=full`), `parse_message` — the one place
   that decides what's kept from a raw Gmail API message and what's dropped, for the `messages` table row — and
   `parse_addresses`, a sibling pure function that splits/normalizes the same message's From/To/Cc/Bcc headers
-  into individual `message_addresses` rows (via `email.utils.getaddresses`, lowercased for dedup). See
-  `README.md`'s "Database contents" section for the exact, currently-documented behavior (and known gaps —
-  `docs/todo.md` tracks fixing them).
-- **`db.py`** — SQLite schema and upsert helpers. Four tables: `messages` (upserted by Gmail's message `id`, so
+  into individual `message_addresses` rows (via `email.utils.getaddresses`, lowercased for dedup), and
+  `parse_attachments`, which walks the MIME tree collecting every part with a filename (metadata only —
+  filename/mime type/size/`attachmentId` — never the bytes). See `README.md`'s "Database contents" section for
+  the exact, currently-documented behavior (and known gaps — `docs/todo.md` tracks fixing them).
+- **`db.py`** — SQLite schema and upsert helpers. Five tables: `messages` (upserted by Gmail's message `id`, so
   reruns never duplicate), `sync_state` (currently just `last_history_id`), `labels` (id -> display name,
-  refreshed in full every run), `message_addresses` (one row per message/role/address, replaced in full for a
-  given message on every rerun via `upsert_addresses` — delete-then-insert, not an upsert, since Gmail messages
-  are immutable so there's nothing to merge).
+  refreshed in full every run), `message_addresses` and `attachments` (each one row per message/role/address or
+  message/attachment, replaced in full for a given message on every rerun via `upsert_addresses`/
+  `upsert_attachments` — delete-then-insert, not an upsert, since Gmail messages are immutable so there's
+  nothing to merge).
 - **`main.py`** — orchestrates one run: sets up logging, refreshes the `labels` table, decides full vs.
   incremental sync from whether `sync_state` has a `last_history_id` yet, drives the fetch/parse/upsert loop with
   progress logging every `PROGRESS_LOG_INTERVAL` (50) messages.

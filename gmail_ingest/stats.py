@@ -4,6 +4,14 @@ from collections import Counter
 from .config import DB_PATH
 
 
+def _format_size(num_bytes: int) -> str:
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+
+
 def run() -> None:
     if not DB_PATH.exists():
         print(f"No database found at {DB_PATH}")
@@ -87,6 +95,17 @@ def run() -> None:
         print(
             "\n(Recipient stats unavailable - run a sync with the current "
             "code at least once to populate the message_addresses table.)"
+        )
+
+    try:
+        att_count, att_size = cur.execute(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments"
+        ).fetchone()
+        print(f"\nAttachments: {att_count} total, {_format_size(att_size)}")
+    except sqlite3.OperationalError:
+        print(
+            "\n(Attachment stats unavailable - run a sync with the current "
+            "code at least once to populate the attachments table.)"
         )
 
     conn.close()

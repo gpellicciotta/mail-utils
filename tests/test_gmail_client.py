@@ -1,6 +1,6 @@
 import base64
 
-from gmail_ingest.gmail_client import _extract_body_text, parse_addresses, parse_message
+from gmail_ingest.gmail_client import _extract_body_text, parse_addresses, parse_attachments, parse_message
 
 
 def _b64(text: str) -> str:
@@ -114,3 +114,40 @@ def test_parse_addresses_skips_absent_headers():
     raw = {"id": "msg1", "payload": {"headers": [{"name": "From", "value": "a@x.com"}]}}
     rows = parse_addresses(raw)
     assert [r["role"] for r in rows] == ["from"]
+
+
+def test_parse_attachments_finds_nested_filenamed_parts():
+    raw = {
+        "id": "msg1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "parts": [
+                _text_part("text/plain", "Body"),
+                {
+                    "mimeType": "multipart/mixed",
+                    "parts": [
+                        {
+                            "mimeType": "application/pdf",
+                            "filename": "invoice.pdf",
+                            "body": {"attachmentId": "att1", "size": 12345},
+                        }
+                    ],
+                },
+                {
+                    "mimeType": "image/png",
+                    "filename": "photo.png",
+                    "body": {"attachmentId": "att2", "size": 999},
+                },
+            ],
+        },
+    }
+    rows = parse_attachments(raw)
+    assert rows == [
+        {"message_id": "msg1", "attachment_id": "att1", "filename": "invoice.pdf", "mime_type": "application/pdf", "size": 12345},
+        {"message_id": "msg1", "attachment_id": "att2", "filename": "photo.png", "mime_type": "image/png", "size": 999},
+    ]
+
+
+def test_parse_attachments_returns_empty_when_none_present():
+    raw = {"id": "msg1", "payload": _text_part("text/plain", "Body")}
+    assert parse_attachments(raw) == []

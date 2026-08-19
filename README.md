@@ -197,7 +197,7 @@ run them).
 
 ## Database contents
 
-`gmail_index.db` has four tables.
+`gmail_index.db` has five tables.
 
 ### `messages`
 
@@ -226,10 +226,11 @@ message (not truncated — the whole plain-text body). If a message has no
 raw `text/html` source **unparsed** — i.e. with all HTML tags still in it,
 not converted to plain text. Only the primary text body is stored:
 
-- **Attachments are never stored.** The Gmail API's `format=full` doesn't
-  inline attachment bytes anyway (only an `attachmentId` you'd have to
-  fetch separately with `attachments.get`), and this app doesn't do that.
-  Attachment filenames aren't captured either.
+- **Attachment bytes are never stored** — the Gmail API's `format=full`
+  doesn't inline them anyway (only an `attachmentId` you'd have to fetch
+  separately with `attachments.get`), and this app doesn't do that.
+  Attachment *metadata* (filename, size, MIME type) is captured, in the
+  `attachments` table below.
 - **Inline images and other non-text MIME parts are ignored.**
 - If a message is `multipart/alternative` with both plain and HTML
   versions, only the plain-text version is kept.
@@ -283,6 +284,20 @@ table directly for its "Top senders"/"Top To/Cc/Bcc recipients"
 breakdowns — same caveat as `labels`: a database from before this table
 existed needs a resync (or a targeted re-fetch of specific messages)
 before those sections show anything.
+
+### `attachments`
+
+One row per MIME part that carries a filename — `message_id`,
+`attachment_id` (Gmail's id for a later `attachments.get` fetch, if you
+ever want the bytes), `filename`, `mime_type`, `size`. Includes inline
+images, not just conventional attachments — both show up as a filename on
+their MIME part, and since this only captures metadata (never the
+attachment's actual bytes), there's no reason to treat them differently.
+Populated at ingest time the same way as `message_addresses`
+(delete-then-insert per message on every rerun). `python -m
+gmail_ingest.stats` shows a one-line total count and total size; same
+"populated going forward only" caveat as `labels`/`message_addresses`
+applies to existing rows.
 
 ## Notes
 

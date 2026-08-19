@@ -168,3 +168,35 @@ def parse_addresses(raw: dict) -> list:
             seen.add(addr)
             rows.append({"message_id": message_id, "role": role, "address": addr, "name": name.strip() or None})
     return rows
+
+
+def parse_attachments(raw: dict) -> list:
+    """Return one row per MIME part that carries a filename - name, mime
+    type, size, and Gmail's attachmentId (needed for a future
+    attachments.get fetch; the bytes themselves are never fetched here).
+
+    Includes inline images, not just conventional attachments - both show
+    up as a "filename" on their MIME part, and this only captures
+    metadata, not content, so there's no reason to exclude either.
+    """
+    message_id = raw["id"]
+    attachments = []
+
+    def walk(part: dict) -> None:
+        filename = part.get("filename")
+        if filename:
+            body = part.get("body", {})
+            attachments.append(
+                {
+                    "message_id": message_id,
+                    "attachment_id": body.get("attachmentId"),
+                    "filename": filename,
+                    "mime_type": part.get("mimeType"),
+                    "size": body.get("size"),
+                }
+            )
+        for sub_part in part.get("parts", []) or []:
+            walk(sub_part)
+
+    walk(raw.get("payload", {}))
+    return attachments

@@ -7,6 +7,7 @@ from .db import (
     init_db,
     set_sync_state,
     upsert_addresses,
+    upsert_attachments,
     upsert_labels,
     upsert_message,
 )
@@ -20,6 +21,7 @@ from .gmail_client import (
     list_changed_message_ids,
     list_labels,
     parse_addresses,
+    parse_attachments,
     parse_message,
 )
 
@@ -54,6 +56,7 @@ def _full_sync(service, conn) -> None:
         raw = fetch_message(service, msg_id)
         upsert_message(conn, parse_message(raw))
         upsert_addresses(conn, raw["id"], parse_addresses(raw))
+        upsert_attachments(conn, raw["id"], parse_attachments(raw))
         count += 1
         if count % PROGRESS_LOG_INTERVAL == 0:
             if total:
@@ -74,6 +77,7 @@ def _incremental_sync(service, conn, last_history_id: str) -> None:
             raw = fetch_message(service, msg_id)
             upsert_message(conn, parse_message(raw))
             upsert_addresses(conn, raw["id"], parse_addresses(raw))
+            upsert_attachments(conn, raw["id"], parse_attachments(raw))
             count += 1
             if count % PROGRESS_LOG_INTERVAL == 0:
                 logger.info("Incremental sync progress: %d messages indexed so far", count)

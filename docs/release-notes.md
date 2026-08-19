@@ -1,5 +1,23 @@
 # Release Notes
 
+## v0.4.0
+Released on 2026-08-19
+
+Attachment metadata capture: a new `attachments` table (`message_id`,
+`attachment_id`, `filename`, `mime_type`, `size`) — `gmail_client.parse_attachments`
+walks the MIME tree collecting every part with a filename (inline images
+included, since it's metadata-only either way) and `db.upsert_attachments`
+stores it, same delete-then-insert-per-message pattern as
+`message_addresses`. No extra API call needed — `format=full` already
+returns this metadata, just unread until now. Attachment *bytes* are
+still never fetched.
+
+`python -m gmail_ingest.stats` gained a one-line "Attachments: N total,
+X.X MB" summary.
+
+Same "populated going forward only" caveat as the last two releases:
+existing rows won't retroactively gain attachment data until re-synced.
+
 ## v0.3.0
 Released on 2026-08-19
 
