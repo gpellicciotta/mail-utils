@@ -3,6 +3,7 @@ import logging
 import sqlite3
 from collections import Counter
 from datetime import datetime, timezone
+from importlib.metadata import version as _package_version
 from pathlib import Path
 
 import yaml
@@ -413,6 +414,9 @@ def _run_export(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gmail-ingest")
+    parser.add_argument(
+        "--version", action="version", version=f"gmail-ingest {_package_version('gmail-ingest')}"
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("help", help="Show this help message")

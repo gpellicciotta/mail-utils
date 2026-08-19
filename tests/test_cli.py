@@ -1,5 +1,7 @@
 import argparse
+from importlib.metadata import version as package_version
 
+import pytest
 import yaml
 
 import gmail_ingest.cli as cli
@@ -11,6 +13,14 @@ from gmail_ingest.db import (
     upsert_labels,
     upsert_message,
 )
+
+
+def test_version_flag_prints_installed_version(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        build_parser().parse_args(["--version"])
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert out.strip() == f"gmail-ingest {package_version('gmail-ingest')}"
 
 
 def test_import_subcommand_routes_to_run_import():

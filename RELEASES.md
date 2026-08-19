@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.11.0
+Released on 2026-08-19
+
+`gmail-ingest --version` now works, printing the installed version read
+live from package metadata (`importlib.metadata.version("gmail-ingest")`)
+rather than a second hardcoded string — `pyproject.toml`'s `version` field
+stays the only place it's actually written. (Deliberately not copying
+`python-template-project`'s hand-synced `__version__` pattern, which is
+exactly the kind of duplication that drifts.)
+
 ## v0.10.0
 Released on 2026-08-19
 

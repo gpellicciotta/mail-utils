@@ -28,6 +28,7 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 - All three of the above accept `--filter "..."` — see README's "Filtering" section for the syntax and the
   important semantic difference between `import --filter` (passed straight through to Gmail's own search) and
   `stats`/`export --filter` (evaluated locally by `gmail_ingest/filters.py`, a deliberately smaller subset).
+- Check the installed version: `gmail-ingest --version` (reads live package metadata — see Conventions below)
 - Run the test suite: `.venv\Scripts\python -m pytest`
 - Register the 30-minute scheduled task: `.\register_task.ps1`
 - Unregister it: `Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false`
@@ -106,7 +107,14 @@ needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for t
   Console walkthrough in "Setup" step 1, which was expanded specifically because the console's own UI/naming
   drifted from what the original short version assumed).
 - `pyproject.toml`'s `version` field drives what actually gets installed; keep `RELEASES.md`'s newest
-  heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention.
+  heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention. This is the
+  *only* place the version is written — `gmail-ingest --version` reads it back dynamically via
+  `importlib.metadata.version("gmail-ingest")` (see `cli.py`'s `build_parser`), not a second hardcoded
+  string, so there's nothing else to keep in sync. (`python-template-project` instead hand-maintains a
+  duplicate `__version__` in `__init__.py` — deliberately not copied here, since a second copy is exactly
+  the kind of thing that drifts.) This does mean the installed package metadata must actually be current for
+  `--version` to be right — after bumping the version, re-run `pip install -e .` (or reload it) before
+  trusting `--version`'s output.
 - Every backward-incompatible change bumps the version accordingly and gets a clearly-labeled breaking-change
   note in its `RELEASES.md` entry — this project is pre-1.0 (`0.x.y`), so in practice that means: a
   breaking change bumps the **minor** number (the `x` in `0.x.y`), same as every other feature addition does at

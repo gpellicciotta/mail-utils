@@ -205,6 +205,12 @@ working directory, which a flat root-level package layout can silently do instea
     to reconcile.
   - `help` (or no subcommand at all) — prints usage.
 
+  `gmail-ingest --version` prints the installed version, read live from package metadata
+  (`importlib.metadata.version("gmail-ingest")`) rather than a separately-maintained string — so it's always
+  exactly what `pip` thinks is installed, with nothing to manually keep in sync. `pyproject.toml`'s `version`
+  field is the one place the version is actually written; bump it, add a matching `RELEASES.md` entry, and
+  re-run `pip install -e .` to pick it up.
+
 ### Filtering
 
 `import`, `stats`, and `export` all accept `--filter "..."`, using a
