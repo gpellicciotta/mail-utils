@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Secrets - never commit these
+credentials.json
+token.json
+
+# Local data
+gmail_index.db
+logs/
