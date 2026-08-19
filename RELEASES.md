@@ -1,5 +1,38 @@
 # Release Notes
 
+## v0.9.0
+Released on 2026-08-19
+
+**Breaking change:** the `update` subcommand is renamed to `import` —
+`python -m gmail_ingest.cli update` is now `python -m gmail_ingest.cli
+import` (same for the `gmail-ingest` console script). `register_task.ps1`
+is updated to match; anything else invoking the old name needs to switch.
+
+Also: `import`, `stats`, and `export` all gained `--filter "..."`, using
+a Gmail-like syntax (`label:`, `from:`, `to:`, `cc:`, `bcc:`, `subject:`,
+`after:YYYY/MM/DD`, `before:YYYY/MM/DD`, `has:attachment`, bare
+words/`"quoted phrases"`, all ANDed). The three subcommands interpret it
+differently by design:
+
+- `import --filter` passes the string straight through to Gmail's own
+  search (full Gmail grammar, not just the subset above) and runs a
+  filtered full listing instead of incremental sync — `sync_state` is
+  deliberately left untouched, so it can't interfere with regular
+  unfiltered `import` runs. Since upserts never delete, a sequence of
+  differently-filtered imports accumulates a database containing the
+  union of everything matched so far — a practical way to build up a
+  database covering only the parts of your mailbox you care about.
+- `stats --filter` and `export --filter` are evaluated locally (new
+  `gmail_ingest/filters.py`, with its own test suite) against columns
+  already in the database, supporting only the token subset above — an
+  unrecognized `key:` prefix is a hard error, not silently ignored.
+  `from:`/`to:`/`cc:`/`bcc:` match against `message_addresses` (address
+  or name substring); `label:` is an exact case-insensitive label-name
+  match; `after:`/`before:` compare `internal_date_ms` and never match a
+  `NULL` row.
+
+See `README.md`'s new "Filtering" section for full details.
+
 ## v0.8.0
 Released on 2026-08-19
 

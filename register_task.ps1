@@ -9,7 +9,7 @@ Prerequisites before running this:
   1. python -m venv .venv ; .venv\Scripts\pip install -e .
   2. credentials.json placed in this folder (from Google Cloud Console)
   3. Run once manually so the OAuth browser consent happens interactively:
-        .venv\Scripts\python -m gmail_ingest.cli update
+        .venv\Scripts\python -m gmail_ingest.cli import
      and confirm token.json was created.
 
 This script itself only registers the schedule - it does not run the sync.
@@ -17,7 +17,7 @@ This script itself only registers the schedule - it does not run the sync.
 
 $ProjectDir = $PSScriptRoot
 $PythonExe = Join-Path $ProjectDir ".venv\Scripts\python.exe"
-$Action = New-ScheduledTaskAction -Execute $PythonExe -Argument "-m gmail_ingest.cli update" -WorkingDirectory $ProjectDir
+$Action = New-ScheduledTaskAction -Execute $PythonExe -Argument "-m gmail_ingest.cli import" -WorkingDirectory $ProjectDir
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration ([TimeSpan]::MaxValue)
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 

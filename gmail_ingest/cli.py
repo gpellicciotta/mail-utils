@@ -18,6 +18,7 @@ from .db import (
     upsert_labels,
     upsert_message,
 )
+from .filters import FilterError, message_matches, parse_filter
 from .gmail_client import (
     HistoryExpiredError,
     build_gmail_service,
@@ -96,7 +97,28 @@ def _incremental_sync(service, conn, last_history_id: str) -> None:
         _full_sync(service, conn)
 
 
-def _run_update(args: argparse.Namespace) -> None:
+def _filtered_import(service, conn, query: str) -> None:
+    """Import only messages matching Gmail's native `q` search syntax.
+
+    Passed straight through to Gmail (full grammar, zero parsing on our
+    side) via a filtered full listing - not incremental, and sync_state
+    is deliberately left untouched so this can't interfere with regular
+    unfiltered `import` runs' historyId-based bookkeeping.
+    """
+    logger.info("Running filtered import (query=%r); sync_state is not touched", query)
+    count = 0
+    for msg_id in list_all_message_ids(service, query=query):
+        raw = fetch_message(service, msg_id)
+        upsert_message(conn, parse_message(raw))
+        upsert_addresses(conn, raw["id"], parse_addresses(raw))
+        upsert_attachments(conn, raw["id"], parse_attachments(raw))
+        count += 1
+        if count % PROGRESS_LOG_INTERVAL == 0:
+            logger.info("Filtered import progress: %d messages indexed so far", count)
+    logger.info("Filtered import complete: %d messages indexed", count)
+
+
+def _run_import(args: argparse.Namespace) -> None:
     _setup_logging()
     logger.info("Starting gmail_ingest run")
 
@@ -106,11 +128,14 @@ def _run_update(args: argparse.Namespace) -> None:
 
     upsert_labels(conn, list_labels(service))
 
-    last_history_id = get_sync_state(conn, "last_history_id")
-    if last_history_id is None:
-        _full_sync(service, conn)
+    if args.filter:
+        _filtered_import(service, conn, args.filter)
     else:
-        _incremental_sync(service, conn, last_history_id)
+        last_history_id = get_sync_state(conn, "last_history_id")
+        if last_history_id is None:
+            _full_sync(service, conn)
+        else:
+            _incremental_sync(service, conn, last_history_id)
 
     conn.close()
     logger.info("Run finished")
@@ -124,6 +149,63 @@ def _format_size(num_bytes: int) -> str:
         size /= 1024
 
 
+def _load_filter_context(cur: sqlite3.Cursor):
+    """Load the per-message data message_matches() needs: resolved label
+    names, addresses grouped by (message_id, role), and which messages
+    have at least one attachment. Missing tables (old database, never
+    synced with the current code) degrade to empty - those tokens then
+    just never match, rather than erroring."""
+    try:
+        label_names = dict(cur.execute("SELECT id, name FROM labels"))
+    except sqlite3.OperationalError:
+        label_names = {}
+
+    addresses_by_message = {}
+    try:
+        for message_id, role, address, name in cur.execute(
+            "SELECT message_id, role, address, name FROM message_addresses"
+        ):
+            addresses_by_message.setdefault(message_id, {}).setdefault(role, []).append((address, name))
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        attachment_message_ids = {
+            row[0] for row in cur.execute("SELECT DISTINCT message_id FROM attachments")
+        }
+    except sqlite3.OperationalError:
+        attachment_message_ids = set()
+
+    return label_names, addresses_by_message, attachment_message_ids
+
+
+def _compute_matching_ids(cur: sqlite3.Cursor, filter_str: str) -> set:
+    tokens = parse_filter(filter_str)
+    label_names, addresses_by_message, attachment_message_ids = _load_filter_context(cur)
+
+    matching = set()
+    for msg_id, subject, body_text, label_ids, internal_date_ms in cur.execute(
+        "SELECT id, subject, body_text, label_ids, internal_date_ms FROM messages"
+    ):
+        labels = [label_names.get(lbl, lbl) for lbl in label_ids.split(",")] if label_ids else []
+        if message_matches(
+            tokens,
+            labels=labels,
+            addresses=addresses_by_message.get(msg_id, {}),
+            has_attachment=msg_id in attachment_message_ids,
+            internal_date_ms=internal_date_ms,
+            subject=subject,
+            body_text=body_text,
+        ):
+            matching.add(msg_id)
+    return matching
+
+
+def _create_filtered_ids_table(conn: sqlite3.Connection, matching_ids: set) -> None:
+    conn.execute("CREATE TEMP TABLE filtered_ids (id TEXT PRIMARY KEY)")
+    conn.executemany("INSERT INTO filtered_ids (id) VALUES (?)", [(i,) for i in matching_ids])
+
+
 def _run_stats(args: argparse.Namespace) -> None:
     if not DB_PATH.exists():
         print(f"No database found at {DB_PATH}")
@@ -132,10 +214,26 @@ def _run_stats(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
 
-    (total,) = cur.execute("SELECT COUNT(*) FROM messages").fetchone()
-    (threads,) = cur.execute("SELECT COUNT(DISTINCT thread_id) FROM messages").fetchone()
+    filter_str = getattr(args, "filter", None)
+    if filter_str:
+        try:
+            matching_ids = _compute_matching_ids(cur, filter_str)
+        except FilterError as e:
+            print(f"Invalid --filter: {e}")
+            conn.close()
+            return
+        _create_filtered_ids_table(conn, matching_ids)
+        msg_join = "JOIN filtered_ids f ON f.id = messages.id"
+        addr_join = "JOIN filtered_ids f ON f.id = message_addresses.message_id"
+        att_join = "JOIN filtered_ids f ON f.id = attachments.message_id"
+        print(f"Filter: {filter_str!r} ({len(matching_ids)} matching messages)\n")
+    else:
+        msg_join = addr_join = att_join = ""
+
+    (total,) = cur.execute(f"SELECT COUNT(*) FROM messages {msg_join}").fetchone()
+    (threads,) = cur.execute(f"SELECT COUNT(DISTINCT thread_id) FROM messages {msg_join}").fetchone()
     first_fetched, last_fetched = cur.execute(
-        "SELECT MIN(fetched_at), MAX(fetched_at) FROM messages"
+        f"SELECT MIN(fetched_at), MAX(fetched_at) FROM messages {msg_join}"
     ).fetchone()
     row = cur.execute(
         "SELECT value FROM sync_state WHERE key = 'last_history_id'"
@@ -160,7 +258,9 @@ def _run_stats(args: argparse.Namespace) -> None:
         label_names = {}
 
     label_counts = Counter()
-    for (label_ids,) in cur.execute("SELECT label_ids FROM messages WHERE label_ids != ''"):
+    for (label_ids,) in cur.execute(
+        f"SELECT label_ids FROM messages {msg_join} WHERE label_ids != ''"
+    ):
         label_counts.update(label_ids.split(","))
 
     if label_counts:
@@ -192,7 +292,7 @@ def _run_stats(args: argparse.Namespace) -> None:
             ("bcc", "Top Bcc recipients"),
         ):
             rows = cur.execute(
-                "SELECT address, MAX(name) AS name, COUNT(*) AS n FROM message_addresses "
+                f"SELECT address, MAX(name) AS name, COUNT(*) AS n FROM message_addresses {addr_join} "
                 "WHERE role = ? GROUP BY address ORDER BY n DESC LIMIT 15",
                 (role,),
             ).fetchall()
@@ -211,7 +311,7 @@ def _run_stats(args: argparse.Namespace) -> None:
 
     try:
         att_count, att_size = cur.execute(
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments"
+            f"SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments {att_join}"
         ).fetchone()
         print(f"\nAttachments: {att_count} total, {_format_size(att_size)}")
     except sqlite3.OperationalError:
@@ -235,6 +335,17 @@ def _run_export(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
 
+    filter_str = getattr(args, "filter", None)
+    matching_ids = None
+    if filter_str:
+        try:
+            matching_ids = _compute_matching_ids(cur, filter_str)
+        except FilterError as e:
+            print(f"Invalid --filter: {e}")
+            conn.close()
+            return
+        print(f"Filter: {filter_str!r} ({len(matching_ids)} matching messages)")
+
     label_names = dict(cur.execute("SELECT id, name FROM labels"))
 
     attachments_by_message = {}
@@ -256,6 +367,8 @@ def _run_export(args: argparse.Namespace) -> None:
         msg_id, thread_id, sender, recipient, cc, bcc, subject, date,
         internal_date_ms, label_ids, body_text, body_mime_type,
     ) in rows:
+        if matching_ids is not None and msg_id not in matching_ids:
+            continue
         if internal_date_ms:
             dt = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
             subdir = output_dir / f"{dt.year:04d}" / f"{dt.month:02d}"
@@ -293,7 +406,7 @@ def _run_export(args: argparse.Namespace) -> None:
 
         count += 1
         if count % EXPORT_PROGRESS_INTERVAL == 0:
-            print(f"  exported {count}/{len(rows)}")
+            print(f"  exported {count}/{len(matching_ids) if matching_ids is not None else len(rows)}")
 
     print(f"Exported {count} messages to {output_dir}")
 
@@ -304,14 +417,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("help", help="Show this help message")
 
-    update = subparsers.add_parser("update", help="Sync new mail into the local database")
-    update.set_defaults(func=_run_update)
+    filter_help = (
+        "Gmail-style filter, e.g. 'label:Work from:jane after:2026/01/01 has:attachment'. "
+        "Supported: label:, from:, to:, cc:, bcc:, subject:, after:YYYY/MM/DD, before:YYYY/MM/DD, "
+        "has:attachment, and bare words/\"quoted phrases\" (subject+body substring)."
+    )
+
+    import_cmd = subparsers.add_parser("import", help="Import new mail into the local database")
+    import_cmd.add_argument(
+        "--filter",
+        help=filter_help + " Passed straight through to Gmail's own search; forces a filtered full "
+        "listing instead of incremental sync, and does not update sync_state.",
+    )
+    import_cmd.set_defaults(func=_run_import)
 
     stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
+    stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
     stats.set_defaults(func=_run_stats)
 
     export = subparsers.add_parser("export", help="Export all messages as markdown files")
     export.add_argument("output_dir", help="Directory to write .md files into (created if missing)")
+    export.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
     export.set_defaults(func=_run_export)
 
     return parser

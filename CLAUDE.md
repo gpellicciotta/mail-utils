@@ -20,11 +20,14 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 
 - Install/update in editable mode, with the `dev` extra (pytest): `.venv\Scripts\pip install -e ".[dev]"`
   (drop `[dev]` if you only need to run the app, not the tests)
-- Run one sync (full on first run, incremental after): `.venv\Scripts\python -m gmail_ingest.cli update`
-  (or `gmail-ingest update` after install — see `pyproject.toml`'s `[project.scripts]`)
+- Run one sync (full on first run, incremental after): `.venv\Scripts\python -m gmail_ingest.cli import`
+  (or `gmail-ingest import` after install — see `pyproject.toml`'s `[project.scripts]`)
 - Print database stats (message count, threads, last sync state, top labels, recipients, attachments):
   `.venv\Scripts\python -m gmail_ingest.cli stats`
 - Export every message as markdown (offline, reads only the local DB): `.venv\Scripts\python -m gmail_ingest.cli export <output_dir>`
+- All three of the above accept `--filter "..."` — see README's "Filtering" section for the syntax and the
+  important semantic difference between `import --filter` (passed straight through to Gmail's own search) and
+  `stats`/`export --filter` (evaluated locally by `gmail_ingest/filters.py`, a deliberately smaller subset).
 - Run the test suite: `.venv\Scripts\python -m pytest`
 - Register the 30-minute scheduled task: `.\register_task.ps1`
 - Unregister it: `Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false`
@@ -33,7 +36,7 @@ Dependencies are declared once, in `pyproject.toml` — there is no separate `re
 
 ## Architecture
 
-Five modules under `gmail_ingest/`, each with one job:
+Six modules under `gmail_ingest/`, each with one job:
 
 - **`config.py`** — every path (`credentials.json`, `token.json`, `gmail_index.db`, `logs/gmail_ingest.log`) and
   the OAuth `SCOPES` list. Single source of truth for both; nothing else in the codebase hardcodes a path.
@@ -58,18 +61,32 @@ Five modules under `gmail_ingest/`, each with one job:
   message/attachment, replaced in full for a given message on every rerun via `upsert_addresses`/
   `upsert_attachments` — delete-then-insert, not an upsert, since Gmail messages are immutable so there's
   nothing to merge).
+- **`filters.py`** — `parse_filter`/`message_matches`: the local (non-Gmail-API) filter interpreter used by
+  `stats --filter`/`export --filter`. Deliberately a smaller grammar than Gmail's own — `label:`, `from:`,
+  `to:`, `cc:`, `bcc:`, `subject:`, `after:YYYY/MM/DD`, `before:YYYY/MM/DD`, `has:attachment`, bare
+  words/quoted phrases (subject+body substring), all ANDed. `parse_filter` raises `FilterError` on an
+  unrecognized `key:` prefix rather than silently ignoring it. `import --filter` does *not* use this module —
+  it passes the raw string straight to Gmail's own search instead, getting Gmail's full grammar for free. See
+  README's "Filtering" section for the full rationale and the exact semantics of each token (label match is
+  exact-name not substring; `from:`/etc. match against `message_addresses`, not the raw header; `after:`/
+  `before:` compare `internal_date_ms` and never match a `NULL`).
 - **`cli.py`** — the entry point (`python -m gmail_ingest.cli <command>`, or `gmail-ingest <command>` once
-  installed). `argparse`-based, four subcommands: `update` (sets up logging, refreshes the `labels` table,
+  installed). `argparse`-based, four subcommands: `import` (sets up logging, refreshes the `labels` table,
   decides full vs. incremental sync from whether `sync_state` has a `last_history_id` yet, drives the
   fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages — this is what
-  `register_task.ps1` schedules), `stats` (read-only reporting straight off the local SQLite file; no Gmail API
-  calls, so it works offline and needs no credentials), `export <output_dir>` (also offline/local-DB-only —
+  `register_task.ps1` schedules; `--filter` switches to a filtered full listing that skips `sync_state`
+  entirely, see `filters.py` above), `stats` (read-only reporting straight off the local SQLite file; no Gmail
+  API calls, so it works offline and needs no credentials), `export <output_dir>` (also offline/local-DB-only —
   writes one YAML-frontmatter `.md` file per message, bucketed into `<YYYY>/<MM>/` subdirectories by
   `internal_date_ms`, `unknown/` for rows that don't have one yet; uses PyYAML's `safe_dump` rather than
   hand-rolled string formatting specifically so subjects/names with colons, quotes, or unicode serialize
-  correctly), and `help` (prints usage; so does running with no subcommand). Used to be two separate modules
-  (`main.py`/`stats.py`) — merged here so there's one entry point with real subcommands instead of separately
-  invoked scripts.
+  correctly), and `help` (prints usage; so does running with no subcommand). `stats --filter`/`export --filter`
+  compute a matching-id set once via `_compute_matching_ids` and either build a `filtered_ids` temp table
+  (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just filter the already-fetched
+  row list in Python (`export`, simpler since it's not doing SQL aggregation anyway). Used to be two separate
+  modules (`main.py`/`stats.py`) — merged here so there's one entry point with real subcommands instead of
+  separately invoked scripts. `import` was originally named `update`; renamed for clarity once `export` and
+  filtering existed too and "update" no longer distinctly described what it did.
 
 Full column-by-column documentation of what's actually stored (and, importantly, what *isn't* — e.g. attachments
 are never captured at all) lives in `README.md`'s "Database contents" section. Treat that as the authoritative

@@ -102,7 +102,7 @@ don't need to run tests, `.venv\Scripts\pip install -e .` is enough.
 ### 3. First run (interactive, does the one-time browser consent)
 
 ```powershell
-.venv\Scripts\python -m gmail_ingest.cli update
+.venv\Scripts\python -m gmail_ingest.cli import
 ```
 
 A browser window opens for the Google consent screen. After approving,
@@ -176,10 +176,11 @@ gmail-ingest/
 - **`cli.py`**: the entry point, `python -m gmail_ingest.cli <command>`
   (or `gmail-ingest <command>` after `pip install -e .` — see
   `pyproject.toml`'s `[project.scripts]`). Four subcommands:
-  - `update` — sets up logging to `logs/gmail_ingest.log`, decides full
+  - `import` — sets up logging to `logs/gmail_ingest.log`, decides full
     vs. incremental sync based on whether `sync_state` already has a
     `last_history_id`, and drives the fetch/parse/upsert loop. This is
-    what `register_task.ps1` schedules.
+    what `register_task.ps1` schedules. With `--filter`, see "Filtering"
+    below.
   - `stats` — reads `gmail_index.db` directly (no Gmail API calls, no
     credentials needed) and prints summary stats.
   - `export <output_dir>` — dumps every message as a `.md` file (offline,
@@ -195,6 +196,45 @@ gmail-ingest/
     with identical content — messages are immutable, so there's nothing
     to reconcile.
   - `help` (or no subcommand at all) — prints usage.
+
+### Filtering
+
+`import`, `stats`, and `export` all accept `--filter "..."`, using a
+Gmail-like syntax: `label:X`, `from:X`, `to:X`, `cc:X`, `bcc:X`,
+`subject:X`, `after:YYYY/MM/DD`, `before:YYYY/MM/DD`, `has:attachment`,
+and bare words/`"quoted phrases"` (substring match against subject +
+body). Multiple tokens are ANDed together, e.g.
+`--filter 'label:Work from:jane after:2026/01/01 has:attachment'`.
+
+**The three subcommands don't interpret this identically**, and that's
+deliberate rather than an oversight:
+
+- `import --filter` passes the string **straight through to Gmail's own
+  search** (`gmail_client.parse_message`'s `q` parameter) — so it
+  actually gets Gmail's full query grammar (`OR`, negation, etc.), not
+  just the subset listed above. This runs a **filtered full listing**
+  instead of incremental sync, and deliberately does **not** update
+  `sync_state`/`last_history_id` — so it can't interfere with your
+  regular unfiltered `import` runs' incremental bookkeeping. You can run
+  a sequence of differently-filtered imports to build up a database
+  containing just the subsets of your mailbox you care about; each run
+  only adds/updates rows matching its own filter (upserts never delete),
+  so the database accumulates the *union* across runs.
+- `stats --filter` and `export --filter` are evaluated **locally**, in
+  `gmail_ingest/filters.py`, against columns already in the database —
+  they never call the Gmail API. This only supports the token subset
+  listed above (no `OR`, no negation, no other Gmail operators); an
+  unrecognized `key:` prefix is a hard error rather than being silently
+  ignored, so a filter that matches nothing can't masquerade as one that
+  matches everything.
+- `label:` matches an exact (case-insensitive) resolved label name.
+  `from:`/`to:`/`cc:`/`bcc:` match substrings of either the address or
+  display name, using the `message_addresses` table (so they only work
+  on rows synced after that table existed — see its caveat above).
+  `after:`/`before:` compare against `internal_date_ms` (UTC midnight
+  boundaries, `after` inclusive/`before` exclusive) and never match a row
+  where it's `NULL`. `has:attachment` checks membership in the
+  `attachments` table.
 
 ## Development
 
@@ -295,7 +335,7 @@ does this via `email.utils.getaddresses`, so a header like
 lowercase-normalized rows rather than one raw string. `name` is whatever
 display name was on that particular message (not normalized — the same
 address can show a different `name` across rows if senders varied it).
-Populated once per message at ingest time (`cli.py`'s `update` command,
+Populated once per message at ingest time (`cli.py`'s `import` command,
 alongside `upsert_message`), replacing that message's rows on every rerun rather
 than accumulating duplicates. `python -m gmail_ingest.cli stats` reads this
 table directly for its "Top senders"/"Top To/Cc/Bcc recipients"
