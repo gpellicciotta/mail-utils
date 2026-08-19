@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.12.0
+Released on 2026-08-19
+
+Housekeeping, no code change: verified the full test suite and CLI
+(`--version`, `help`) run correctly on Linux, in a `python:3.11-slim`
+Docker container matching CI's Python version — confirmed the
+pure-Python/pathlib design needed no changes. Updated README/CLAUDE.md's
+framing accordingly: the app itself is cross-platform, only the
+scheduling story (`register_task.ps1`) is currently Windows-only.
+
 ## v0.11.0
 Released on 2026-08-19
 

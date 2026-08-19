@@ -12,7 +12,11 @@ package/library, no server, no multi-tenant concerns.
 scope (`config.py`'s `SCOPES`). It never sends, labels, or deletes anything. Don't add write/send/delete
 capability without explicitly discussing it first — that's a deliberate scope decision, not an oversight.
 
-Windows-first: setup docs and `register_task.ps1` assume PowerShell and Windows Task Scheduler.
+The core app itself is cross-platform (pure Python/stdlib + pathlib, no Windows-specific code) — verified by
+running the full test suite and CLI in a `python:3.11-slim` Docker container. What's currently Windows-only is
+the *scheduling* story: `register_task.ps1` (PowerShell, Windows Task Scheduler) and the Setup walkthrough's
+PowerShell command examples. A cross-platform `schedule` CLI subcommand (Task Scheduler on Windows, cron
+elsewhere) is tracked in `TODO.md` to close that gap.
 
 ## Commands
 

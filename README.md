@@ -6,6 +6,14 @@ local SQLite database, using the Gmail API and OAuth 2.0.
 Read-only: the app only requests the `gmail.readonly` scope. It never sends,
 labels, or deletes anything.
 
+The app itself is cross-platform (verified in a `python:3.11-slim` Docker
+container). The setup instructions below use PowerShell since that's the
+primary development environment, but the underlying commands (`python -m
+venv`, `pip install`, `gmail-ingest <command>`) work the same on Linux/macOS
+with their shell equivalents. Scheduling a recurring run currently only has
+a documented path on Windows (`register_task.ps1`) — see `TODO.md` for a
+planned cross-platform `schedule` command.
+
 ## How it works
 
 - **Auth**: OAuth 2.0 "Installed App" flow. The browser consent screen is
