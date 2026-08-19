@@ -2,7 +2,14 @@ import logging
 
 from .auth import get_credentials
 from .config import DB_PATH, LOG_DIR, LOG_PATH
-from .db import get_sync_state, init_db, set_sync_state, upsert_labels, upsert_message
+from .db import (
+    get_sync_state,
+    init_db,
+    set_sync_state,
+    upsert_addresses,
+    upsert_labels,
+    upsert_message,
+)
 from .gmail_client import (
     HistoryExpiredError,
     build_gmail_service,
@@ -12,6 +19,7 @@ from .gmail_client import (
     list_all_message_ids,
     list_changed_message_ids,
     list_labels,
+    parse_addresses,
     parse_message,
 )
 
@@ -43,8 +51,9 @@ def _full_sync(service, conn) -> None:
         )
     count = 0
     for msg_id in list_all_message_ids(service):
-        parsed = parse_message(fetch_message(service, msg_id))
-        upsert_message(conn, parsed)
+        raw = fetch_message(service, msg_id)
+        upsert_message(conn, parse_message(raw))
+        upsert_addresses(conn, raw["id"], parse_addresses(raw))
         count += 1
         if count % PROGRESS_LOG_INTERVAL == 0:
             if total:
@@ -62,8 +71,9 @@ def _incremental_sync(service, conn, last_history_id: str) -> None:
     try:
         count = 0
         for msg_id in list_changed_message_ids(service, last_history_id):
-            parsed = parse_message(fetch_message(service, msg_id))
-            upsert_message(conn, parsed)
+            raw = fetch_message(service, msg_id)
+            upsert_message(conn, parse_message(raw))
+            upsert_addresses(conn, raw["id"], parse_addresses(raw))
             count += 1
             if count % PROGRESS_LOG_INTERVAL == 0:
                 logger.info("Incremental sync progress: %d messages indexed so far", count)

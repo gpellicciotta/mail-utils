@@ -1,5 +1,22 @@
 # Release Notes
 
+## v0.3.0
+Released on 2026-08-19
+
+Recipient statistics: a new `message_addresses` table (`message_id`,
+`role`, `address`, `name`) captures every individual address from a
+message's From/To/Cc/Bcc headers, normalized (lowercased) for dedup, at
+ingest time — computed once by `gmail_client.parse_addresses` and stored
+by `db.upsert_addresses` alongside the existing `upsert_message` call in
+both the full and incremental sync loops. `python -m gmail_ingest.stats`
+now reads that table directly (no header-parsing at query time) to print
+"Top senders" / "Top To recipients" / "Top Cc recipients" / "Top Bcc
+recipients" sections, same style as the existing "Top labels".
+
+Like `labels`, and like the `cc`/`bcc` columns added in `v0.2.0`, this is
+populated going forward only — a database from before this table existed
+won't have historical rows until those messages are re-synced.
+
 ## v0.2.0
 Released on 2026-08-19
 

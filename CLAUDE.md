@@ -39,13 +39,17 @@ Five modules under `gmail_ingest/`, each with one job:
 - **`gmail_client.py`** — thin wrapper over the Gmail API: paginated full-mailbox listing
   (`list_all_message_ids`), paginated History API diffing (`list_changed_message_ids`, raises
   `HistoryExpiredError` on a 404 so the caller can fall back to a full resync), label listing
-  (`list_labels`), single-message fetch (`fetch_message`, `format=full`), and `parse_message` — the one place
-  that decides what's kept from a raw Gmail API message and what's dropped. See `README.md`'s "Database
-  contents" section for the exact, currently-documented behavior (and known gaps — `docs/todo.md` tracks fixing
-  them).
-- **`db.py`** — SQLite schema and upsert helpers. Three tables: `messages` (upserted by Gmail's message `id`, so
+  (`list_labels`), single-message fetch (`fetch_message`, `format=full`), `parse_message` — the one place
+  that decides what's kept from a raw Gmail API message and what's dropped, for the `messages` table row — and
+  `parse_addresses`, a sibling pure function that splits/normalizes the same message's From/To/Cc/Bcc headers
+  into individual `message_addresses` rows (via `email.utils.getaddresses`, lowercased for dedup). See
+  `README.md`'s "Database contents" section for the exact, currently-documented behavior (and known gaps —
+  `docs/todo.md` tracks fixing them).
+- **`db.py`** — SQLite schema and upsert helpers. Four tables: `messages` (upserted by Gmail's message `id`, so
   reruns never duplicate), `sync_state` (currently just `last_history_id`), `labels` (id -> display name,
-  refreshed in full every run).
+  refreshed in full every run), `message_addresses` (one row per message/role/address, replaced in full for a
+  given message on every rerun via `upsert_addresses` — delete-then-insert, not an upsert, since Gmail messages
+  are immutable so there's nothing to merge).
 - **`main.py`** — orchestrates one run: sets up logging, refreshes the `labels` table, decides full vs.
   incremental sync from whether `sync_state` has a `last_history_id` yet, drives the fetch/parse/upsert loop with
   progress logging every `PROGRESS_LOG_INTERVAL` (50) messages.

@@ -197,7 +197,7 @@ run them).
 
 ## Database contents
 
-`gmail_index.db` has three tables.
+`gmail_index.db` has four tables.
 
 ### `messages`
 
@@ -263,6 +263,26 @@ stays in sync with any label renames/additions. Used by
 `python -m gmail_ingest.stats` to show real label names instead of opaque
 `Label_NNNNNNN` ids — a database from before this table existed will just
 show raw ids until it's synced again with the current code.
+
+### `message_addresses`
+
+One row per (message, role, address) — `message_id`, `role` (`from`,
+`to`, `cc`, or `bcc`), `address`, `name`. Unlike `messages.sender`/
+`recipient`/`cc`/`bcc` (which store the raw, unparsed header string),
+this table has each individual address broken out and normalized
+(lowercased) for reliable deduplication — `gmail_client.parse_addresses`
+does this via `email.utils.getaddresses`, so a header like
+`"Bob <bob@x.com>, \"Carl, Jr\" <CARL@x.com>"` becomes two separate,
+lowercase-normalized rows rather than one raw string. `name` is whatever
+display name was on that particular message (not normalized — the same
+address can show a different `name` across rows if senders varied it).
+Populated once per message at ingest time (`main.py`, alongside
+`upsert_message`), replacing that message's rows on every rerun rather
+than accumulating duplicates. `python -m gmail_ingest.stats` reads this
+table directly for its "Top senders"/"Top To/Cc/Bcc recipients"
+breakdowns — same caveat as `labels`: a database from before this table
+existed needs a resync (or a targeted re-fetch of specific messages)
+before those sections show anything.
 
 ## Notes
 

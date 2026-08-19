@@ -1,4 +1,5 @@
 import base64
+from email.utils import getaddresses
 from typing import Iterator, Optional
 
 from google.oauth2.credentials import Credentials
@@ -120,8 +121,12 @@ def _extract_body_text(payload: dict) -> str:
     return ""
 
 
+def _headers(raw: dict) -> dict:
+    return {h["name"].lower(): h["value"] for h in raw.get("payload", {}).get("headers", [])}
+
+
 def parse_message(raw: dict) -> dict:
-    headers = {h["name"].lower(): h["value"] for h in raw.get("payload", {}).get("headers", [])}
+    headers = _headers(raw)
     return {
         "id": raw["id"],
         "thread_id": raw.get("threadId"),
@@ -135,3 +140,31 @@ def parse_message(raw: dict) -> dict:
         "label_ids": ",".join(raw.get("labelIds", [])),
         "body_text": _extract_body_text(raw.get("payload", {})),
     }
+
+
+def parse_addresses(raw: dict) -> list:
+    """Return one row per distinct (role, address) pair on this message,
+    from the From/To/Cc/Bcc headers - e.g.
+    [{"message_id": ..., "role": "to", "address": "a@x.com", "name": "A"}, ...]
+
+    Addresses are lowercased for dedup (real-world mail providers, Gmail
+    included, treat addresses as case-insensitive even though the RFC
+    technically allows a case-sensitive local part). Multiple addresses in
+    one header (e.g. several To: recipients) are each their own row;
+    duplicate addresses within the same header+message are collapsed.
+    """
+    message_id = raw["id"]
+    headers = _headers(raw)
+    rows = []
+    for role in ("from", "to", "cc", "bcc"):
+        value = headers.get(role)
+        if not value:
+            continue
+        seen = set()
+        for name, addr in getaddresses([value]):
+            addr = addr.strip().lower()
+            if not addr or addr in seen:
+                continue
+            seen.add(addr)
+            rows.append({"message_id": message_id, "role": role, "address": addr, "name": name.strip() or None})
+    return rows

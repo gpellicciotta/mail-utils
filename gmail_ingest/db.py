@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS labels (
     id   TEXT PRIMARY KEY,
     name TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS message_addresses (
+    message_id TEXT NOT NULL,
+    role       TEXT NOT NULL,
+    address    TEXT NOT NULL,
+    name       TEXT,
+    PRIMARY KEY (message_id, role, address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_addresses_role_address
+    ON message_addresses (role, address);
 """
 
 
@@ -71,6 +82,23 @@ def upsert_labels(conn: sqlite3.Connection, labels: list[dict]) -> None:
         "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
         labels,
     )
+    conn.commit()
+
+
+def upsert_addresses(conn: sqlite3.Connection, message_id: str, addresses: list) -> None:
+    """Replace message_id's rows in message_addresses with `addresses`.
+
+    Delete-then-insert rather than an upsert: Gmail messages are immutable,
+    so a rerun's address set for a given message never actually differs,
+    but this keeps behavior correct/simple if it ever does.
+    """
+    conn.execute("DELETE FROM message_addresses WHERE message_id = ?", (message_id,))
+    if addresses:
+        conn.executemany(
+            "INSERT INTO message_addresses (message_id, role, address, name) "
+            "VALUES (:message_id, :role, :address, :name)",
+            addresses,
+        )
     conn.commit()
 
 

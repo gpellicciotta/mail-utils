@@ -58,6 +58,37 @@ def run() -> None:
                 "code at least once to populate the labels table.)"
             )
 
+    try:
+        cur.execute("SELECT 1 FROM message_addresses LIMIT 1")
+        has_addresses = True
+    except sqlite3.OperationalError:
+        has_addresses = False
+
+    if has_addresses:
+        for role, title in (
+            ("from", "Top senders"),
+            ("to", "Top To recipients"),
+            ("cc", "Top Cc recipients"),
+            ("bcc", "Top Bcc recipients"),
+        ):
+            rows = cur.execute(
+                "SELECT address, MAX(name) AS name, COUNT(*) AS n FROM message_addresses "
+                "WHERE role = ? GROUP BY address ORDER BY n DESC LIMIT 15",
+                (role,),
+            ).fetchall()
+            if not rows:
+                continue
+            labeled = [(f"{name} <{address}>" if name else address, n) for address, name, n in rows]
+            width = max(len(label) for label, _ in labeled)
+            print(f"\n{title}:")
+            for label, n in labeled:
+                print(f"  {label:<{width}} {n:>6}")
+    else:
+        print(
+            "\n(Recipient stats unavailable - run a sync with the current "
+            "code at least once to populate the message_addresses table.)"
+        )
+
     conn.close()
 
 

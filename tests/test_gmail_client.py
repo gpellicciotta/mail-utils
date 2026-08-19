@@ -1,6 +1,6 @@
 import base64
 
-from gmail_ingest.gmail_client import _extract_body_text, parse_message
+from gmail_ingest.gmail_client import _extract_body_text, parse_addresses, parse_message
 
 
 def _b64(text: str) -> str:
@@ -79,3 +79,38 @@ def test_parse_message_captures_cc_and_bcc_headers():
     parsed = parse_message(raw)
     assert parsed["cc"] == "carl@example.com"
     assert parsed["bcc"] == "hidden@example.com"
+
+
+def test_parse_addresses_splits_and_normalizes_multi_address_headers():
+    raw = {
+        "id": "msg1",
+        "payload": {
+            "headers": [
+                {"name": "From", "value": "Jane Doe <Jane@Example.com>"},
+                {"name": "To", "value": 'Bob <bob@example.com>, "Carl, Jr" <CARL@example.com>'},
+            ],
+        },
+    }
+    rows = parse_addresses(raw)
+    assert rows == [
+        {"message_id": "msg1", "role": "from", "address": "jane@example.com", "name": "Jane Doe"},
+        {"message_id": "msg1", "role": "to", "address": "bob@example.com", "name": "Bob"},
+        {"message_id": "msg1", "role": "to", "address": "carl@example.com", "name": "Carl, Jr"},
+    ]
+
+
+def test_parse_addresses_dedupes_repeated_address_in_same_header():
+    raw = {
+        "id": "msg1",
+        "payload": {
+            "headers": [{"name": "To", "value": "a@x.com, A@X.COM"}],
+        },
+    }
+    rows = parse_addresses(raw)
+    assert rows == [{"message_id": "msg1", "role": "to", "address": "a@x.com", "name": None}]
+
+
+def test_parse_addresses_skips_absent_headers():
+    raw = {"id": "msg1", "payload": {"headers": [{"name": "From", "value": "a@x.com"}]}}
+    rows = parse_addresses(raw)
+    assert [r["role"] for r in rows] == ["from"]
