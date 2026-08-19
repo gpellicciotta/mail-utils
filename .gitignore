@@ -13,3 +13,4 @@ token.json
 # Local data
 gmail_index.db
 logs/
+export/

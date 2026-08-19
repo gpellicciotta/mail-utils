@@ -16,17 +16,17 @@ def test_extract_body_text_prefers_plain_when_siblings():
         "mimeType": "multipart/alternative",
         "parts": [_text_part("text/plain", "Plain body"), _text_part("text/html", "<p>HTML body</p>")],
     }
-    assert _extract_body_text(payload) == "Plain body"
+    assert _extract_body_text(payload) == ("Plain body", "text/plain")
 
 
 def test_extract_body_text_falls_back_to_raw_html_when_no_plain_part():
     payload = _text_part("text/html", "<p>Only HTML</p>")
-    assert _extract_body_text(payload) == "<p>Only HTML</p>"
+    assert _extract_body_text(payload) == ("<p>Only HTML</p>", "text/html")
 
 
 def test_extract_body_text_returns_empty_for_no_text_parts():
     payload = {"mimeType": "multipart/mixed", "parts": [{"mimeType": "application/pdf", "body": {}}]}
-    assert _extract_body_text(payload) == ""
+    assert _extract_body_text(payload) == ("", None)
 
 
 def test_parse_message_maps_headers_and_metadata():
@@ -60,6 +60,7 @@ def test_parse_message_maps_headers_and_metadata():
         "snippet": "a short preview",
         "label_ids": "INBOX,UNREAD",
         "body_text": "Body text",
+        "body_mime_type": "text/plain",
     }
 
 

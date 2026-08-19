@@ -1,5 +1,28 @@
 # Release Notes
 
+## v0.8.0
+Released on 2026-08-19
+
+New `export` command: `gmail-ingest export <output_dir>` dumps every
+message as a YAML-frontmatter markdown file — one `.md` per message,
+under `<output_dir>/<YYYY>/<MM>/<message_id>.md` (bucketed by
+`internal_date_ms`; `unknown/` for rows synced before that column
+existed). Frontmatter covers id/thread_id, from/to/cc/bcc, subject, date,
+internal_date, labels (resolved to names), attachments
+(filename/mime_type/size), and `body_mime_type`; empty/null fields are
+omitted rather than written blank. Entirely offline — reads only the
+local database, no Gmail API calls or credentials needed, same as
+`stats`. Reruns just overwrite files (messages are immutable, nothing to
+reconcile). Uses PyYAML (`safe_dump`) for correct serialization of
+subjects/names containing colons, quotes, or unicode — a new runtime
+dependency.
+
+Also: `parse_message` now records `body_mime_type` (`"text/plain"` or
+`"text/html"`) alongside `body_text` in a new column, so it's clear which
+case produced a given `body_text` without re-deriving it — needed by
+`export`, but generally useful. Same "populated going forward only"
+migration caveat as `internal_date_ms`/`cc`/`bcc`.
+
 ## v0.7.0
 Released on 2026-08-19
 

@@ -24,6 +24,7 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   (or `gmail-ingest update` after install — see `pyproject.toml`'s `[project.scripts]`)
 - Print database stats (message count, threads, last sync state, top labels, recipients, attachments):
   `.venv\Scripts\python -m gmail_ingest.cli stats`
+- Export every message as markdown (offline, reads only the local DB): `.venv\Scripts\python -m gmail_ingest.cli export <output_dir>`
 - Run the test suite: `.venv\Scripts\python -m pytest`
 - Register the 30-minute scheduled task: `.\register_task.ps1`
 - Unregister it: `Unregister-ScheduledTask -TaskName GmailIngest -Confirm:$false`
@@ -46,8 +47,11 @@ Five modules under `gmail_ingest/`, each with one job:
   `parse_addresses`, a sibling pure function that splits/normalizes the same message's From/To/Cc/Bcc headers
   into individual `message_addresses` rows (via `email.utils.getaddresses`, lowercased for dedup), and
   `parse_attachments`, which walks the MIME tree collecting every part with a filename (metadata only —
-  filename/mime type/size/`attachmentId` — never the bytes). See `README.md`'s "Database contents" section for
-  the exact, currently-documented behavior (and known gaps — `TODO.md` tracks fixing them).
+  filename/mime type/size/`attachmentId` — never the bytes). `parse_message`'s body extraction also records
+  `body_mime_type` (`"text/plain"` or `"text/html"`) alongside `body_text`, so downstream consumers (like
+  `cli.py`'s `export`) can tell which case they're in without re-deriving it. See `README.md`'s "Database
+  contents" section for the exact, currently-documented behavior (and known gaps — `TODO.md` tracks fixing
+  them).
 - **`db.py`** — SQLite schema and upsert helpers. Five tables: `messages` (upserted by Gmail's message `id`, so
   reruns never duplicate), `sync_state` (currently just `last_history_id`), `labels` (id -> display name,
   refreshed in full every run), `message_addresses` and `attachments` (each one row per message/role/address or
@@ -55,13 +59,17 @@ Five modules under `gmail_ingest/`, each with one job:
   `upsert_attachments` — delete-then-insert, not an upsert, since Gmail messages are immutable so there's
   nothing to merge).
 - **`cli.py`** — the entry point (`python -m gmail_ingest.cli <command>`, or `gmail-ingest <command>` once
-  installed). `argparse`-based, three subcommands: `update` (sets up logging, refreshes the `labels` table,
+  installed). `argparse`-based, four subcommands: `update` (sets up logging, refreshes the `labels` table,
   decides full vs. incremental sync from whether `sync_state` has a `last_history_id` yet, drives the
   fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages — this is what
   `register_task.ps1` schedules), `stats` (read-only reporting straight off the local SQLite file; no Gmail API
-  calls, so it works offline and needs no credentials), and `help` (prints usage; so does running with no
-  subcommand). Used to be two separate modules (`main.py`/`stats.py`) — merged here so there's one entry point
-  with real subcommands instead of two separately-invoked scripts.
+  calls, so it works offline and needs no credentials), `export <output_dir>` (also offline/local-DB-only —
+  writes one YAML-frontmatter `.md` file per message, bucketed into `<YYYY>/<MM>/` subdirectories by
+  `internal_date_ms`, `unknown/` for rows that don't have one yet; uses PyYAML's `safe_dump` rather than
+  hand-rolled string formatting specifically so subjects/names with colons, quotes, or unicode serialize
+  correctly), and `help` (prints usage; so does running with no subcommand). Used to be two separate modules
+  (`main.py`/`stats.py`) — merged here so there's one entry point with real subcommands instead of separately
+  invoked scripts.
 
 Full column-by-column documentation of what's actually stored (and, importantly, what *isn't* — e.g. attachments
 are never captured at all) lives in `README.md`'s "Database contents" section. Treat that as the authoritative

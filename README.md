@@ -175,13 +175,25 @@ gmail-ingest/
   duplicates rows.
 - **`cli.py`**: the entry point, `python -m gmail_ingest.cli <command>`
   (or `gmail-ingest <command>` after `pip install -e .` — see
-  `pyproject.toml`'s `[project.scripts]`). Three subcommands:
+  `pyproject.toml`'s `[project.scripts]`). Four subcommands:
   - `update` — sets up logging to `logs/gmail_ingest.log`, decides full
     vs. incremental sync based on whether `sync_state` already has a
     `last_history_id`, and drives the fetch/parse/upsert loop. This is
     what `register_task.ps1` schedules.
   - `stats` — reads `gmail_index.db` directly (no Gmail API calls, no
     credentials needed) and prints summary stats.
+  - `export <output_dir>` — dumps every message as a `.md` file (offline,
+    reads only `gmail_index.db`), one file per message under
+    `<output_dir>/<YYYY>/<MM>/<message_id>.md` (bucketed by
+    `internal_date_ms`; messages without one — synced before that column
+    existed — land under `<output_dir>/unknown/`). Each file is a YAML
+    frontmatter block (id, thread_id, from/to/cc/bcc, subject, date,
+    internal_date, labels resolved to names, attachments as
+    filename/mime_type/size, body_mime_type — fields that are empty/null
+    are omitted rather than written as blank) followed by `---` and the
+    message body as the document content. Reruns just overwrite files
+    with identical content — messages are immutable, so there's nothing
+    to reconcile.
   - `help` (or no subcommand at all) — prints usage.
 
 ## Development
@@ -219,14 +231,18 @@ duplicate rows). Columns, and exactly what each one holds:
 | `snippet`    | Gmail's own `snippet` field       | Gmail's short auto-generated preview (~100–200 chars) — separate from, and much shorter than, `body_text`. |
 | `label_ids`  | Comma-joined `labelIds`           | Gmail's internal label IDs (e.g. `INBOX,UNREAD,IMPORTANT`). Custom user labels appear as opaque IDs like `Label_12345` — join against the `labels` table (below) to get display names. |
 | `body_text`  | Decoded message body              | See "Body text" below. |
+| `body_mime_type` | `"text/plain"` or `"text/html"` | Which MIME type `body_text` actually came from — see "Body text" below. `NULL` on rows with no text part at all, or synced before this column existed. |
 | `fetched_at` | Local clock, set on upsert        | When this app wrote/updated the row — not when the email was sent or received. |
 
 **Body text**: `parse_message` walks the MIME tree and stores the full
 decoded text of the *first* `text/plain` part it finds anywhere in the
-message (not truncated — the whole plain-text body). If a message has no
+message (not truncated — the whole plain-text body), recording
+`body_mime_type = "text/plain"` alongside it. If a message has no
 `text/plain` part at all (HTML-only email), it falls back to storing the
 raw `text/html` source **unparsed** — i.e. with all HTML tags still in it,
-not converted to plain text. Only the primary text body is stored:
+not converted to plain text — and `body_mime_type = "text/html"` instead,
+so anything reading `body_text` can tell which case it's in. Only the
+primary text body is stored:
 
 - **Attachment bytes are never stored** — the Gmail API's `format=full`
   doesn't inline them anyway (only an `attachmentId` you'd have to fetch

@@ -2,6 +2,10 @@ import argparse
 import logging
 import sqlite3
 from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+import yaml
 
 from .auth import get_credentials
 from .config import DB_PATH, LOG_DIR, LOG_PATH
@@ -219,6 +223,81 @@ def _run_stats(args: argparse.Namespace) -> None:
     conn.close()
 
 
+EXPORT_PROGRESS_INTERVAL = 500
+
+
+def _run_export(args: argparse.Namespace) -> None:
+    if not DB_PATH.exists():
+        print(f"No database found at {DB_PATH}")
+        return
+
+    output_dir = Path(args.output_dir)
+    conn = sqlite3.connect(str(DB_PATH))
+    cur = conn.cursor()
+
+    label_names = dict(cur.execute("SELECT id, name FROM labels"))
+
+    attachments_by_message = {}
+    for message_id, filename, mime_type, size in cur.execute(
+        "SELECT message_id, filename, mime_type, size FROM attachments ORDER BY message_id"
+    ):
+        attachments_by_message.setdefault(message_id, []).append(
+            {"filename": filename, "mime_type": mime_type, "size": size}
+        )
+
+    rows = cur.execute(
+        "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
+        "internal_date_ms, label_ids, body_text, body_mime_type FROM messages"
+    ).fetchall()
+    conn.close()
+
+    count = 0
+    for (
+        msg_id, thread_id, sender, recipient, cc, bcc, subject, date,
+        internal_date_ms, label_ids, body_text, body_mime_type,
+    ) in rows:
+        if internal_date_ms:
+            dt = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
+            subdir = output_dir / f"{dt.year:04d}" / f"{dt.month:02d}"
+            internal_date_iso = dt.isoformat()
+        else:
+            subdir = output_dir / "unknown"
+            internal_date_iso = None
+        subdir.mkdir(parents=True, exist_ok=True)
+
+        labels = [label_names.get(lbl, lbl) for lbl in label_ids.split(",")] if label_ids else []
+
+        frontmatter = {
+            "id": msg_id,
+            "thread_id": thread_id,
+            "from": sender,
+            "to": recipient,
+            "cc": cc,
+            "bcc": bcc,
+            "subject": subject,
+            "date": date,
+            "internal_date": internal_date_iso,
+            "labels": labels,
+            "body_mime_type": body_mime_type,
+            "attachments": attachments_by_message.get(msg_id, []),
+        }
+        frontmatter = {k: v for k, v in frontmatter.items() if v not in (None, [], "")}
+
+        content = (
+            "---\n"
+            + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
+            + "---\n\n"
+            + (body_text or "")
+        )
+        (subdir / f"{msg_id}.md").write_text(content, encoding="utf-8")
+
+        count += 1
+        if count % EXPORT_PROGRESS_INTERVAL == 0:
+            print(f"  exported {count}/{len(rows)}")
+
+    print(f"Exported {count} messages to {output_dir}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gmail-ingest")
     subparsers = parser.add_subparsers(dest="command")
@@ -230,6 +309,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
     stats.set_defaults(func=_run_stats)
+
+    export = subparsers.add_parser("export", help="Export all messages as markdown files")
+    export.add_argument("output_dir", help="Directory to write .md files into (created if missing)")
+    export.set_defaults(func=_run_export)
 
     return parser
 

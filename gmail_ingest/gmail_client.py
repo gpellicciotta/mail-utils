@@ -105,20 +105,23 @@ def _decode_part(data: str) -> str:
     return base64.urlsafe_b64decode(data.encode("UTF-8")).decode("UTF-8", errors="replace")
 
 
-def _extract_body_text(payload: dict) -> str:
+def _extract_body_text(payload: dict) -> tuple:
+    """Return (text, mime_type) for the body text this message stores -
+    mime_type is "text/plain" or "text/html" (the raw-HTML fallback case),
+    or None alongside "" when there's no text part at all."""
     if payload.get("mimeType") == "text/plain" and payload.get("body", {}).get("data"):
-        return _decode_part(payload["body"]["data"])
+        return _decode_part(payload["body"]["data"]), "text/plain"
 
     for part in payload.get("parts", []) or []:
-        text = _extract_body_text(part)
+        text, mime_type = _extract_body_text(part)
         if text:
-            return text
+            return text, mime_type
 
     # Fall back to text/html-only messages: strip nothing, just return raw for now.
     if payload.get("mimeType") == "text/html" and payload.get("body", {}).get("data"):
-        return _decode_part(payload["body"]["data"])
+        return _decode_part(payload["body"]["data"]), "text/html"
 
-    return ""
+    return "", None
 
 
 def _headers(raw: dict) -> dict:
@@ -127,6 +130,7 @@ def _headers(raw: dict) -> dict:
 
 def parse_message(raw: dict) -> dict:
     headers = _headers(raw)
+    body_text, body_mime_type = _extract_body_text(raw.get("payload", {}))
     return {
         "id": raw["id"],
         "thread_id": raw.get("threadId"),
@@ -139,7 +143,8 @@ def parse_message(raw: dict) -> dict:
         "internal_date_ms": int(raw["internalDate"]) if raw.get("internalDate") else None,
         "snippet": raw.get("snippet"),
         "label_ids": ",".join(raw.get("labelIds", [])),
-        "body_text": _extract_body_text(raw.get("payload", {})),
+        "body_text": body_text,
+        "body_mime_type": body_mime_type,
     }
 
 
