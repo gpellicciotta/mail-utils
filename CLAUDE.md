@@ -106,8 +106,11 @@ each with one job:
   subjects/names with colons, quotes, or unicode serialize correctly), `schedule`/`unschedule` (thin wrappers
   around `scheduling.py` — `schedule` validates its inner command by parsing it against this same
   `build_parser()` before registering anything, so a typo'd flag fails immediately rather than at the next
-  scheduled run), and `help` (prints usage, prefixed with a short one-line description of the tool set via
-  `argparse`'s `description=`; so does running with no subcommand). `import`/`stats`/`export`
+  scheduled run), `help` (prints usage, prefixed with a short one-line description of the tool set via
+  `argparse`'s `description=`; so does running with no subcommand — either accepts `--verbose` to also print
+  full `--help` for every subcommand in turn, via `_print_full_help`, which walks the `subcommand_parsers`
+  dict `build_parser` attaches to the returned parser as `_subcommand_parsers`), and `version` (a subcommand
+  alias for `--version`, handled the same way in `main()`; also accepts its own `--verbose`). `import`/`stats`/`export`
   all take `--db <path>` (via `_resolve_db_path`) to override the default `data/gmail.db`. `stats --filter`/
   `export --filter` compute a matching-id set once via `_compute_matching_ids` and either build a
   `filtered_ids` temp table (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just

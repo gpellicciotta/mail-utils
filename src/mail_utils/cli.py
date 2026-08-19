@@ -516,10 +516,23 @@ def build_parser() -> argparse.ArgumentParser:
         description="Polls a personal Gmail account and indexes new messages into a local, read-only SQLite database.",
     )
     parser.add_argument("--version", action="store_true", help="Show version and exit")
-    parser.add_argument("--verbose", action="store_true", help="With --version, also print the matching RELEASES.md entry")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="With --version, also print the matching RELEASES.md entry; with help (or no command), "
+        "also print full --help for every subcommand",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("help", help="Show this help message")
+    subcommand_parsers = {}
+
+    help_cmd = subparsers.add_parser("help", help="Show this help message")
+    help_cmd.add_argument("--verbose", action="store_true", help="Also print full --help for every subcommand")
+    subcommand_parsers["help"] = help_cmd
+
+    version_cmd = subparsers.add_parser("version", help="Show version and exit (same as --version)")
+    version_cmd.add_argument("--verbose", action="store_true", help="Also print the matching RELEASES.md entry")
+    subcommand_parsers["version"] = version_cmd
 
     filter_help = (
         "Gmail-style filter, e.g. 'label:Work from:jane after:2026/01/01 has:attachment'. "
@@ -537,17 +550,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
+    subcommand_parsers["import"] = import_cmd
 
     stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
     stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
     stats.add_argument("--db", help=db_help)
     stats.set_defaults(func=_run_stats)
+    subcommand_parsers["stats"] = stats
 
     export = subparsers.add_parser("export", help="Export all messages as markdown files")
     export.add_argument("output_dir", help="Directory to write .md files into (created if missing)")
     export.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
     export.add_argument("--db", help=db_help)
     export.set_defaults(func=_run_export)
+    subcommand_parsers["export"] = export
 
     schedule_cmd = subparsers.add_parser(
         "schedule", help="Register a recurring mail-utils command (Windows Task Scheduler or cron)"
@@ -562,11 +578,14 @@ def build_parser() -> argparse.ArgumentParser:
         "has flags of its own, e.g.: mail-utils schedule --job-name work -- import --filter 'label:Work'",
     )
     schedule_cmd.set_defaults(func=_run_schedule)
+    subcommand_parsers["schedule"] = schedule_cmd
 
     unschedule_cmd = subparsers.add_parser("unschedule", help="Remove a job registered by 'schedule'")
     unschedule_cmd.add_argument("--job-name", default="default", help="Which job to remove (default: 'default')")
     unschedule_cmd.set_defaults(func=_run_unschedule)
+    subcommand_parsers["unschedule"] = unschedule_cmd
 
+    parser._subcommand_parsers = subcommand_parsers
     return parser
 
 
@@ -588,25 +607,37 @@ def _find_release_entry(version: str) -> str | None:
 
 def _print_version(verbose: bool) -> None:
     ver = _package_version("mail-utils")
-    print(f"mail-utils {ver}")
-    print("Copyright (c) Giovanni Pellicciotta")
+    print(f"mail-utils {ver} - Copyright (c) Giovanni Pellicciotta")
     if verbose:
         entry = _find_release_entry(ver)
         if entry:
-            print()
-            print(entry)
+            # entry's first line is the '## v<version>' heading itself - skip it, we already printed the version above.
+            body = entry.split("\n", 1)[1].strip() if "\n" in entry else ""
+            if body:
+                print()
+                print(body)
+
+
+def _print_full_help(parser: argparse.ArgumentParser) -> None:
+    parser.print_help()
+    for name, sub in parser._subcommand_parsers.items():
+        print(f"\n{'-' * 60}\nmail-utils {name}\n{'-' * 60}")
+        sub.print_help()
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.version:
+    if args.version or args.command == "version":
         _print_version(args.verbose)
         return
 
     if args.command is None or args.command == "help":
-        parser.print_help()
+        if args.verbose:
+            _print_full_help(parser)
+        else:
+            parser.print_help()
         return
 
     args.func(args)

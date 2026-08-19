@@ -1,5 +1,17 @@
 # Release Notes
 
+## v1.0.0
+Released on 2026-08-19
+
+First stable release. Small CLI polish, from `TODO.md`:
+
+- Added a `version` subcommand, equivalent to `--version` (also accepts its own `--verbose`).
+- `help` (and running with no subcommand) now accepts `--verbose` to additionally print full `--help` for
+  every subcommand, one after another — no more running `mail-utils <command> --help` separately for each.
+- `--version`'s first line is now a single line, `mail-utils <version> - Copyright (c) Giovanni
+  Pellicciotta`, instead of two separate lines. `--verbose`'s `RELEASES.md` entry no longer repeats the
+  `## v<version>` heading line, since the version's already in the line above it.
+
 ## v0.19.0
 Released on 2026-08-19
 

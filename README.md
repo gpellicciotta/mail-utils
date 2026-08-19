@@ -181,17 +181,21 @@ which a flat root-level package layout can silently do instead.
     followed by `---` and the message body. Reruns just overwrite files with identical content — messages
     are immutable, so there's nothing to reconcile.
   - `schedule`/`unschedule` — register/remove a recurring `import` or `export`. See "Scheduling" below.
-  - `help` (or no subcommand at all) — prints usage.
+  - `help` (or no subcommand at all) — prints usage; add `--verbose` to also print full `--help` for every
+    subcommand, one after another.
+  - `version` — same as `--version` below (accepts its own `--verbose` too).
 
   `import`, `stats`, and `export` all accept `--db <path>` to point at a database other than the default
   `data/gmail.db` — e.g. to maintain several independent databases, one per filter (see "Scheduling"
   below for the multi-job pattern this enables).
 
-  `mail-utils --version` prints the installed version (read live from package metadata,
-  `importlib.metadata.version("mail-utils")`, rather than a separately-maintained string, so it's always
-  exactly what `pip` thinks is installed) and a copyright line; add `--verbose` to also print the matching
-  `RELEASES.md` entry for that version. `pyproject.toml`'s `version` field is the one place the version is
-  actually written; bump it, add a matching `RELEASES.md` entry, and re-run `pip install -e .` to pick it up.
+  `mail-utils --version` (or `mail-utils version`) prints the installed version (read live from package
+  metadata, `importlib.metadata.version("mail-utils")`, rather than a separately-maintained string, so it's
+  always exactly what `pip` thinks is installed) and a copyright, on one line: `mail-utils <version> -
+  Copyright (c) Giovanni Pellicciotta`. Add `--verbose` to also print the matching `RELEASES.md` entry for
+  that version (its own `## v<version>` heading line is skipped, since the version's already in the line
+  above). `pyproject.toml`'s `version` field is the one place the version is actually written; bump it, add
+  a matching `RELEASES.md` entry, and re-run `pip install -e .` to pick it up.
 
 ### Filtering
 

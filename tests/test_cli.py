@@ -34,8 +34,7 @@ def test_print_version_shows_version_and_copyright(capsys):
     cli._print_version(verbose=False)
     out = capsys.readouterr().out
     assert out.splitlines() == [
-        f"mail-utils {package_version('mail-utils')}",
-        "Copyright (c) Giovanni Pellicciotta",
+        f"mail-utils {package_version('mail-utils')} - Copyright (c) Giovanni Pellicciotta",
     ]
 
 
@@ -52,6 +51,7 @@ def test_print_version_verbose_includes_release_entry(tmp_path, monkeypatch, cap
     out = capsys.readouterr().out
     assert "Did a thing." in out
     assert "v0.0.1" not in out
+    assert f"## v{ver}" not in out
 
 
 def test_main_handles_version_flag(monkeypatch, capsys):
@@ -179,6 +179,45 @@ def test_help_subcommand_has_no_func():
 def test_no_subcommand_has_no_command():
     args = build_parser().parse_args([])
     assert args.command is None
+
+
+def test_version_subcommand_has_no_func():
+    args = build_parser().parse_args(["version"])
+    assert args.command == "version"
+    assert not hasattr(args, "func")
+
+
+def test_main_handles_version_subcommand(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["mail-utils", "version"])
+    cli.main()
+    out = capsys.readouterr().out
+    assert out.startswith(f"mail-utils {package_version('mail-utils')}")
+
+
+def test_version_subcommand_verbose_flag_parses():
+    args = build_parser().parse_args(["version", "--verbose"])
+    assert args.verbose is True
+
+
+def test_help_subcommand_verbose_flag_parses():
+    args = build_parser().parse_args(["help", "--verbose"])
+    assert args.verbose is True
+
+
+def test_main_help_verbose_prints_every_subcommand(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["mail-utils", "help", "--verbose"])
+    cli.main()
+    out = capsys.readouterr().out
+    for name in ("import", "stats", "export", "schedule", "unschedule", "version"):
+        assert f"mail-utils {name}" in out
+
+
+def test_main_no_subcommand_verbose_prints_every_subcommand(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["mail-utils", "--verbose"])
+    cli.main()
+    out = capsys.readouterr().out
+    for name in ("import", "stats", "export", "schedule", "unschedule", "version"):
+        assert f"mail-utils {name}" in out
 
 
 def _sample_message(**overrides) -> dict:
