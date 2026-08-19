@@ -51,6 +51,8 @@ def test_parse_message_maps_headers_and_metadata():
         "thread_id": "thread1",
         "sender": "Jane Doe <jane@example.com>",
         "recipient": "me@example.com",
+        "cc": None,
+        "bcc": None,
         "subject": "Hello",
         "date": "Wed, 19 Aug 2026 10:00:00 -0700",
         "snippet": "a short preview",
@@ -59,10 +61,7 @@ def test_parse_message_maps_headers_and_metadata():
     }
 
 
-def test_parse_message_drops_cc_and_bcc_headers():
-    # Documents current (pre-step-3) behavior: Cc/Bcc are read from headers
-    # but never make it into the parsed dict. Update this once cc/bcc
-    # capture lands.
+def test_parse_message_captures_cc_and_bcc_headers():
     raw = {
         "id": "msg1",
         "threadId": "thread1",
@@ -78,5 +77,5 @@ def test_parse_message_drops_cc_and_bcc_headers():
         },
     }
     parsed = parse_message(raw)
-    assert "cc" not in parsed
-    assert "bcc" not in parsed
+    assert parsed["cc"] == "carl@example.com"
+    assert parsed["bcc"] == "hidden@example.com"

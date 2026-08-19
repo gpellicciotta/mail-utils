@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS messages (
     thread_id   TEXT,
     sender      TEXT,
     recipient   TEXT,
+    cc          TEXT,
+    bcc         TEXT,
     subject     TEXT,
     date        TEXT,
     snippet     TEXT,
@@ -27,10 +29,25 @@ CREATE TABLE IF NOT EXISTS labels (
 """
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, coltype: str) -> None:
+    """Add `column` to an existing `table` if it's missing.
+
+    CREATE TABLE IF NOT EXISTS in SCHEMA only applies to brand-new
+    databases; a database created before this column existed needs an
+    explicit ALTER TABLE to pick it up.
+    """
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+        conn.commit()
+
+
 def init_db(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.executescript(SCHEMA)
     conn.commit()
+    _ensure_column(conn, "messages", "cc", "TEXT")
+    _ensure_column(conn, "messages", "bcc", "TEXT")
     return conn
 
 
@@ -60,12 +77,14 @@ def upsert_labels(conn: sqlite3.Connection, labels: list[dict]) -> None:
 def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
     conn.execute(
         """
-        INSERT INTO messages (id, thread_id, sender, recipient, subject, date, snippet, label_ids, body_text)
-        VALUES (:id, :thread_id, :sender, :recipient, :subject, :date, :snippet, :label_ids, :body_text)
+        INSERT INTO messages (id, thread_id, sender, recipient, cc, bcc, subject, date, snippet, label_ids, body_text)
+        VALUES (:id, :thread_id, :sender, :recipient, :cc, :bcc, :subject, :date, :snippet, :label_ids, :body_text)
         ON CONFLICT(id) DO UPDATE SET
             thread_id = excluded.thread_id,
             sender = excluded.sender,
             recipient = excluded.recipient,
+            cc = excluded.cc,
+            bcc = excluded.bcc,
             subject = excluded.subject,
             date = excluded.date,
             snippet = excluded.snippet,

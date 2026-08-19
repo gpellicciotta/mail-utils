@@ -127,6 +127,8 @@ def parse_message(raw: dict) -> dict:
         "thread_id": raw.get("threadId"),
         "sender": headers.get("from"),
         "recipient": headers.get("to"),
+        "cc": headers.get("cc"),
+        "bcc": headers.get("bcc"),
         "subject": headers.get("subject"),
         "date": headers.get("date"),
         "snippet": raw.get("snippet"),

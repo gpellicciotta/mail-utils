@@ -1,5 +1,20 @@
 # Release Notes
 
+## v0.2.0
+Released on 2026-08-19
+
+Capture `Cc`/`Bcc` headers into new `cc`/`bcc` columns on `messages`.
+Migration is automatic — `db.init_db` adds the columns to an existing
+`gmail_index.db` via `ALTER TABLE` if they're missing, so a resync isn't
+required for the app to keep working, but existing rows won't have
+`cc`/`bcc` retroactively populated until they're re-fetched (a full
+resync, or a one-off targeted refetch).
+
+Note: `Bcc` is rarely present to capture in the first place — mail
+servers, including Gmail for incoming mail, strip it before delivery to
+anyone but the Bcc'd recipient. It reliably shows up only in your own
+`Sent` copies.
+
 ## v0.1.0
 Released on 2026-08-19
 

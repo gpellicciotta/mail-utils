@@ -197,7 +197,7 @@ run them).
 
 ## Database contents
 
-`gmail_index.db` has two tables.
+`gmail_index.db` has three tables.
 
 ### `messages`
 
@@ -209,7 +209,9 @@ duplicate rows). Columns, and exactly what each one holds:
 | `id`         | Gmail message id                 | Primary key. Stable per message. |
 | `thread_id`  | Gmail thread id                  | Groups messages into a conversation. |
 | `sender`     | `From` header, raw               | E.g. `"Jane Doe <jane@example.com>"` — not split into name/address. |
-| `recipient`  | `To` header, raw                 | Only the `To` line. If you were only `Cc`'d (not `To`'d), your address won't appear here at all — see below. |
+| `recipient`  | `To` header, raw                 | Only the `To` line. |
+| `cc`         | `Cc` header, raw                 | `NULL` if the message has no `Cc` line. |
+| `bcc`        | `Bcc` header, raw                | See caveat below — usually `NULL` even on messages that genuinely had Bcc recipients. |
 | `subject`    | `Subject` header, raw             | |
 | `date`       | `Date` header, raw string         | As set by the *sending* client — not normalized, and not Gmail's own server-side receipt timestamp (`internalDate`, which this app doesn't currently capture). |
 | `snippet`    | Gmail's own `snippet` field       | Gmail's short auto-generated preview (~100–200 chars) — separate from, and much shorter than, `body_text`. |
@@ -232,14 +234,19 @@ not converted to plain text. Only the primary text body is stored:
 - If a message is `multipart/alternative` with both plain and HTML
   versions, only the plain-text version is kept.
 
-**Bcc is not captured, at all.** `parse_message` only reads the `From` and
-`To` headers out of the message; `Cc` and `Bcc` are never read, even when
-present in `payload.headers`, so there's no column and no way to recover
-them from this database. In practice `Bcc` is also usually stripped by
-mail servers before delivery to non-Bcc'd recipients, so it often wouldn't
-be present to capture in the first place — but even Gmail messages that do
-retain `Cc` info (e.g. mail you sent) won't have it stored here, since
-`Cc` is silently dropped by `parse_message` just like `Bcc`.
+**Bcc is captured when it's actually present in the message headers, which
+is rare.** `parse_message` reads the `Bcc` header the same way it reads
+`Cc` — but mail servers (including Gmail, for mail delivered *to* you)
+almost always strip the `Bcc` header before delivery to anyone who wasn't
+one of the Bcc'd addresses themselves, so most messages simply never carry
+one to capture. The one case where it reliably shows up is your own `Sent`
+mail: Gmail keeps `Bcc` in the copy it stores in your own mailbox, so
+messages you sent with a Bcc will have it in this column.
+
+Existing rows synced before this column existed will show `NULL` for
+`cc`/`bcc` even where the original message had one — they aren't
+retroactively backfilled. A full resync re-populates them (see
+`docs/todo.md` / `docs/release-notes.md` for when that last happened).
 
 ### `sync_state`
 

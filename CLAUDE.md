@@ -52,10 +52,13 @@ Five modules under `gmail_ingest/`, each with one job:
 - **`stats.py`** — read-only reporting straight off the local SQLite file via Python's built-in `sqlite3` module;
   no Gmail API calls, so it works offline and needs no credentials.
 
-Full column-by-column documentation of what's actually stored (and, importantly, what *isn't* — e.g. `Cc`/`Bcc`
-are silently dropped, attachments are never captured) lives in `README.md`'s "Database contents" section. Treat
-that as the authoritative schema reference, not this file — update it whenever `parse_message` or the schema
-in `db.py` changes.
+Full column-by-column documentation of what's actually stored (and, importantly, what *isn't* — e.g. attachments
+are never captured at all) lives in `README.md`'s "Database contents" section. Treat that as the authoritative
+schema reference, not this file — update it whenever `parse_message` or the schema in `db.py` changes.
+
+Schema changes to `messages` (like adding `cc`/`bcc`) need a migration, not just an edit to `SCHEMA` in `db.py` —
+`CREATE TABLE IF NOT EXISTS` only applies to a database that doesn't exist yet, so an existing `gmail_index.db`
+needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for the pattern to extend.
 
 ## Conventions
 
