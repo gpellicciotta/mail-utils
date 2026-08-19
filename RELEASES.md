@@ -1,5 +1,19 @@
 # Release Notes
 
+## v0.13.0
+Released on 2026-08-19
+
+**Bug fix:** `config.BASE_DIR` silently broke in the `v0.10.0` src-layout
+migration — `config.py` moved one directory deeper (`gmail_ingest/` →
+`src/gmail_ingest/`) without its `.parent.parent` chain being updated to
+match, so `BASE_DIR` (and therefore `DB_PATH`/`CREDENTIALS_PATH`/
+`TOKEN_PATH`/`LOG_DIR`) resolved to `src/` instead of the actual project
+root. Caught while adding `--db` support (below) — no live database was
+actually written to the wrong location (nothing had run a real
+`import`/`stats` since the migration; the test suite's mocked `DB_PATH`
+never exercised the real computation), but this would have broken the
+very next real run. Added `tests/test_config.py` as a regression guard.
+
 ## v0.12.0
 Released on 2026-08-19
 
