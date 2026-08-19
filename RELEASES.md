@@ -1,5 +1,17 @@
 # Release Notes
 
+## v0.7.0
+Released on 2026-08-19
+
+Housekeeping, no behavior change:
+
+- `docs/release-notes.md` and `docs/todo.md` moved to top-level `RELEASES.md`
+  and `TODO.md` (all-uppercase), matching the convention now used across all
+  projects scaffolded from `python-template-project`. `docs/` is reserved
+  for other documentation (design notes, detailed plans) going forward.
+- Added `.github/workflows/ci.yml`: installs via `pip install -e ".[dev]"`
+  and runs `pytest` on push/PR.
+
 ## v0.6.0
 Released on 2026-08-19
 

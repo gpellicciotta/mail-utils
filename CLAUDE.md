@@ -47,7 +47,7 @@ Five modules under `gmail_ingest/`, each with one job:
   into individual `message_addresses` rows (via `email.utils.getaddresses`, lowercased for dedup), and
   `parse_attachments`, which walks the MIME tree collecting every part with a filename (metadata only —
   filename/mime type/size/`attachmentId` — never the bytes). See `README.md`'s "Database contents" section for
-  the exact, currently-documented behavior (and known gaps — `docs/todo.md` tracks fixing them).
+  the exact, currently-documented behavior (and known gaps — `TODO.md` tracks fixing them).
 - **`db.py`** — SQLite schema and upsert helpers. Five tables: `messages` (upserted by Gmail's message `id`, so
   reruns never duplicate), `sync_state` (currently just `last_history_id`), `labels` (id -> display name,
   refreshed in full every run), `message_addresses` and `attachments` (each one row per message/role/address or
@@ -79,15 +79,17 @@ needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for t
   written to be detailed enough that a first-time setup doesn't need external guidance (see the Google Cloud
   Console walkthrough in "Setup" step 1, which was expanded specifically because the console's own UI/naming
   drifted from what the original short version assumed).
-- `pyproject.toml`'s `version` field drives what actually gets installed; keep `docs/release-notes.md`'s newest
+- `pyproject.toml`'s `version` field drives what actually gets installed; keep `RELEASES.md`'s newest
   heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention.
 - Every backward-incompatible change bumps the version accordingly and gets a clearly-labeled breaking-change
-  note in its `docs/release-notes.md` entry — this project is pre-1.0 (`0.x.y`), so in practice that means: a
+  note in its `RELEASES.md` entry — this project is pre-1.0 (`0.x.y`), so in practice that means: a
   breaking change bumps the **minor** number (the `x` in `0.x.y`), same as every other feature addition does at
   this stage, but call out that it's breaking explicitly rather than letting it read as a routine addition.
 - When adding a feature or fixing a documented limitation, add a corresponding entry to
-  `docs/release-notes.md` (version heading, date, bullet list) and update/remove the matching item in
-  `docs/todo.md`.
+  `RELEASES.md` (version heading, date, bullet list) and update/remove the matching item in
+  `TODO.md`.
+- `RELEASES.md` and `TODO.md` live at the repo root, not under `docs/`, for visibility. Other documentation
+  (design notes, detailed plans, investigation write-ups) belongs under `docs/` instead.
 - Any change that alters what's stored (new/changed/removed column, changed parsing behavior) must update both
   `README.md`'s "Database contents" tables and, if it's a behavior change to already-synced data, note whether
   existing rows in someone's `gmail_index.db` need a resync to pick it up (they generally won't be

@@ -141,11 +141,10 @@ gmail-ingest/
     cli.py              # Entry point: update/stats/help subcommands
     config.py           # Paths and scopes
   tests/                 # pytest suite (pure-function tests, no live API)
-  docs/
-    release-notes.md      # Version history
-    todo.md                # Prioritized backlog
   pyproject.toml         # Project metadata and dependencies
   register_task.ps1     # One-time Task Scheduler registration
+  RELEASES.md            # Version history
+  TODO.md                 # Prioritized backlog
   CLAUDE.md
   credentials.json      # you provide this - gitignored
   token.json            # generated on first run - gitignored
@@ -250,7 +249,7 @@ messages you sent with a Bcc will have it in this column.
 Existing rows synced before this column existed will show `NULL` for
 `cc`/`bcc` even where the original message had one — they aren't
 retroactively backfilled. A full resync re-populates them (see
-`docs/todo.md` / `docs/release-notes.md` for when that last happened).
+`TODO.md` / `RELEASES.md` for when that last happened).
 
 ### `sync_state`
 
