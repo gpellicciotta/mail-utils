@@ -43,8 +43,8 @@ def test_print_version_shows_version_and_copyright(capsys):
 def test_print_version_verbose_includes_release_entry(tmp_path, monkeypatch, capsys):
     ver = package_version("mail-utils")
     monkeypatch.setattr(cli, "BASE_DIR", tmp_path)
-    (tmp_path / "RELEASES.md").write_text(
-        f"# Release Notes\n\n## v{ver}\nReleased on 2026-08-19\n\n- Did a thing.\n\n## v0.0.1\nOlder.\n",
+    (tmp_path / "CHANGELOG.md").write_text(
+        f"# Changelog\n\n## v{ver}\nReleased on 2026-08-19\n\n- Did a thing.\n\n## v0.0.1\nOlder.\n",
         encoding="utf-8",
     )
 

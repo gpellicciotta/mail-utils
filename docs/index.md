@@ -2,7 +2,7 @@
 
 Almost all technical documentation can all be found here, except the following which reside at the project's root:
 - [README.md](../README.md): a short introduction to this project
-- [RELEASES.md](../RELEASES.md): the project's full, versioned, changelog
+- [CHANGELOG.md](../CHANGELOG.md): the project's full, versioned, changelog
 - [TODO.md](../TODO.md): the project's known issues and todo's 
 
 Following are the most important documents that can be found here:

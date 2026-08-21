@@ -694,7 +694,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="With --version, also print the matching RELEASES.md entry; with help (or no command), "
+        help="With --version, also print the matching CHANGELOG.md entry; with help (or no command), "
         "also print full --help for every subcommand",
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -706,7 +706,7 @@ def build_parser() -> argparse.ArgumentParser:
     subcommand_parsers["help"] = help_cmd
 
     version_cmd = subparsers.add_parser("version", help="Show version and exit (same as --version)")
-    version_cmd.add_argument("--verbose", action="store_true", help="Also print the matching RELEASES.md entry")
+    version_cmd.add_argument("--verbose", action="store_true", help="Also print the matching CHANGELOG.md entry")
     subcommand_parsers["version"] = version_cmd
 
     filter_help = (
@@ -778,8 +778,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _find_release_entry(version: str) -> str | None:
-    """Return the RELEASES.md section for the given version (heading through the next '## ' heading), or None."""
-    path = BASE_DIR / "RELEASES.md"
+    """Return the CHANGELOG.md section for the given version (heading through the next '## ' heading), or None."""
+    path = BASE_DIR / "CHANGELOG.md"
     if not path.exists():
         return None
     text = path.read_text(encoding="utf-8")

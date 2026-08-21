@@ -36,6 +36,6 @@ Adding a `--format` option (`--format md` or `--format eml`) allows users to cho
 ### Documentation & Release Notes
 
 - Update `TODO.md` (remove item 1).
-- Update `RELEASES.md` under `## vNext`.
+- Update `CHANGELOG.md` under `## vNext`.
 - Update `README.md`, `CLAUDE.md`, and `docs/index.md`.
 

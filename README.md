@@ -148,7 +148,7 @@ mail-utils/
   .editorconfig             # Indent/charset/line-length, mirrors the ruff config for non-Python files/editors
   pyproject.toml            # Project metadata, dependencies, ruff config 
   CLAUDE.md
-  RELEASES.md               # Version and release history
+  CHANGELOG.md              # Version and release history
   TODO.md                   # Prioritized backlog    
   data/                     # Gitignored - credentials/token/database (see below)
     credentials.json        # Provided - credentials to access a Gmail account
@@ -227,10 +227,10 @@ which a flat root-level package layout can silently do instead.
   `mail-utils --version` (or `mail-utils version`) prints the installed version (read live from package
   metadata, `importlib.metadata.version("mail-utils")`, rather than a separately-maintained string, so it's
   always exactly what `pip` thinks is installed) and a copyright, on one line: `mail-utils <version> -
-  Copyright (c) Giovanni Pellicciotta`. Add `--verbose` to also print the matching `RELEASES.md` entry for
+  Copyright (c) Giovanni Pellicciotta`. Add `--verbose` to also print the matching `CHANGELOG.md` entry for
   that version (its own `## v<version>` heading line is skipped, since the version's already in the line
   above). `pyproject.toml`'s `version` field is the one place the version is actually written; bump it, add
-  a matching `RELEASES.md` entry, and re-run `pip install -e .` to pick it up.
+  a matching `CHANGELOG.md` entry, and re-run `pip install -e .` to pick it up.
 
 ### Filtering
 

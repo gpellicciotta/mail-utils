@@ -11,7 +11,7 @@ A short walkthrough for a first-time user, after "Setup" in the top-level README
 ```
 
 `--version` prints the installed version and copyright; add `--verbose` to also print the matching
-`RELEASES.md` entry. `help` (or running with no subcommand at all) prints the subcommand list.
+`CHANGELOG.md` entry. `help` (or running with no subcommand at all) prints the subcommand list.
 
 ## 2. First import
 

@@ -178,7 +178,7 @@ tests just hand-build small JSON dicts):
 **Phase 7 — docs — done.**
 `README.md`'s "Project layout" (new `pst/` package, `scripts/`), module list (`pst/`, `db.py`'s
 prefixed-id note), `import-pst` subcommand doc, and "Database contents" (`messages.id`'s prefix
-scheme, `labels`/`label_ids` now covering both sources) all updated. `RELEASES.md` gained an
+scheme, `labels`/`label_ids` now covering both sources) all updated. `CHANGELOG.md` gained an
 undated `## v2.0.0` entry (per this repo's versioning convention, not cut/dated until you explicitly
 ask for a release) with a clearly-labeled breaking-change note pointing at the migration script.
 `TODO.md`'s item 1 cleared (item 2, Thunderbird import, is now item 1).

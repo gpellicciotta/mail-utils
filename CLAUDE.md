@@ -146,24 +146,24 @@ caught it until a real run would have. `tests/test_config.py` now guards against
   written to be detailed enough that a first-time setup doesn't need external guidance (see the Google Cloud
   Console walkthrough in "Setup" step 1, which was expanded specifically because the console's own UI/naming
   drifted from what the original short version assumed).
-- `pyproject.toml`'s `version` field drives what actually gets installed; keep `RELEASES.md`'s newest
+- `pyproject.toml`'s `version` field drives what actually gets installed; keep `CHANGELOG.md`'s newest
   heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention. This is the
   *only* place the version is written — `mail-utils --version` reads it back dynamically via
   `importlib.metadata.version("mail-utils")` (see `cli.py`'s `build_parser`), not a second hardcoded
   string, so there's nothing else to keep in sync. This does mean the installed package metadata must actually be current for
   `--version` to be right — after bumping the version, re-run `pip install -e .` (or reload it) before
   trusting `--version`'s output. `--version --verbose` additionally looks up the `## v<version>` heading in
-  `RELEASES.md` directly off disk (not packaged metadata) and prints that section, which is exactly why the
+  `CHANGELOG.md` directly off disk (not packaged metadata) and prints that section, which is exactly why the
   heading has to match the `pyproject.toml` version exactly — a mismatch means `--verbose` silently finds
   nothing to print.
 - Every backward-incompatible change bumps the version accordingly and gets a clearly-labeled breaking-change
-  note in its `RELEASES.md` entry — this project is pre-1.0 (`0.x.y`), so in practice that means: a
+  note in its `CHANGELOG.md` entry — this project is pre-1.0 (`0.x.y`), so in practice that means: a
   breaking change bumps the **minor** number (the `x` in `0.x.y`), same as every other feature addition does at
   this stage, but call out that it's breaking explicitly rather than letting it read as a routine addition.
 - When adding a feature or fixing a documented limitation, add a corresponding entry to
-  `RELEASES.md` (version heading, date, bullet list) and update/remove the matching item in
+  `CHANGELOG.md` (version heading, date, bullet list) and update/remove the matching item in
   `TODO.md`.
-- `RELEASES.md` and `TODO.md` live at the repo root, not under `docs/`, for visibility. Other documentation
+- `CHANGELOG.md` and `TODO.md` live at the repo root, not under `docs/`, for visibility. Other documentation
   (design notes, detailed plans, investigation write-ups) belongs under `docs/` instead.
 - Any change that alters what's stored (new/changed/removed column, changed parsing behavior) must update both
   `README.md`'s "Database contents" tables and, if it's a behavior change to already-synced data, note whether
