@@ -615,9 +615,9 @@ def test_run_import_rejects_unsupported_formats(tmp_path, capsys):
     assert "Unsupported file format for 'notes.txt'" in out
 
 
-def test_run_import_no_args_without_credentials_reports_error(monkeypatch, capsys):
-    monkeypatch.setattr(cli.CREDENTIALS_PATH, "exists", lambda: False)
-    monkeypatch.setattr(cli.TOKEN_PATH, "exists", lambda: False)
+def test_run_import_no_args_without_credentials_reports_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "CREDENTIALS_PATH", tmp_path / "nonexistent_credentials.json")
+    monkeypatch.setattr(cli, "TOKEN_PATH", tmp_path / "nonexistent_token.json")
     _run_import(argparse.Namespace(source_path=None, db=None, recursive=False, filter=None))
     out = capsys.readouterr().out
     assert "No import file specified and Gmail credentials not found" in out

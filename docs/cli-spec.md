@@ -13,7 +13,7 @@ mail-utils [--version] [--verbose] [<command>] [<args>...]
 ### Global Flags
 - `--version`: Print package version and copyright notice:
   ```
-  mail-utils 2.2.0 - Copyright (c) Giovanni Pellicciotta
+  mail-utils 2.2.1 - Copyright (c) Giovanni Pellicciotta
   ```
   With `--verbose`, also prints the matching release entry from `CHANGELOG.md`.
 - `help` (or no command): Print summary help for all subcommands. With `--verbose`, prints full `--help` for every subcommand.

@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.1 [released: 2026-08-21]
+- Fixed POSIX / GitHub Actions CI test failure in `test_run_import_no_args_without_credentials_reports_error` by properly monkeypatching module configuration attributes instead of read-only `Path` instance methods.
+
 ## v2.2.0 [released: 2026-08-21]
 - Standardized output and logging across all commands (`import`, `import-pst`, `import-thunderbird`, `stats`, `export`, `search`, `schedule`, `unschedule`).
 - Console output prints clean human-readable lines without timestamp or loglevel prefixes; log file (`logs/mail-utils.log`) captures all output with UTC timestamp prefixes.
