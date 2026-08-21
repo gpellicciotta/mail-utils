@@ -208,3 +208,30 @@ def parse_attachments(raw: dict) -> list:
 
     walk(raw.get("payload", {}))
     return attachments
+
+
+def extract_attached_messages(raw: dict) -> list[dict]:
+    """Extract any email messages attached to `raw` (message/rfc822 or .eml)."""
+    sub_messages = []
+
+    def walk(part: dict, idx: int) -> int:
+        mime = (part.get("mimeType") or "").lower()
+        fn = (part.get("filename") or "").lower()
+        if (mime == "message/rfc822" or fn.endswith(".eml")) and (part.get("parts") or part.get("headers")):
+            sub_id = f"{raw['id']}_att{idx}"
+            sub_raw = {
+                "id": sub_id,
+                "threadId": raw.get("threadId"),
+                "internalDate": raw.get("internalDate"),
+                "labelIds": raw.get("labelIds", []),
+                "snippet": None,
+                "payload": part,
+            }
+            sub_messages.append(sub_raw)
+            idx += 1
+        for sub_part in part.get("parts", []) or []:
+            idx = walk(sub_part, idx)
+        return idx
+
+    walk(raw.get("payload", {}), 1)
+    return sub_messages

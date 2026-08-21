@@ -66,6 +66,37 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, coltype: s
         conn.commit()
 
 
+def _ensure_fts(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                id UNINDEXED,
+                subject,
+                body_text,
+                sender,
+                recipient,
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """
+        )
+        conn.commit()
+        # Backfill if messages exist but messages_fts is empty
+        (msg_count,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
+        (fts_count,) = conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()
+        if msg_count > 0 and fts_count == 0:
+            conn.execute(
+                """
+                INSERT INTO messages_fts (id, subject, body_text, sender, recipient)
+                SELECT id, COALESCE(subject, ''), COALESCE(body_text, ''), COALESCE(sender, ''), COALESCE(recipient, '')
+                FROM messages
+                """
+            )
+            conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
+
 def init_db(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.executescript(SCHEMA)
@@ -74,6 +105,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     _ensure_column(conn, "messages", "bcc", "TEXT")
     _ensure_column(conn, "messages", "internal_date_ms", "INTEGER")
     _ensure_column(conn, "messages", "body_mime_type", "TEXT")
+    _ensure_fts(conn)
     return conn
 
 
@@ -150,4 +182,21 @@ def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
         """,
         msg,
     )
+    try:
+        conn.execute("DELETE FROM messages_fts WHERE id = ?", (msg["id"],))
+        conn.execute(
+            """
+            INSERT INTO messages_fts (id, subject, body_text, sender, recipient)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                msg["id"],
+                msg.get("subject") or "",
+                msg.get("body_text") or "",
+                msg.get("sender") or "",
+                msg.get("recipient") or "",
+            ),
+        )
+    except sqlite3.OperationalError:
+        pass
     conn.commit()

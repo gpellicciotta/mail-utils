@@ -2,18 +2,15 @@
 
 Ordered by priority.
 
-1. Full-Text Search (FTS5) & Search Subcommand (`mail-utils search <query>`)
-   - Add SQLite `FTS5` virtual table indexing over `subject`, `body_text`, `sender`, and `recipient`.
-   - Add `mail-utils search "<query>"` command to print ranked results with search snippet excerpts, highlighted matches, and metadata.
-   - Support boolean queries (`OR`, `NOT`, prefix matches) and `--db` / `--limit` flags.
-
-2. Generic Mbox & Apple Mail Import (`mail-utils import-mbox` & `import-apple-mail`)
-   - Support standalone single `.mbox` files (e.g. Google Takeout / Fastmail archives).
-   - Support macOS Apple Mail directories (`~/Library/Mail/V*` with `.emlx` files and `.mbox` bundles).
-
-3. Cross-Source Conversation Threading & Deduplication (`mail-utils dedupe` / `threads`)
-   - Traverse `In-Reply-To` and `References` RFC 5322 headers to reconstruct conversation threads for Outlook and Thunderbird imports.
-   - Detect identical messages across multiple archives/sources, merge labels, and report duplicate storage.
+1. Cleanup all *-plan.md docs: they should not contain references to files that are not checked in or that contain PII.
+   Also review other documents, including tutorial.md, and make sure they are complete and accurate.
+   As to the README.md: trim it down to a short overview of the project's goals and links to other docs.
+   All information about the project's needed infrastructure for building, testing, deploying should move to docs/devops.md.
+   We should also make - typically upfront but we're going to do it now - following 2 docs:
+   - docs/requirements.md: the project's high-level goals, functional and technical requirements
+   - docs/cli-spec.md: how the CLI will be structured
+   
+2. We should create small anonymized sample files for testing pcv and pst imports, so they can be committed to version control.
 
 
 

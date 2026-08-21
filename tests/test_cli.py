@@ -505,8 +505,8 @@ def test_logging_console_has_no_timestamps_while_logfile_has_timestamps(tmp_path
     _run_stats(argparse.Namespace(filter=None))
 
     console_out = capsys.readouterr().out
-    assert "Printing database stats" in console_out
-    assert "Finished stats in" in console_out
+    assert "operation started: Database stats" in console_out
+    assert "operation ended in" in console_out
     # Console output lines should not contain "[INFO]" or UTC timestamp prefix
     for line in console_out.splitlines():
         assert "[INFO]" not in line
@@ -515,5 +515,50 @@ def test_logging_console_has_no_timestamps_while_logfile_has_timestamps(tmp_path
     # File log must contain timestamp and [INFO]
     assert log_path.exists()
     file_content = log_path.read_text(encoding="utf-8")
-    assert "[INFO] Printing database stats" in file_content
+    assert "[INFO] Mail Utils" in file_content
+    assert "operation started: Database stats" in file_content
     assert "UTC [INFO]" in file_content
+
+
+def test_utc_formatter_indents_subsequent_lines_for_multiline_messages():
+    record = logging.LogRecord(
+        "mail_utils",
+        logging.INFO,
+        "test.py",
+        1,
+        "Top senders:\n  Bob <bob@x.com>      5\n  Alice <alice@x.com>    3",
+        None,
+        None,
+    )
+    record.created = 1735689600.0
+    formatter = cli._UTCFormatter(cli._LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+    formatted = formatter.format(record)
+    lines = formatted.splitlines()
+    assert len(lines) == 3
+    # First line has timestamp and log level prefix
+    assert lines[0].startswith("2025-01-01 00:00:00 UTC [INFO] Top senders:")
+    header_len = len("2025-01-01 00:00:00 UTC [INFO] ")
+    # Subsequent lines are indented by the header length
+    assert lines[1] == (" " * header_len) + "  Bob <bob@x.com>      5"
+    assert lines[2] == (" " * header_len) + "  Alice <alice@x.com>    3"
+
+
+def test_search_subcommand_routes_and_parses():
+    parser = build_parser()
+    args = parser.parse_args(["search", "project alpha", "-n", "10", "--db", "custom.db"])
+    assert args.command == "search"
+    assert args.query == "project alpha"
+    assert args.limit == 10
+    assert args.db == "custom.db"
+
+
+def test_recursive_flags_parse_across_importers():
+    parser = build_parser()
+    args_import = parser.parse_args(["import", "--recursive"])
+    assert args_import.recursive is True
+
+    args_pst = parser.parse_args(["import-pst", "mail.pst", "-r"])
+    assert args_pst.recursive is True
+
+    args_tb = parser.parse_args(["import-thunderbird", "profile.pcv", "-r"])
+    assert args_tb.recursive is True

@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.2.0 [released: 2026-08-21]
+- Standardized output and logging across all commands (`import`, `import-pst`, `import-thunderbird`, `stats`, `export`, `search`, `schedule`, `unschedule`).
+- Console output prints clean human-readable lines without timestamp or loglevel prefixes; log file (`logs/mail-utils.log`) captures all output with UTC timestamp prefixes.
+- Multi-line log records in `logs/mail-utils.log` automatically indent subsequent lines to match the first line's header width for clean alignment.
+- Standardized operation boundaries across all commands:
+  - `Mail Utils <version> operation started: <operation>`
+  - `Mail Utils <version> operation ended in <elapsed>: <details>`
+- Added `mail-utils search "<query>"` subcommand powered by SQLite `FTS5` full-text indexing, featuring BM25 ranking, snippet matching with excerpts, boolean syntax (`AND`, `OR`, `NOT`, prefix matches), and `--limit` / `--db` options.
+- Added `-r` / `--recursive` flag to `import`, `import-pst` (`import-outlook`), and `import-thunderbird` (`import-pcv`) to recursively extract and index nested email attachments (`message/rfc822` / `.eml`).
+- Renamed internal package `mail_utils.pst` to `mail_utils.outlook` for architectural consistency with `mail_utils.thunderbird`, adding `import-outlook` as a CLI alias for `import-pst`.
+
 ## v2.1.0 [released: 2026-08-21]
 - Added `import-thunderbird <path>` command (with alias `import-pcv`) to import Mozilla Thunderbird archives (`*.pcv`, `*.zip`) and profile directories into the local SQLite database.
 - Added `thunderbird/` package implementing Mbox stream parsing, `.sbd` directory hierarchy resolution, MIME body/attachment decoding, and envelope delimiter fallback date handling.

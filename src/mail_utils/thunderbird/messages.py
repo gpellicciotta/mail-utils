@@ -1,6 +1,7 @@
 import email.errors
 import email.header
 import email.message
+import email.policy
 import email.utils
 import hashlib
 import re
@@ -185,3 +186,37 @@ def parse_attachments(raw_msg: email.message.Message) -> list[dict]:
                     }
                 )
     return rows
+
+
+def extract_attached_messages(raw_msg: email.message.Message) -> list[email.message.Message]:
+    """Extract any email messages attached to `raw_msg` (message/rfc822 or .eml)."""
+    sub_messages = []
+    if raw_msg.is_multipart():
+        for part in raw_msg.walk():
+            if part == raw_msg:
+                continue
+            ctype = (part.get_content_type() or "").lower()
+            fn = (part.get_filename() or "").lower()
+            if ctype == "message/rfc822":
+                payload = part.get_payload()
+                if isinstance(payload, list):
+                    for item in payload:
+                        if isinstance(item, email.message.Message):
+                            sub_messages.append(item)
+                elif isinstance(payload, email.message.Message):
+                    sub_messages.append(payload)
+                elif isinstance(payload, (bytes, str)):
+                    raw_bytes = part.get_payload(decode=True) if isinstance(payload, str) else payload
+                    if raw_bytes:
+                        try:
+                            sub_messages.append(email.message_from_bytes(raw_bytes, policy=email.policy.default))
+                        except (ValueError, TypeError, email.errors.MessageError):
+                            continue
+            elif fn.endswith(".eml"):
+                raw_bytes = part.get_payload(decode=True)
+                if raw_bytes:
+                    try:
+                        sub_messages.append(email.message_from_bytes(raw_bytes, policy=email.policy.default))
+                    except (ValueError, TypeError, email.errors.MessageError):
+                        continue
+    return sub_messages

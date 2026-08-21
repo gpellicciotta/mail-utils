@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.policy import default as _email_policy_default
 from email.utils import format_datetime
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
 from pathlib import Path
 
@@ -43,6 +44,9 @@ from .gmail_client import (
     parse_attachments,
     parse_message,
 )
+from .gmail_client import (
+    extract_attached_messages as gmail_extract_attached_messages,
+)
 from .outlook.messages import fetch_message as pst_fetch_message
 from .outlook.messages import parse_addresses as pst_parse_addresses
 from .outlook.messages import parse_attachments as pst_parse_attachments
@@ -63,6 +67,9 @@ from .scheduling import (
 from .thunderbird.archive import extract_mbox_to_file
 from .thunderbird.archive import walk_folders as tb_walk_folders
 from .thunderbird.messages import (
+    extract_attached_messages as tb_extract_attached_messages,
+)
+from .thunderbird.messages import (
     parse_addresses as tb_parse_addresses,
 )
 from .thunderbird.messages import (
@@ -79,10 +86,27 @@ logger = logging.getLogger("mail_utils")
 PROGRESS_LOG_INTERVAL = 50
 
 
+def _get_version() -> str:
+    try:
+        return _package_version("mail-utils")
+    except PackageNotFoundError:
+        return "2.2.0"
+
+
 class _UTCFormatter(logging.Formatter):
-    """Formats log timestamps in UTC rather than the machine's local time zone."""
+    """Formats log timestamps in UTC and indents subsequent lines of multi-line messages."""
 
     converter = time.gmtime
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        lines = formatted.split("\n")
+        if len(lines) <= 1:
+            return formatted
+        first_line_msg = record.getMessage().split("\n")[0]
+        prefix_len = len(lines[0]) - len(first_line_msg)
+        indent = " " * max(0, prefix_len)
+        return lines[0] + "\n" + "\n".join(indent + line if line else line for line in lines[1:])
 
 
 _LOG_FORMAT = "%(asctime)s UTC [%(levelname)s] %(message)s"
@@ -103,7 +127,24 @@ def _setup_logging() -> None:
     logger.addHandler(console_handler)
 
 
-def _full_sync(service, conn, start_time: float) -> None:
+def _process_gmail_msg(service, conn, msg_id: str, recursive: bool) -> int:
+    raw = fetch_message(service, msg_id)
+    parsed = parse_message(raw)
+    upsert_message(conn, parsed)
+    upsert_addresses(conn, parsed["id"], parse_addresses(raw))
+    upsert_attachments(conn, parsed["id"], parse_attachments(raw))
+    count = 1
+    if recursive:
+        for sub in gmail_extract_attached_messages(raw):
+            sub_parsed = parse_message(sub)
+            upsert_message(conn, sub_parsed)
+            upsert_addresses(conn, sub_parsed["id"], parse_addresses(sub))
+            upsert_attachments(conn, sub_parsed["id"], parse_attachments(sub))
+            count += 1
+    return count
+
+
+def _full_sync(service, conn, start_time: float, recursive: bool = False) -> int:
     logger.info("Running full sync (no prior sync state found)")
     profile = get_profile(service)
     history_id = profile["historyId"]
@@ -117,12 +158,7 @@ def _full_sync(service, conn, start_time: float) -> None:
         )
     count = 0
     for msg_id in list_all_message_ids(service):
-        raw = fetch_message(service, msg_id)
-        parsed = parse_message(raw)
-        upsert_message(conn, parsed)
-        upsert_addresses(conn, parsed["id"], parse_addresses(raw))
-        upsert_attachments(conn, parsed["id"], parse_attachments(raw))
-        count += 1
+        count += _process_gmail_msg(service, conn, msg_id, recursive)
         if count % PROGRESS_LOG_INTERVAL == 0:
             elapsed = time.time() - start_time
             if total:
@@ -137,34 +173,27 @@ def _full_sync(service, conn, start_time: float) -> None:
             else:
                 logger.info("Full sync progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
     set_sync_state(conn, "last_history_id", history_id)
-    elapsed = time.time() - start_time
-    logger.info("Finished full sync in %.1fs: %d messages indexed", elapsed, count)
+    return count
 
 
-def _incremental_sync(service, conn, last_history_id: str, start_time: float) -> None:
+def _incremental_sync(service, conn, last_history_id: str, start_time: float, recursive: bool = False) -> int:
     logger.info("Running incremental sync from history ID %s", last_history_id)
     try:
         count = 0
         for msg_id in list_changed_message_ids(service, last_history_id):
-            raw = fetch_message(service, msg_id)
-            parsed = parse_message(raw)
-            upsert_message(conn, parsed)
-            upsert_addresses(conn, parsed["id"], parse_addresses(raw))
-            upsert_attachments(conn, parsed["id"], parse_attachments(raw))
-            count += 1
+            count += _process_gmail_msg(service, conn, msg_id, recursive)
             if count % PROGRESS_LOG_INTERVAL == 0:
                 elapsed = time.time() - start_time
                 logger.info("Incremental sync progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
         new_history_id = get_current_history_id(service)
         set_sync_state(conn, "last_history_id", new_history_id)
-        elapsed = time.time() - start_time
-        logger.info("Finished incremental sync in %.1fs: %d new messages", elapsed, count)
+        return count
     except HistoryExpiredError:
         logger.warning("Stored historyId expired; falling back to full sync")
-        _full_sync(service, conn, start_time)
+        return _full_sync(service, conn, start_time, recursive)
 
 
-def _filtered_import(service, conn, query: str, start_time: float) -> None:
+def _filtered_import(service, conn, query: str, start_time: float, recursive: bool = False) -> int:
     """Import only messages matching Gmail's native `q` search syntax.
 
     Passed straight through to Gmail (full grammar, zero parsing on our
@@ -175,17 +204,11 @@ def _filtered_import(service, conn, query: str, start_time: float) -> None:
     logger.info("Running filtered import (sync_state is not touched)")
     count = 0
     for msg_id in list_all_message_ids(service, query=query):
-        raw = fetch_message(service, msg_id)
-        parsed = parse_message(raw)
-        upsert_message(conn, parsed)
-        upsert_addresses(conn, parsed["id"], parse_addresses(raw))
-        upsert_attachments(conn, parsed["id"], parse_attachments(raw))
-        count += 1
+        count += _process_gmail_msg(service, conn, msg_id, recursive)
         if count % PROGRESS_LOG_INTERVAL == 0:
             elapsed = time.time() - start_time
             logger.info("Filtered import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
-    elapsed = time.time() - start_time
-    logger.info("Finished filtered import in %.1fs: %d messages indexed", elapsed, count)
+    return count
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
@@ -195,12 +218,17 @@ def _resolve_db_path(args: argparse.Namespace) -> Path:
 
 def _run_import(args: argparse.Namespace) -> None:
     _setup_logging()
+    version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
-    logger.info("Starting Gmail sync")
-    logger.info("Database: %s", db_path)
+    recursive = getattr(args, "recursive", False)
+
+    logger.info("Mail Utils %s operation started: Gmail sync", version)
+    logger.info("Database:  %s", db_path)
     if args.filter:
-        logger.info("Filter:   %s", args.filter)
+        logger.info("Filter:    %s", args.filter)
+    if recursive:
+        logger.info("Recursive: True")
 
     creds = get_credentials()
     service = build_gmail_service(creds)
@@ -209,26 +237,31 @@ def _run_import(args: argparse.Namespace) -> None:
     upsert_labels(conn, list_labels(service))
 
     if args.filter:
-        _filtered_import(service, conn, args.filter, start_time)
+        count = _filtered_import(service, conn, args.filter, start_time, recursive)
     else:
         last_history_id = get_sync_state(conn, "last_history_id")
         if last_history_id is None:
-            _full_sync(service, conn, start_time)
+            count = _full_sync(service, conn, start_time, recursive)
         else:
-            _incremental_sync(service, conn, last_history_id, start_time)
+            count = _incremental_sync(service, conn, last_history_id, start_time, recursive)
 
     conn.close()
     elapsed = time.time() - start_time
-    logger.info("Finished Gmail sync in %.1fs", elapsed)
+    logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
 
 
 def _run_import_pst(args: argparse.Namespace) -> None:
     _setup_logging()
+    version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
-    logger.info("Starting Outlook PST import")
-    logger.info("Source:   %s", args.pst_path)
-    logger.info("Database: %s", db_path)
+    recursive = getattr(args, "recursive", False)
+
+    logger.info("Mail Utils %s operation started: Outlook PST import", version)
+    logger.info("Source:    %s", args.pst_path)
+    logger.info("Database:  %s", db_path)
+    if recursive:
+        logger.info("Recursive: True")
 
     conn = init_db(db_path)
 
@@ -260,16 +293,33 @@ def _run_import_pst(args: argparse.Namespace) -> None:
 
     conn.close()
     elapsed = time.time() - start_time
-    logger.info("Finished Outlook PST import in %.1fs: %d messages indexed", elapsed, count)
+    logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
+
+
+def _process_tb_message(conn, raw_msg, label_id, recursive: bool) -> int:
+    parsed = tb_parse_message(raw_msg, label_id=label_id)
+    upsert_message(conn, parsed)
+    upsert_addresses(conn, parsed["id"], tb_parse_addresses(raw_msg))
+    upsert_attachments(conn, parsed["id"], tb_parse_attachments(raw_msg))
+    count = 1
+    if recursive:
+        for sub in tb_extract_attached_messages(raw_msg):
+            count += _process_tb_message(conn, sub, label_id, recursive=True)
+    return count
 
 
 def _run_import_thunderbird(args: argparse.Namespace) -> None:
     _setup_logging()
+    version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
-    logger.info("Starting Thunderbird archive import")
-    logger.info("Source:   %s", args.archive_path)
-    logger.info("Database: %s", db_path)
+    recursive = getattr(args, "recursive", False)
+
+    logger.info("Mail Utils %s operation started: Thunderbird archive import", version)
+    logger.info("Source:    %s", args.archive_path)
+    logger.info("Database:  %s", db_path)
+    if recursive:
+        logger.info("Recursive: True")
 
     conn = init_db(db_path)
 
@@ -289,11 +339,7 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
             box = mailbox.mbox(temp_mbox)
             try:
                 for raw_msg in box:
-                    parsed = tb_parse_message(raw_msg, label_id=label_id)
-                    upsert_message(conn, parsed)
-                    upsert_addresses(conn, parsed["id"], tb_parse_addresses(raw_msg))
-                    upsert_attachments(conn, parsed["id"], tb_parse_attachments(raw_msg))
-                    count += 1
+                    count += _process_tb_message(conn, raw_msg, label_id, recursive)
                     if count % PROGRESS_LOG_INTERVAL == 0:
                         elapsed = time.time() - start_time
                         logger.info("Thunderbird import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
@@ -304,7 +350,7 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
 
     conn.close()
     elapsed = time.time() - start_time
-    logger.info("Finished Thunderbird import in %.1fs: %d messages indexed", elapsed, count)
+    logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
 
 
 def _format_size(num_bytes: int) -> str:
@@ -370,6 +416,7 @@ def _create_filtered_ids_table(conn: sqlite3.Connection, matching_ids: set) -> N
 
 def _run_stats(args: argparse.Namespace) -> None:
     _setup_logging()
+    version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
     if not db_path.exists():
@@ -379,7 +426,7 @@ def _run_stats(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
 
-    logger.info("Printing database stats")
+    logger.info("Mail Utils %s operation started: Database stats", version)
     logger.info("Database: %s", db_path)
 
     filter_str = getattr(args, "filter", None)
@@ -394,9 +441,11 @@ def _run_stats(args: argparse.Namespace) -> None:
         msg_join = "JOIN filtered_ids f ON f.id = messages.id"
         addr_join = "JOIN filtered_ids f ON f.id = message_addresses.message_id"
         att_join = "JOIN filtered_ids f ON f.id = attachments.message_id"
-        logger.info("Filter:   %r (%d matching messages)\n", filter_str, len(matching_ids))
+        logger.info("Filter:   %r (%d matching messages)", filter_str, len(matching_ids))
     else:
         msg_join = addr_join = att_join = ""
+
+    logger.info("")
 
     (total,) = cur.execute(f"SELECT COUNT(*) FROM messages {msg_join}").fetchone()
     (threads,) = cur.execute(f"SELECT COUNT(DISTINCT thread_id) FROM messages {msg_join}").fetchone()
@@ -480,35 +529,20 @@ def _run_stats(args: argparse.Namespace) -> None:
 
     conn.close()
     elapsed = time.time() - start_time
-    logger.info("\nFinished stats in %.2fs", elapsed)
-
-    conn.close()
-
-
-EXPORT_PROGRESS_INTERVAL = 500
-
-_UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-_MAX_EXPORT_FILENAME_ID_LEN = 150
+    logger.info("\nMail Utils %s operation ended in %.2fs: %d total messages reported", version, elapsed, total)
 
 
 def _safe_export_filename(msg_id: str) -> str:
-    """Turn a message id into a filesystem-safe filename stem (no extension).
+    cleaned = re.sub(r'[/\\:*?"<>|]', "_", msg_id)
+    return cleaned if len(cleaned) <= 120 else hashlib.sha256(msg_id.encode("utf-8")).hexdigest()
 
-    Gmail ids are already safe (opaque hex strings), but a PST-sourced id can be the message's
-    real Internet Message-ID header (e.g. `outlook:<foo@bar.com>`), which routinely contains
-    characters Windows rejects in filenames (`:`, `<`, `>`, ...) and can be far longer than any
-    Gmail id. Unsafe characters become `_`; an overlong result is truncated with a short content
-    hash appended so two ids that only differ after the truncation point still get distinct files.
-    """
-    safe = _UNSAFE_FILENAME_CHARS.sub("_", msg_id)
-    if len(safe) <= _MAX_EXPORT_FILENAME_ID_LEN:
-        return safe
-    digest = hashlib.sha1(msg_id.encode("utf-8")).hexdigest()[:8]
-    return f"{safe[:_MAX_EXPORT_FILENAME_ID_LEN]}-{digest}"
+
+EXPORT_PROGRESS_INTERVAL = 50
 
 
 def _export_message_md(
     target_file: Path,
+    *,
     msg_id: str,
     thread_id: str | None,
     sender: str | None,
@@ -518,33 +552,34 @@ def _export_message_md(
     subject: str | None,
     date: str | None,
     internal_date_iso: str | None,
-    labels: list[str],
+    labels: list,
     body_mime_type: str | None,
-    attachments: list[dict],
+    attachments: list,
     body_text: str | None,
 ) -> None:
     frontmatter = {
         "id": msg_id,
         "thread_id": thread_id,
+        "date": date,
+        "internal_date": internal_date_iso,
         "from": sender,
         "to": recipient,
         "cc": cc,
         "bcc": bcc,
         "subject": subject,
-        "date": date,
-        "internal_date": internal_date_iso,
         "labels": labels,
         "body_mime_type": body_mime_type,
         "attachments": attachments,
     }
     frontmatter = {k: v for k, v in frontmatter.items() if v not in (None, [], "")}
-
-    content = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True) + "---\n\n" + (body_text or "")
+    yaml_header = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
+    content = f"---\n{yaml_header}---\n\n{body_text or ''}\n"
     target_file.write_text(content, encoding="utf-8")
 
 
 def _export_message_eml(
     target_file: Path,
+    *,
     msg_id: str,
     thread_id: str | None,
     sender: str | None,
@@ -554,9 +589,9 @@ def _export_message_eml(
     subject: str | None,
     date: str | None,
     internal_date_ms: int | None,
-    labels: list[str],
+    labels: list,
     body_mime_type: str | None,
-    attachments: list[dict],
+    attachments: list,
     body_text: str | None,
 ) -> None:
     msg = EmailMessage()
@@ -605,6 +640,7 @@ def _export_message_eml(
 
 def _run_export(args: argparse.Namespace) -> None:
     _setup_logging()
+    version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
     if not db_path.exists():
@@ -614,7 +650,7 @@ def _run_export(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     export_format = getattr(args, "format", "md") or "md"
 
-    logger.info("Starting message export")
+    logger.info("Mail Utils %s operation started: Message export", version)
     logger.info("Database:         %s", db_path)
     logger.info("Output directory: %s", output_dir)
     logger.info("Format:           %s", export_format)
@@ -719,7 +755,113 @@ def _run_export(args: argparse.Namespace) -> None:
             logger.info("Export progress: %d/%d messages (%.1f%% - elapsed: %.1fs)", count, total_to_export, pct, elapsed)
 
     elapsed = time.time() - start_time
-    logger.info("Finished export in %.1fs: %d messages exported to %s", elapsed, count, output_dir)
+    logger.info("Mail Utils %s operation ended in %.1fs: %d messages exported to %s", version, elapsed, count, output_dir)
+
+
+def _sanitize_fts_query(query: str) -> str:
+    words = query.strip().split()
+    tokens = []
+    for w in words:
+        if w.upper() in ("AND", "OR", "NOT"):
+            tokens.append(w.upper())
+        else:
+            clean = w.replace('"', '""')
+            tokens.append(f'"{clean}"')
+    return " ".join(tokens)
+
+
+def _run_search(args: argparse.Namespace) -> None:
+    _setup_logging()
+    version = _get_version()
+    start_time = time.time()
+    db_path = _resolve_db_path(args)
+    if not db_path.exists():
+        logger.info("No database found at %s", db_path)
+        return
+
+    logger.info("Mail Utils %s operation started: Full-text search", version)
+    logger.info("Query:    %r", args.query)
+    logger.info("Database: %s", db_path)
+    limit = getattr(args, "limit", 20) or 20
+    logger.info("Limit:    %d\n", limit)
+
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+
+    query_str = args.query.strip()
+    try:
+        cur.execute(
+            """
+            SELECT
+                m.id,
+                m.sender,
+                m.recipient,
+                m.subject,
+                m.date,
+                m.internal_date_ms,
+                snippet(messages_fts, 1, '«', '»', '...', 15) AS subject_snippet,
+                snippet(messages_fts, 2, '«', '»', '...', 25) AS body_snippet,
+                bm25(messages_fts) AS rank
+            FROM messages_fts f
+            JOIN messages m ON m.id = f.id
+            WHERE messages_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (query_str, limit),
+        )
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        sanitized = _sanitize_fts_query(query_str)
+        try:
+            cur.execute(
+                """
+                SELECT
+                    m.id,
+                    m.sender,
+                    m.recipient,
+                    m.subject,
+                    m.date,
+                    m.internal_date_ms,
+                    snippet(messages_fts, 1, '«', '»', '...', 15) AS subject_snippet,
+                    snippet(messages_fts, 2, '«', '»', '...', 25) AS body_snippet,
+                    bm25(messages_fts) AS rank
+                FROM messages_fts f
+                JOIN messages m ON m.id = f.id
+                WHERE messages_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (sanitized, limit),
+            )
+            rows = cur.fetchall()
+        except sqlite3.OperationalError as e:
+            logger.info("Search query error: %s", e)
+            conn.close()
+            return
+
+    count = len(rows)
+    if not rows:
+        logger.info("No matching messages found.")
+    else:
+        for idx, (msg_id, sender, recipient, subject, date_str, internal_date_ms, subj_snip, body_snip, rank) in enumerate(rows, 1):
+            date_display = date_str
+            if internal_date_ms:
+                dt = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
+                date_display = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            logger.info(f"[{idx}] {date_display or 'Unknown date'} | {msg_id}")
+            if sender:
+                logger.info(f"    From:    {sender}")
+            if recipient:
+                logger.info(f"    To:      {recipient}")
+            logger.info(f"    Subject: {subj_snip or subject or '(No Subject)'}")
+            if body_snip:
+                logger.info(f"    Snippet: {body_snip}")
+            logger.info("")
+
+    conn.close()
+    elapsed = time.time() - start_time
+    logger.info("Mail Utils %s operation ended in %.2fs: %d matching messages found", version, elapsed, count)
 
 
 def _validate_inner_command(command: list) -> None:
@@ -737,10 +879,12 @@ def _validate_inner_command(command: list) -> None:
 
 def _run_schedule(args: argparse.Namespace) -> None:
     _setup_logging()
+    version = _get_version()
+    start_time = time.time()
     system = platform.system()
 
     if args.list:
-        logger.info("Listing scheduled tasks")
+        logger.info("Mail Utils %s operation started: List scheduled tasks", version)
         if system == "Windows":
             output = list_windows_jobs()
             logger.info(output or "No mail-utils scheduled tasks found.")
@@ -752,13 +896,15 @@ def _run_schedule(args: argparse.Namespace) -> None:
                 logger.info("%s: %s", name, command_str)
         else:
             logger.info("Unsupported platform: %s", system)
+        elapsed = time.time() - start_time
+        logger.info("Mail Utils %s operation ended in %.2fs: listing complete", version, elapsed)
         return
 
     command = list(args.inner_command)
     if command and command[0] == "--":
         command = command[1:]
 
-    logger.info("Registering scheduled task")
+    logger.info("Mail Utils %s operation started: Register scheduled task", version)
     logger.info("Job name: %s", args.job_name)
     logger.info("Interval: %d minutes", args.interval_minutes)
     logger.info("Command:  %s", " ".join(command))
@@ -774,16 +920,21 @@ def _run_schedule(args: argparse.Namespace) -> None:
     try:
         if system == "Windows":
             schedule_windows(args.job_name, args.interval_minutes, python_exe, BASE_DIR, command)
+            task_name = windows_task_name(args.job_name)
             logger.info(
                 "Registered Windows Scheduled Task %r (every %d min): %s",
-                windows_task_name(args.job_name),
+                task_name,
                 args.interval_minutes,
                 " ".join(command),
             )
+            elapsed = time.time() - start_time
+            logger.info("Mail Utils %s operation ended in %.2fs: task %r registered", version, elapsed, task_name)
         elif system in ("Linux", "Darwin"):
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             line = schedule_cron(args.job_name, args.interval_minutes, python_exe, BASE_DIR, LOG_DIR / "cron.log", command)
             logger.info("Added crontab entry for job %r:\n  %s", args.job_name, line)
+            elapsed = time.time() - start_time
+            logger.info("Mail Utils %s operation ended in %.2fs: job %r registered", version, elapsed, args.job_name)
         else:
             logger.info("Unsupported platform: %s. Only Windows and Linux/macOS are supported.", system)
     except ScheduleError as e:
@@ -792,17 +943,24 @@ def _run_schedule(args: argparse.Namespace) -> None:
 
 def _run_unschedule(args: argparse.Namespace) -> None:
     _setup_logging()
+    version = _get_version()
+    start_time = time.time()
     system = platform.system()
-    logger.info("Unregistering scheduled task")
+    logger.info("Mail Utils %s operation started: Unregister scheduled task", version)
     logger.info("Job name: %s", args.job_name)
 
     try:
         if system == "Windows":
             unschedule_windows(args.job_name)
-            logger.info("Removed Windows Scheduled Task %r (if it existed).", windows_task_name(args.job_name))
+            task_name = windows_task_name(args.job_name)
+            logger.info("Removed Windows Scheduled Task %r (if it existed).", task_name)
+            elapsed = time.time() - start_time
+            logger.info("Mail Utils %s operation ended in %.2fs: task %r removed", version, elapsed, task_name)
         elif system in ("Linux", "Darwin"):
             removed = unschedule_cron(args.job_name)
             logger.info("%s crontab entry for job %r.", "Removed" if removed else "No", args.job_name)
+            elapsed = time.time() - start_time
+            logger.info("Mail Utils %s operation ended in %.2fs: job %r removed", version, elapsed, args.job_name)
         else:
             logger.info("Unsupported platform: %s", system)
     except ScheduleError as e:
@@ -847,6 +1005,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=filter_help + " Passed straight through to Gmail's own search; forces a filtered full "
         "listing instead of incremental sync, and does not update sync_state.",
     )
+    import_cmd.add_argument(
+        "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
+    )
     import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
@@ -857,6 +1018,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Import an Outlook .pst archive's messages into the local database",
     )
     import_pst_cmd.add_argument("pst_path", help="Path to the .pst file to import")
+    import_pst_cmd.add_argument(
+        "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
+    )
     import_pst_cmd.add_argument("--db", help=db_help)
     import_pst_cmd.set_defaults(func=_run_import_pst)
     subcommand_parsers["import-pst"] = import_pst_cmd
@@ -868,10 +1032,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Import a Mozilla Thunderbird archive (.pcv, .zip, or profile folder) into the local database",
     )
     import_tb_cmd.add_argument("archive_path", help="Path to the .pcv/.zip archive or Thunderbird profile directory to import")
+    import_tb_cmd.add_argument(
+        "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
+    )
     import_tb_cmd.add_argument("--db", help=db_help)
     import_tb_cmd.set_defaults(func=_run_import_thunderbird)
     subcommand_parsers["import-thunderbird"] = import_tb_cmd
     subcommand_parsers["import-pcv"] = import_tb_cmd
+
+    search_cmd = subparsers.add_parser("search", help="Full-text search indexed messages using SQLite FTS5")
+    search_cmd.add_argument("query", help="Search query (supports boolean operators AND, OR, NOT, and prefix queries)")
+    search_cmd.add_argument("-n", "--limit", type=int, default=20, help="Maximum number of search results to return (default: 20)")
+    search_cmd.add_argument("--db", help=db_help)
+    search_cmd.set_defaults(func=_run_search)
+    subcommand_parsers["search"] = search_cmd
 
     stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
     stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
