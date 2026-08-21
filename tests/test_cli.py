@@ -3,6 +3,7 @@ import email
 import logging
 from email.policy import default as email_policy_default
 from importlib.metadata import version as package_version
+from pathlib import Path
 
 import pytest
 import yaml
@@ -11,6 +12,7 @@ from mail_utils import cli
 from mail_utils.cli import (
     _run_export,
     _run_import,
+    _run_import_gmail,
     _run_import_pst,
     _run_import_thunderbird,
     _run_schedule,
@@ -90,13 +92,23 @@ def test_console_formatter_omits_milliseconds():
 def test_import_subcommand_routes_to_run_import():
     args = build_parser().parse_args(["import"])
     assert args.command == "import"
+    assert args.source_path is None
     assert args.filter is None
     assert args.func is _run_import
 
 
-def test_import_subcommand_accepts_filter_flag():
-    args = build_parser().parse_args(["import", "--filter", "label:Work"])
+def test_import_subcommand_accepts_positional_source_path():
+    args = build_parser().parse_args(["import", "path/to/archive.pst", "--filter", "label:Work"])
+    assert args.command == "import"
+    assert args.source_path == "path/to/archive.pst"
     assert args.filter == "label:Work"
+
+
+def test_import_gmail_subcommand_routes_to_run_import_gmail():
+    args = build_parser().parse_args(["import-gmail", "--filter", "label:Work"])
+    assert args.command == "import-gmail"
+    assert args.filter == "label:Work"
+    assert args.func is _run_import_gmail
 
 
 def test_import_pst_subcommand_routes_to_run_import_pst():
@@ -557,8 +569,55 @@ def test_recursive_flags_parse_across_importers():
     args_import = parser.parse_args(["import", "--recursive"])
     assert args_import.recursive is True
 
+    args_gmail = parser.parse_args(["import-gmail", "-r"])
+    assert args_gmail.recursive is True
+
     args_pst = parser.parse_args(["import-pst", "mail.pst", "-r"])
     assert args_pst.recursive is True
 
     args_tb = parser.parse_args(["import-thunderbird", "profile.pcv", "-r"])
     assert args_tb.recursive is True
+
+
+def test_run_import_auto_detects_pst(tmp_path, capsys):
+    sample_pst = Path("tests/fixtures/sample.pst")
+    if not sample_pst.exists():
+        pytest.skip("sample.pst fixture not found")
+    db_path = tmp_path / "auto_pst.db"
+    _run_import(argparse.Namespace(source_path=str(sample_pst), db=str(db_path), recursive=False, filter=None))
+    out = capsys.readouterr().out
+    assert "Outlook PST import" in out
+    assert "2 messages indexed" in out
+
+
+def test_run_import_auto_detects_thunderbird_pcv(tmp_path, capsys):
+    sample_pcv = Path("tests/fixtures/sample.pcv")
+    if not sample_pcv.exists():
+        pytest.skip("sample.pcv fixture not found")
+    db_path = tmp_path / "auto_tb.db"
+    _run_import(argparse.Namespace(source_path=str(sample_pcv), db=str(db_path), recursive=False, filter=None))
+    out = capsys.readouterr().out
+    assert "Thunderbird archive import" in out
+    assert "3 messages indexed" in out
+
+
+def test_run_import_rejects_unsupported_formats(tmp_path, capsys):
+    eml_file = tmp_path / "message.eml"
+    eml_file.write_text("From: user@example.com\nSubject: Test\n\nBody", encoding="utf-8")
+    _run_import(argparse.Namespace(source_path=str(eml_file), db=None, recursive=False, filter=None))
+    out = capsys.readouterr().out
+    assert "Direct import of single EML message 'message.eml' is not supported" in out
+
+    txt_file = tmp_path / "notes.txt"
+    txt_file.write_text("plain text", encoding="utf-8")
+    _run_import(argparse.Namespace(source_path=str(txt_file), db=None, recursive=False, filter=None))
+    out = capsys.readouterr().out
+    assert "Unsupported file format for 'notes.txt'" in out
+
+
+def test_run_import_no_args_without_credentials_reports_error(monkeypatch, capsys):
+    monkeypatch.setattr(cli.CREDENTIALS_PATH, "exists", lambda: False)
+    monkeypatch.setattr(cli.TOKEN_PATH, "exists", lambda: False)
+    _run_import(argparse.Namespace(source_path=None, db=None, recursive=False, filter=None))
+    out = capsys.readouterr().out
+    assert "No import file specified and Gmail credentials not found" in out

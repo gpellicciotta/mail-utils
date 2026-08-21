@@ -18,28 +18,34 @@ A complete walkthrough for a first-time user, demonstrating setup, ingestion, se
 
 ## 2. Ingest Messages
 
-### A. Gmail API Ingestion
+### A. Smart Unified Import
+`mail-utils import` automatically recognizes the archive format or falls back to Gmail:
+
 ```powershell
+# Auto-detects and imports Outlook PST
+.venv\Scripts\mail-utils import path\to\archive.pst
+
+# Auto-detects and imports Thunderbird backup (.pcv, .zip, or profile folder)
+.venv\Scripts\mail-utils import path\to\backup.pcv
+
+# When no file is given, syncs with Gmail (if credentials exist)
 .venv\Scripts\mail-utils import
 ```
-The first run prompts for OAuth browser consent, then performs a full sync into `data/gmail.db`. Subsequent runs are fast incremental syncs.
 
-To extract nested attached emails recursively:
+### B. Dedicated Importers
+You can also use the explicit format subcommands:
 ```powershell
-.venv\Scripts\mail-utils import --recursive
-```
+# Gmail API
+.venv\Scripts\mail-utils import-gmail
 
-### B. Microsoft Outlook `.pst` Import
-```powershell
+# Microsoft Outlook (.pst)
 .venv\Scripts\mail-utils import-pst path\to\archive.pst
-```
-(or alias `.venv\Scripts\mail-utils import-outlook path\to\archive.pst`).
 
-### C. Mozilla Thunderbird Archive Import
-```powershell
+# Mozilla Thunderbird (.pcv, .zip, profile directory)
 .venv\Scripts\mail-utils import-thunderbird path\to\backup.pcv
 ```
-(or alias `.venv\Scripts\mail-utils import-pcv path\to\backup.pcv`).
+
+Add `--recursive` (or `-r`) to unpack and index nested email attachments.
 
 ---
 

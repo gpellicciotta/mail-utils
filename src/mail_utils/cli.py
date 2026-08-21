@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import zipfile
 from collections import Counter
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -20,7 +21,7 @@ from pathlib import Path
 import yaml
 
 from .auth import get_credentials
-from .config import BASE_DIR, DB_PATH, LOG_DIR, LOG_PATH
+from .config import BASE_DIR, CREDENTIALS_PATH, DB_PATH, LOG_DIR, LOG_PATH, TOKEN_PATH
 from .db import (
     get_sync_state,
     init_db,
@@ -216,7 +217,7 @@ def _resolve_db_path(args: argparse.Namespace) -> Path:
     return Path(db) if db else DB_PATH
 
 
-def _run_import(args: argparse.Namespace) -> None:
+def _run_import_gmail(args: argparse.Namespace) -> None:
     _setup_logging()
     version = _get_version()
     start_time = time.time()
@@ -225,7 +226,7 @@ def _run_import(args: argparse.Namespace) -> None:
 
     logger.info("Mail Utils %s operation started: Gmail sync", version)
     logger.info("Database:  %s", db_path)
-    if args.filter:
+    if getattr(args, "filter", None):
         logger.info("Filter:    %s", args.filter)
     if recursive:
         logger.info("Recursive: True")
@@ -236,7 +237,7 @@ def _run_import(args: argparse.Namespace) -> None:
 
     upsert_labels(conn, list_labels(service))
 
-    if args.filter:
+    if getattr(args, "filter", None):
         count = _filtered_import(service, conn, args.filter, start_time, recursive)
     else:
         last_history_id = get_sync_state(conn, "last_history_id")
@@ -248,6 +249,120 @@ def _run_import(args: argparse.Namespace) -> None:
     conn.close()
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
+
+
+def _detect_file_format(path: Path) -> str:
+    """Identify the email/archive file format of a given path.
+
+    Returns: 'pst', 'thunderbird_pcv', 'thunderbird_profile', 'eml', 'msg', 'mbox', or 'unknown'.
+    """
+    if path.is_dir():
+        if (path / "Mail").exists() or (path / "ImapMail").exists() or (path / "prefs.js").exists():
+            return "thunderbird_profile"
+        try:
+            for child in path.iterdir():
+                if child.suffix == ".sbd" or child.name in ("Mail", "ImapMail", "prefs.js"):
+                    return "thunderbird_profile"
+        except OSError:
+            pass
+        return "unknown"
+
+    if not path.is_file():
+        return "unknown"
+
+    suffix = path.suffix.lower()
+
+    # 1. Check Outlook PST
+    if suffix == ".pst":
+        return "pst"
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+            if magic == b"!BDN":
+                return "pst"
+    except OSError:
+        pass
+
+    # 2. Check Thunderbird PCV / ZIP
+    if suffix in (".pcv", ".zip") or zipfile.is_zipfile(path):
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                names = zf.namelist()
+                if any(n.startswith(("Mail/", "ImapMail/")) or n.endswith(".sbd") or n == "prefs.js" for n in names):
+                    return "thunderbird_pcv"
+        except (zipfile.BadZipFile, OSError):
+            pass
+
+    # 3. Known unsupported single-message / standalone formats
+    if suffix == ".eml":
+        return "eml"
+    if suffix == ".msg":
+        return "msg"
+    if suffix == ".mbox":
+        return "mbox"
+
+    return "unknown"
+
+
+def _run_import(args: argparse.Namespace) -> None:
+    source_path = getattr(args, "source_path", None)
+
+    # When no source path is specified, try Gmail import if credentials exist
+    if not source_path:
+        if CREDENTIALS_PATH.exists() or TOKEN_PATH.exists():
+            _run_import_gmail(args)
+            return
+
+        _setup_logging()
+        logger.info(
+            "Error: No import file specified and Gmail credentials not found at %s.\n"
+            "Provide an archive path (e.g. 'mail-utils import archive.pst') or set up Gmail credentials for 'mail-utils import-gmail'.",
+            CREDENTIALS_PATH,
+        )
+        return
+
+    path = Path(source_path)
+    if not path.exists():
+        _setup_logging()
+        logger.info("Error: Import source '%s' not found.", source_path)
+        return
+
+    fmt = _detect_file_format(path)
+
+    if fmt == "pst":
+        args.pst_path = str(path)
+        _run_import_pst(args)
+    elif fmt in ("thunderbird_pcv", "thunderbird_profile"):
+        args.archive_path = str(path)
+        _run_import_thunderbird(args)
+    elif fmt == "eml":
+        _setup_logging()
+        logger.info(
+            "Error: Direct import of single EML message '%s' is not supported. "
+            "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile folder), or Gmail API.",
+            path.name,
+        )
+    elif fmt == "msg":
+        _setup_logging()
+        logger.info(
+            "Error: Direct import of single Outlook MSG file '%s' is not supported. "
+            "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile folder), or Gmail API.",
+            path.name,
+        )
+    elif fmt == "mbox":
+        _setup_logging()
+        logger.info(
+            "Error: Direct import of standalone Mbox file '%s' is not supported. "
+            "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile folder), or Gmail API.",
+            path.name,
+        )
+    else:
+        _setup_logging()
+        logger.info(
+            "Error: Unsupported file format for '%s'. "
+            "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile directory), or Gmail API (when no file is specified).",
+            path.name,
+        )
 
 
 def _run_import_pst(args: argparse.Namespace) -> None:
@@ -999,11 +1114,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     db_help = "Path to the SQLite database (default: gmail_index.db in the project root)."
 
-    import_cmd = subparsers.add_parser("import", help="Import new mail into the local database")
+    import_cmd = subparsers.add_parser(
+        "import",
+        help="Import mail from an archive file/directory, or from Gmail if no file is provided",
+    )
+    import_cmd.add_argument(
+        "source_path",
+        nargs="?",
+        default=None,
+        help="Path to Outlook .pst archive, Thunderbird .pcv/.zip archive, or profile directory (omit to import from Gmail)",
+    )
     import_cmd.add_argument(
         "--filter",
-        help=filter_help + " Passed straight through to Gmail's own search; forces a filtered full "
-        "listing instead of incremental sync, and does not update sync_state.",
+        help=filter_help + " When importing from Gmail, passed through to search; forces full sync.",
     )
     import_cmd.add_argument(
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
@@ -1011,6 +1134,19 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
+
+    import_gmail_cmd = subparsers.add_parser("import-gmail", help="Import new mail from Gmail via the Gmail API")
+    import_gmail_cmd.add_argument(
+        "--filter",
+        help=filter_help + " Passed straight through to Gmail's own search; forces a filtered full "
+        "listing instead of incremental sync, and does not update sync_state.",
+    )
+    import_gmail_cmd.add_argument(
+        "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
+    )
+    import_gmail_cmd.add_argument("--db", help=db_help)
+    import_gmail_cmd.set_defaults(func=_run_import_gmail)
+    subcommand_parsers["import-gmail"] = import_gmail_cmd
 
     import_pst_cmd = subparsers.add_parser(
         "import-pst",

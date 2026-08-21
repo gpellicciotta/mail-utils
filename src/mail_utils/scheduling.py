@@ -10,7 +10,7 @@ without touching a real crontab or Task Scheduler.
 import shlex
 import subprocess
 
-ALLOWED_COMMANDS = ("import", "export")
+ALLOWED_COMMANDS = ("import", "import-gmail", "export")
 
 
 class ScheduleError(Exception):

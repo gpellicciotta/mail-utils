@@ -25,15 +25,15 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 - Install/update in editable mode, with the `dev` extra (pytest, ruff): `.venv\Scripts\pip install -e ".[dev]"`
   (drop `[dev]` if you only need to run the app, not the tests/linter)
 - `mail-utils <command>` once installed (equivalent to `.venv\Scripts\python -m mail_utils.cli <command>`):
-  `import` (full sync first run, incremental after), `import-pst <path>` (Outlook .pst import),
-  `import-thunderbird <path>` (Thunderbird .pcv/profile import), `search <query>` (SQLite FTS5 full-text search),
-  `stats` (offline summary), `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
+  `import [<source_path>]` (smart unified import with auto-detection for Outlook PST, Thunderbird backup/profile, or Gmail fallback),
+  `import-gmail` (Gmail API sync), `import-pst <path>` (Outlook .pst import), `import-thunderbird <path>` (Thunderbird .pcv/profile import),
+  `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary), `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
   `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or cron, dispatched by `platform.system()`;
-  `mail-utils schedule --job-name <name> --interval-minutes N -- import|export [flags...]`, see README's "Scheduling"
-  section for the `--` requirement and cron's interval constraints), `--version` (reads live package metadata).
-- `import`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export` accept `--db <path>` to point at a database other
-  than the default `data/gmail.db`. `import`/`import-pst`/`import-thunderbird` accept `-r`/`--recursive` to import
-  nested email attachments. `import`/`stats`/`export` also accept `--filter "..."` (see README's "Filtering").
+  `mail-utils schedule --job-name <name> --interval-minutes N -- import|import-gmail|export [flags...]`, see docs/cli-spec.md for
+  scheduling details), `--version` (reads live package metadata).
+- `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export` accept `--db <path>` to point at a database other
+  than the default `data/gmail.db`. `import`/`import-gmail`/`import-pst`/`import-thunderbird` accept `-r`/`--recursive` to import
+  nested email attachments. `import`/`import-gmail`/`stats`/`export` also accept `--filter "..."` (see docs/cli-spec.md).
 - Run the test suite: `.venv\Scripts\python -m pytest`; lint/format: `.venv\Scripts\ruff check .` /
   `.venv\Scripts\ruff format .` (line-length 132, `[tool.ruff]` in `pyproject.toml`; CI runs both plus
   `pytest` plus `python -m build`).

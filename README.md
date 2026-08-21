@@ -31,9 +31,10 @@ python -m venv .venv
 # 2. Check version
 .venv\Scripts\mail-utils --version
 
-# 3. Import from a local archive
-.venv\Scripts\mail-utils import-pst path\to\archive.pst
-.venv\Scripts\mail-utils import-thunderbird path\to\backup.pcv
+# 3. Import from a local archive or Gmail
+.venv\Scripts\mail-utils import path\to\archive.pst
+.venv\Scripts\mail-utils import path\to\backup.pcv
+.venv\Scripts\mail-utils import-gmail
 
 # 4. Search indexed messages
 .venv\Scripts\mail-utils search "project alpha"

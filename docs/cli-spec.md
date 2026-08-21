@@ -24,19 +24,37 @@ mail-utils [--version] [--verbose] [<command>] [<args>...]
 ## 2. Subcommand Specifications
 
 ### 2.1 `import`
-Ingests new messages from a personal Gmail account via Gmail API.
+Unified, smart import command. Automatically identifies the source format if a path is provided, or synchronizes with Gmail if no path is given.
 
 ```powershell
-mail-utils import [--filter <query>] [-r|--recursive] [--db <path>]
+mail-utils import [<source_path>] [--filter <query>] [-r|--recursive] [--db <path>]
 ```
 
-- `--filter <query>`: Server-side search filter (Gmail `q` syntax). Forces a filtered listing without updating incremental sync state.
+- `<source_path>`: Optional positional path to an Outlook `.pst` file, Thunderbird archive (`.pcv`, `.zip`), or Thunderbird profile folder.
+  - If omitted: checks for Gmail credentials in `data/` and runs a Gmail sync.
+  - If an Outlook PST is provided: imports Outlook folders and messages.
+  - If a Thunderbird backup/directory is provided: imports Thunderbird folders and messages.
+  - If an unsupported or single-message format (e.g. `.eml`, `.msg`, `.mbox`) is provided: reports a descriptive error explaining supported options.
+- `--filter <query>`: Server-side search filter when syncing from Gmail.
 - `-r`, `--recursive`: Recursively index attached email messages (`message/rfc822` / `.eml`).
 - `--db <path>`: Target SQLite database file (default: `data/gmail.db`).
 
 ---
 
-### 2.2 `import-pst` (alias: `import-outlook`)
+### 2.2 `import-gmail`
+Dedicated subcommand to ingest new messages from Gmail via the Gmail API.
+
+```powershell
+mail-utils import-gmail [--filter <query>] [-r|--recursive] [--db <path>]
+```
+
+- `--filter <query>`: Server-side search filter (Gmail `q` syntax). Forces a filtered listing without updating incremental sync state.
+- `-r`, `--recursive`: Recursively index attached email messages.
+- `--db <path>`: Target SQLite database file.
+
+---
+
+### 2.3 `import-pst` (alias: `import-outlook`)
 Ingests messages and folder hierarchies from a Microsoft Outlook `.pst` file.
 
 ```powershell
@@ -50,7 +68,7 @@ mail-utils import-outlook <pst_path> [-r|--recursive] [--db <path>]
 
 ---
 
-### 2.3 `import-thunderbird` (alias: `import-pcv`)
+### 2.4 `import-thunderbird` (alias: `import-pcv`)
 Ingests messages from a Mozilla Thunderbird backup (`.pcv`, `.zip`) or profile directory.
 
 ```powershell
@@ -64,7 +82,7 @@ mail-utils import-pcv <archive_path> [-r|--recursive] [--db <path>]
 
 ---
 
-### 2.4 `search`
+### 2.5 `search`
 Full-text searches indexed messages using SQLite `FTS5`.
 
 ```powershell
@@ -77,7 +95,7 @@ mail-utils search <query> [-n|--limit <N>] [--db <path>]
 
 ---
 
-### 2.5 `stats`
+### 2.6 `stats`
 Displays offline summary statistics from the local database.
 
 ```powershell
@@ -89,7 +107,7 @@ mail-utils stats [--filter <filter>] [--db <path>]
 
 ---
 
-### 2.6 `export`
+### 2.7 `export`
 Exports messages to disk as Markdown (`.md`) or standard MIME (`.eml`) files.
 
 ```powershell
@@ -103,7 +121,6 @@ mail-utils export <output_dir> [-f|--format {md,eml}] [--filter <filter>] [--db 
 
 ---
 
-### 2.7 `schedule` & `unschedule`
 Registers and manages recurring scheduled tasks (Windows Task Scheduler or cron).
 
 ```powershell

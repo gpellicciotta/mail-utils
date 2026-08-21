@@ -8,7 +8,9 @@
   - `Mail Utils <version> operation started: <operation>`
   - `Mail Utils <version> operation ended in <elapsed>: <details>`
 - Added `mail-utils search "<query>"` subcommand powered by SQLite `FTS5` full-text indexing, featuring BM25 ranking, snippet matching with excerpts, boolean syntax (`AND`, `OR`, `NOT`, prefix matches), and `--limit` / `--db` options.
-- Added `-r` / `--recursive` flag to `import`, `import-pst` (`import-outlook`), and `import-thunderbird` (`import-pcv`) to recursively extract and index nested email attachments (`message/rfc822` / `.eml`).
+- Added `-r` / `--recursive` flag to all import commands (`import`, `import-gmail`, `import-pst`, `import-thunderbird`) to recursively extract and index nested email attachments (`message/rfc822` / `.eml`).
+- Renamed direct Gmail API import command to `import-gmail` for naming consistency across sources (`import-gmail`, `import-pst`/`import-outlook`, `import-thunderbird`/`import-pcv`).
+- Re-architected `mail-utils import [<source_path>]` as an intelligent unified importer: automatically detects Outlook PST, Thunderbird backups (`.pcv`/`.zip`), and profile folders, or falls back to Gmail API sync when no path is provided (with friendly format identification and errors for unsupported formats like `.eml`, `.msg`, `.mbox`).
 - Renamed internal package `mail_utils.pst` to `mail_utils.outlook` for architectural consistency with `mail_utils.thunderbird`, adding `import-outlook` as a CLI alias for `import-pst`.
 - Overhauled and restructured project documentation: added `docs/requirements.md` (goals, functional & technical requirements), `docs/cli-spec.md` (full CLI specification and filter grammar), `docs/devops.md` (setup, testing, build, packaging, and CI/CD guide), updated `docs/tutorial.md`, and streamlined `README.md`.
 - Added committed, anonymized sample fixtures for Outlook PST (`tests/fixtures/sample.pst`) and Thunderbird (`tests/fixtures/sample.pcv`) with reproducible fixture generators, enabling unconditional end-to-end integration testing in CI without external dependencies.
