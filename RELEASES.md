@@ -1,6 +1,9 @@
 # Release Notes
 
-## v2.0.0
+## vNext
+- Added `docs/email-formats.md`
+
+## v2.0.0 [released: 2026-08-20]
 
 New `import-pst <path>` command imports an Outlook `.pst` archive's messages into the same
 `data/gmail.db` tables `import` already populates, via a hand-rolled read-only `[MS-PST]` parser
