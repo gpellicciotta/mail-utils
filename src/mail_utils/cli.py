@@ -91,17 +91,19 @@ _LOG_FORMAT = "%(asctime)s UTC [%(levelname)s] %(message)s"
 def _setup_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+
     file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
-    file_handler.setFormatter(_UTCFormatter(_LOG_FORMAT))
+    file_handler.setFormatter(_UTCFormatter(_LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(file_handler)
 
-    # Same format on the console, but without milliseconds (default datefmt includes them).
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(_UTCFormatter(_LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
-
-    logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler])
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(console_handler)
 
 
-def _full_sync(service, conn) -> None:
+def _full_sync(service, conn, start_time: float) -> None:
     logger.info("Running full sync (no prior sync state found)")
     profile = get_profile(service)
     history_id = profile["historyId"]
@@ -122,20 +124,25 @@ def _full_sync(service, conn) -> None:
         upsert_attachments(conn, parsed["id"], parse_attachments(raw))
         count += 1
         if count % PROGRESS_LOG_INTERVAL == 0:
+            elapsed = time.time() - start_time
             if total:
+                pct = 100.0 * count / total
                 logger.info(
-                    "Full sync progress: %d/%d messages (%.1f%%)",
+                    "Full sync progress: %d/~%d messages (%.1f%% - elapsed: %.1fs)",
                     count,
                     total,
-                    100 * count / total,
+                    pct,
+                    elapsed,
                 )
             else:
-                logger.info("Full sync progress: %d messages indexed so far", count)
+                logger.info("Full sync progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
     set_sync_state(conn, "last_history_id", history_id)
-    logger.info("Full sync complete: %d messages indexed", count)
+    elapsed = time.time() - start_time
+    logger.info("Finished full sync in %.1fs: %d messages indexed", elapsed, count)
 
 
-def _incremental_sync(service, conn, last_history_id: str) -> None:
+def _incremental_sync(service, conn, last_history_id: str, start_time: float) -> None:
+    logger.info("Running incremental sync from history ID %s", last_history_id)
     try:
         count = 0
         for msg_id in list_changed_message_ids(service, last_history_id):
@@ -146,16 +153,18 @@ def _incremental_sync(service, conn, last_history_id: str) -> None:
             upsert_attachments(conn, parsed["id"], parse_attachments(raw))
             count += 1
             if count % PROGRESS_LOG_INTERVAL == 0:
-                logger.info("Incremental sync progress: %d messages indexed so far", count)
+                elapsed = time.time() - start_time
+                logger.info("Incremental sync progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
         new_history_id = get_current_history_id(service)
         set_sync_state(conn, "last_history_id", new_history_id)
-        logger.info("Incremental sync complete: %d new messages", count)
+        elapsed = time.time() - start_time
+        logger.info("Finished incremental sync in %.1fs: %d new messages", elapsed, count)
     except HistoryExpiredError:
         logger.warning("Stored historyId expired; falling back to full sync")
-        _full_sync(service, conn)
+        _full_sync(service, conn, start_time)
 
 
-def _filtered_import(service, conn, query: str) -> None:
+def _filtered_import(service, conn, query: str, start_time: float) -> None:
     """Import only messages matching Gmail's native `q` search syntax.
 
     Passed straight through to Gmail (full grammar, zero parsing on our
@@ -163,7 +172,7 @@ def _filtered_import(service, conn, query: str) -> None:
     is deliberately left untouched so this can't interfere with regular
     unfiltered `import` runs' historyId-based bookkeeping.
     """
-    logger.info("Running filtered import (query=%r); sync_state is not touched", query)
+    logger.info("Running filtered import (sync_state is not touched)")
     count = 0
     for msg_id in list_all_message_ids(service, query=query):
         raw = fetch_message(service, msg_id)
@@ -173,8 +182,10 @@ def _filtered_import(service, conn, query: str) -> None:
         upsert_attachments(conn, parsed["id"], parse_attachments(raw))
         count += 1
         if count % PROGRESS_LOG_INTERVAL == 0:
-            logger.info("Filtered import progress: %d messages indexed so far", count)
-    logger.info("Filtered import complete: %d messages indexed", count)
+            elapsed = time.time() - start_time
+            logger.info("Filtered import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
+    elapsed = time.time() - start_time
+    logger.info("Finished filtered import in %.1fs: %d messages indexed", elapsed, count)
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
@@ -184,9 +195,13 @@ def _resolve_db_path(args: argparse.Namespace) -> Path:
 
 def _run_import(args: argparse.Namespace) -> None:
     _setup_logging()
-    logger.info("Starting mail_utils run")
-
+    start_time = time.time()
     db_path = _resolve_db_path(args)
+    logger.info("Starting Gmail sync")
+    logger.info("Database: %s", db_path)
+    if args.filter:
+        logger.info("Filter:   %s", args.filter)
+
     creds = get_credentials()
     service = build_gmail_service(creds)
     conn = init_db(db_path)
@@ -194,28 +209,33 @@ def _run_import(args: argparse.Namespace) -> None:
     upsert_labels(conn, list_labels(service))
 
     if args.filter:
-        _filtered_import(service, conn, args.filter)
+        _filtered_import(service, conn, args.filter, start_time)
     else:
         last_history_id = get_sync_state(conn, "last_history_id")
         if last_history_id is None:
-            _full_sync(service, conn)
+            _full_sync(service, conn, start_time)
         else:
-            _incremental_sync(service, conn, last_history_id)
+            _incremental_sync(service, conn, last_history_id, start_time)
 
     conn.close()
-    logger.info("Run finished")
+    elapsed = time.time() - start_time
+    logger.info("Finished Gmail sync in %.1fs", elapsed)
 
 
 def _run_import_pst(args: argparse.Namespace) -> None:
     _setup_logging()
-    logger.info("Starting mail_utils PST import from %s", args.pst_path)
-
+    start_time = time.time()
     db_path = _resolve_db_path(args)
+    logger.info("Starting Outlook PST import")
+    logger.info("Source:   %s", args.pst_path)
+    logger.info("Database: %s", db_path)
+
     conn = init_db(db_path)
 
     with PSTFile(args.pst_path) as pst:
         folders = walk_folders(pst)
         upsert_labels(conn, labels_for_folders(folders))
+        total_messages = sum(len(f.message_nids) for f in folders)
 
         count = 0
         for folder in folders:
@@ -228,17 +248,29 @@ def _run_import_pst(args: argparse.Namespace) -> None:
                 upsert_attachments(conn, parsed["id"], pst_parse_attachments(raw))
                 count += 1
                 if count % PROGRESS_LOG_INTERVAL == 0:
-                    logger.info("PST import progress: %d messages indexed so far", count)
+                    elapsed = time.time() - start_time
+                    pct = (100.0 * count / total_messages) if total_messages else 0
+                    logger.info(
+                        "PST import progress: %d/%d messages (%.1f%% - elapsed: %.1fs)",
+                        count,
+                        total_messages,
+                        pct,
+                        elapsed,
+                    )
 
     conn.close()
-    logger.info("PST import complete: %d messages indexed", count)
+    elapsed = time.time() - start_time
+    logger.info("Finished Outlook PST import in %.1fs: %d messages indexed", elapsed, count)
 
 
 def _run_import_thunderbird(args: argparse.Namespace) -> None:
     _setup_logging()
-    logger.info("Starting mail_utils Thunderbird import from %s", args.archive_path)
-
+    start_time = time.time()
     db_path = _resolve_db_path(args)
+    logger.info("Starting Thunderbird archive import")
+    logger.info("Source:   %s", args.archive_path)
+    logger.info("Database: %s", db_path)
+
     conn = init_db(db_path)
 
     source_path = Path(args.archive_path)
@@ -263,14 +295,16 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
                     upsert_attachments(conn, parsed["id"], tb_parse_attachments(raw_msg))
                     count += 1
                     if count % PROGRESS_LOG_INTERVAL == 0:
-                        logger.info("Thunderbird import progress: %d messages indexed so far", count)
+                        elapsed = time.time() - start_time
+                        logger.info("Thunderbird import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
             finally:
                 box.close()
                 if temp_mbox.exists():
                     temp_mbox.unlink()
 
     conn.close()
-    logger.info("Thunderbird import complete: %d messages indexed", count)
+    elapsed = time.time() - start_time
+    logger.info("Finished Thunderbird import in %.1fs: %d messages indexed", elapsed, count)
 
 
 def _format_size(num_bytes: int) -> str:
@@ -335,27 +369,32 @@ def _create_filtered_ids_table(conn: sqlite3.Connection, matching_ids: set) -> N
 
 
 def _run_stats(args: argparse.Namespace) -> None:
+    _setup_logging()
+    start_time = time.time()
     db_path = _resolve_db_path(args)
     if not db_path.exists():
-        print(f"No database found at {db_path}")
+        logger.info("No database found at %s", db_path)
         return
 
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
+
+    logger.info("Printing database stats")
+    logger.info("Database: %s", db_path)
 
     filter_str = getattr(args, "filter", None)
     if filter_str:
         try:
             matching_ids = _compute_matching_ids(cur, filter_str)
         except FilterError as e:
-            print(f"Invalid --filter: {e}")
+            logger.info("Invalid --filter: %s", e)
             conn.close()
             return
         _create_filtered_ids_table(conn, matching_ids)
         msg_join = "JOIN filtered_ids f ON f.id = messages.id"
         addr_join = "JOIN filtered_ids f ON f.id = message_addresses.message_id"
         att_join = "JOIN filtered_ids f ON f.id = attachments.message_id"
-        print(f"Filter: {filter_str!r} ({len(matching_ids)} matching messages)\n")
+        logger.info("Filter:   %r (%d matching messages)\n", filter_str, len(matching_ids))
     else:
         msg_join = addr_join = att_join = ""
 
@@ -366,7 +405,6 @@ def _run_stats(args: argparse.Namespace) -> None:
     last_history_id = row[0] if row else None
 
     fields = [
-        ("Database", db_path),
         ("Total messages", total),
         ("Distinct threads", threads),
         ("First indexed", first_fetched),
@@ -375,7 +413,7 @@ def _run_stats(args: argparse.Namespace) -> None:
     ]
     key_width = max(len(key) for key, _ in fields)
     for key, value in fields:
-        print(f"{key + ':':<{key_width + 1}} {value}")
+        logger.info(f"{key + ':':<{key_width + 1}} {value}")
 
     try:
         label_names = dict(cur.execute("SELECT id, name FROM labels"))
@@ -419,26 +457,30 @@ def _run_stats(args: argparse.Namespace) -> None:
         # One global width across every section, so the value columns line up down the whole printed page.
         name_width = max(len(name) for _, rows in sections for name, _ in rows)
         for title, rows in sections:
-            print(f"\n{title}:")
+            logger.info(f"\n{title}:")
             for name, count in rows:
-                print(f"  {name:<{name_width}} {count:>6}")
+                logger.info(f"  {name:<{name_width}} {count:>6}")
 
     if label_counts and not label_names:
-        print("\n(Label names unavailable - run a sync with the current code at least once to populate the labels table.)")
+        logger.info("\n(Label names unavailable - run a sync with the current code at least once to populate the labels table.)")
 
     if not has_addresses:
-        print(
+        logger.info(
             "\n(Recipient stats unavailable - run a sync with the current "
             "code at least once to populate the message_addresses table.)"
         )
 
     try:
         att_count, att_size = cur.execute(f"SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments {att_join}").fetchone()
-        print(f"\nAttachments: {att_count} total, {_format_size(att_size)}")
+        logger.info(f"\nAttachments: {att_count} total, {_format_size(att_size)}")
     except sqlite3.OperationalError:
-        print(
+        logger.info(
             "\n(Attachment stats unavailable - run a sync with the current code at least once to populate the attachments table.)"
         )
+
+    conn.close()
+    elapsed = time.time() - start_time
+    logger.info("\nFinished stats in %.2fs", elapsed)
 
     conn.close()
 
@@ -562,13 +604,21 @@ def _export_message_eml(
 
 
 def _run_export(args: argparse.Namespace) -> None:
+    _setup_logging()
+    start_time = time.time()
     db_path = _resolve_db_path(args)
     if not db_path.exists():
-        print(f"No database found at {db_path}")
+        logger.info("No database found at %s", db_path)
         return
 
     output_dir = Path(args.output_dir)
     export_format = getattr(args, "format", "md") or "md"
+
+    logger.info("Starting message export")
+    logger.info("Database:         %s", db_path)
+    logger.info("Output directory: %s", output_dir)
+    logger.info("Format:           %s", export_format)
+
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
 
@@ -578,10 +628,10 @@ def _run_export(args: argparse.Namespace) -> None:
         try:
             matching_ids = _compute_matching_ids(cur, filter_str)
         except FilterError as e:
-            print(f"Invalid --filter: {e}")
+            logger.info("Invalid --filter: %s", e)
             conn.close()
             return
-        print(f"Filter: {filter_str!r} ({len(matching_ids)} matching messages)")
+        logger.info("Filter:           %r (%d matching messages)", filter_str, len(matching_ids))
 
     label_names = dict(cur.execute("SELECT id, name FROM labels"))
 
@@ -597,6 +647,7 @@ def _run_export(args: argparse.Namespace) -> None:
     ).fetchall()
     conn.close()
 
+    total_to_export = len(matching_ids) if matching_ids is not None else len(rows)
     count = 0
     for (
         msg_id,
@@ -663,9 +714,12 @@ def _run_export(args: argparse.Namespace) -> None:
 
         count += 1
         if count % EXPORT_PROGRESS_INTERVAL == 0:
-            print(f"  exported {count}/{len(matching_ids) if matching_ids is not None else len(rows)}")
+            elapsed = time.time() - start_time
+            pct = (100.0 * count / total_to_export) if total_to_export else 0
+            logger.info("Export progress: %d/%d messages (%.1f%% - elapsed: %.1fs)", count, total_to_export, pct, elapsed)
 
-    print(f"Exported {count} messages to {output_dir}")
+    elapsed = time.time() - start_time
+    logger.info("Finished export in %.1fs: %d messages exported to %s", elapsed, count, output_dir)
 
 
 def _validate_inner_command(command: list) -> None:
@@ -682,30 +736,37 @@ def _validate_inner_command(command: list) -> None:
 
 
 def _run_schedule(args: argparse.Namespace) -> None:
+    _setup_logging()
     system = platform.system()
 
     if args.list:
+        logger.info("Listing scheduled tasks")
         if system == "Windows":
             output = list_windows_jobs()
-            print(output or "No mail-utils scheduled tasks found.")
+            logger.info(output or "No mail-utils scheduled tasks found.")
         elif system in ("Linux", "Darwin"):
             jobs = list_cron_jobs()
             if not jobs:
-                print("No mail-utils crontab entries found.")
+                logger.info("No mail-utils crontab entries found.")
             for name, command_str in jobs:
-                print(f"{name}: {command_str}")
+                logger.info("%s: %s", name, command_str)
         else:
-            print(f"Unsupported platform: {system}")
+            logger.info("Unsupported platform: %s", system)
         return
 
     command = list(args.inner_command)
     if command and command[0] == "--":
         command = command[1:]
 
+    logger.info("Registering scheduled task")
+    logger.info("Job name: %s", args.job_name)
+    logger.info("Interval: %d minutes", args.interval_minutes)
+    logger.info("Command:  %s", " ".join(command))
+
     try:
         _validate_inner_command(command)
     except ScheduleError as e:
-        print(f"Error: {e}")
+        logger.info("Error: %s", e)
         return
 
     python_exe = sys.executable
@@ -713,30 +774,39 @@ def _run_schedule(args: argparse.Namespace) -> None:
     try:
         if system == "Windows":
             schedule_windows(args.job_name, args.interval_minutes, python_exe, BASE_DIR, command)
-            print(
-                f"Registered Windows Scheduled Task {windows_task_name(args.job_name)!r} "
-                f"(every {args.interval_minutes} min): {' '.join(command)}"
+            logger.info(
+                "Registered Windows Scheduled Task %r (every %d min): %s",
+                windows_task_name(args.job_name),
+                args.interval_minutes,
+                " ".join(command),
             )
         elif system in ("Linux", "Darwin"):
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             line = schedule_cron(args.job_name, args.interval_minutes, python_exe, BASE_DIR, LOG_DIR / "cron.log", command)
-            print(f"Added crontab entry for job {args.job_name!r}:\n  {line}")
+            logger.info("Added crontab entry for job %r:\n  %s", args.job_name, line)
         else:
-            print(f"Unsupported platform: {system}. Only Windows and Linux/macOS are supported.")
+            logger.info("Unsupported platform: %s. Only Windows and Linux/macOS are supported.", system)
     except ScheduleError as e:
-        print(f"Error: {e}")
+        logger.info("Error: %s", e)
 
 
 def _run_unschedule(args: argparse.Namespace) -> None:
+    _setup_logging()
     system = platform.system()
-    if system == "Windows":
-        unschedule_windows(args.job_name)
-        print(f"Removed Windows Scheduled Task {windows_task_name(args.job_name)!r} (if it existed).")
-    elif system in ("Linux", "Darwin"):
-        removed = unschedule_cron(args.job_name)
-        print(f"{'Removed' if removed else 'No'} crontab entry for job {args.job_name!r}.")
-    else:
-        print(f"Unsupported platform: {system}")
+    logger.info("Unregistering scheduled task")
+    logger.info("Job name: %s", args.job_name)
+
+    try:
+        if system == "Windows":
+            unschedule_windows(args.job_name)
+            logger.info("Removed Windows Scheduled Task %r (if it existed).", windows_task_name(args.job_name))
+        elif system in ("Linux", "Darwin"):
+            removed = unschedule_cron(args.job_name)
+            logger.info("%s crontab entry for job %r.", "Removed" if removed else "No", args.job_name)
+        else:
+            logger.info("Unsupported platform: %s", system)
+    except ScheduleError as e:
+        logger.info("Error: %s", e)
 
 
 def build_parser() -> argparse.ArgumentParser:

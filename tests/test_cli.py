@@ -483,3 +483,32 @@ def test_stats_aligns_value_columns_across_all_top_lists(tmp_path, monkeypatch, 
     data_lines = [line for line in out.splitlines() if line.startswith("  ")]
     assert len(data_lines) >= 2
     assert len({len(line) for line in data_lines}) == 1
+
+
+def test_logging_console_has_no_timestamps_while_logfile_has_timestamps(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "gmail_index.db"
+    log_dir = tmp_path / "logs"
+    log_path = log_dir / "mail-utils.log"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(cli, "LOG_DIR", log_dir)
+    monkeypatch.setattr(cli, "LOG_PATH", log_path)
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(id="msg1"))
+    conn.close()
+
+    _run_stats(argparse.Namespace(filter=None))
+
+    console_out = capsys.readouterr().out
+    assert "Printing database stats" in console_out
+    assert "Finished stats in" in console_out
+    # Console output lines should not contain "[INFO]" or UTC timestamp prefix
+    for line in console_out.splitlines():
+        assert "[INFO]" not in line
+        assert "UTC [" not in line
+
+    # File log must contain timestamp and [INFO]
+    assert log_path.exists()
+    file_content = log_path.read_text(encoding="utf-8")
+    assert "[INFO] Printing database stats" in file_content
+    assert "UTC [INFO]" in file_content
