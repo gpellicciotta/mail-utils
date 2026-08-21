@@ -1,11 +1,5 @@
 # Changelog
 
-## v2.2.0 [released: 2026-08-21]
-- Standardized output and logging across all commands (`import`, `import-pst`, `import-thunderbird`, `stats`, `export`, `schedule`, `unschedule`).
-- Console output now prints clean human-readable lines without timestamp or loglevel prefixes.
-- Log file (`logs/mail-utils.log`) captures all console output with UTC timestamp prefixes.
-- Operations now clearly announce their action, selected options, progress percentage with elapsed time, and final execution summary.
-
 ## v2.1.0 [released: 2026-08-21]
 - Added `import-thunderbird <path>` command (with alias `import-pcv`) to import Mozilla Thunderbird archives (`*.pcv`, `*.zip`) and profile directories into the local SQLite database.
 - Added `thunderbird/` package implementing Mbox stream parsing, `.sbd` directory hierarchy resolution, MIME body/attachment decoding, and envelope delimiter fallback date handling.

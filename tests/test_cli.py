@@ -105,6 +105,11 @@ def test_import_pst_subcommand_routes_to_run_import_pst():
     assert args.pst_path == "archive.pst"
     assert args.func is _run_import_pst
 
+    args_alias = build_parser().parse_args(["import-outlook", "archive.pst"])
+    assert args_alias.command == "import-outlook"
+    assert args_alias.pst_path == "archive.pst"
+    assert args_alias.func is _run_import_pst
+
 
 def test_import_thunderbird_subcommand_routes_to_run_import_thunderbird():
     args = build_parser().parse_args(["import-thunderbird", "archive.pcv"])

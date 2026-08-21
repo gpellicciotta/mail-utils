@@ -128,7 +128,7 @@ mail-utils/
     mail_utils/
       auth.py               # OAuth credential loading/refresh
       gmail_client.py       # Gmail API calls + message parsing
-      pst/                  # Read-only Outlook .pst parser (NDB/LTP layers) + PST->schema mapping
+      outlook/              # Read-only Outlook .pst parser (NDB/LTP layers) + PST->schema mapping
         ndb.py               #   Node/Block BTree layer - opens a .pst, resolves any NID to bytes
         ltp.py               #   Heap-on-Node / Property Context / Table Context layer
         tree.py              #   Folder/message tree walk, folder-path -> label id mapping
@@ -143,7 +143,7 @@ mail-utils/
       cli.py                # Entry point: import/import-pst/import-thunderbird/stats/export/schedule/unschedule/help
       config.py             # Paths and scopes
   tests/                    # pytest suite (pure-function tests, no live API; PST integration tests
-                             # skip themselves when data/personal-email-backup.pst isn't present)
+                            # skip themselves when data/personal-email-backup.pst isn't present)
   scripts/                  # One-off maintenance scripts, run manually, not part of the app itself
     migrate-gmail-id-prefix.py  # One-time data/gmail.db migration for the v2.0.0 id-prefix change
   docs/                     # Design notes, detailed plans - created as needed
@@ -181,7 +181,7 @@ which a flat root-level package layout can silently do instead.
   message with `format=full`, i.e. complete MIME structure and decoded body — not just headers/snippet), and
   `parse_message` (turns the raw Gmail API message into the flat dict that gets stored — see "Database
   contents" below for exactly what it keeps and drops).
-- **`pst/`**: a hand-rolled, read-only `[MS-PST]` parser (Unicode-format `.pst` files only) with no
+- **`outlook/`**: a hand-rolled, read-only `[MS-PST]` parser (Unicode-format `.pst` files only) with no
   third-party dependency, built bottom-up: `ndb.py` (Node/Block BTree layer - opens the file, resolves any
   node id to its decoded bytes), `ltp.py` (Heap-on-Node, Property Context, and Table Context - the layer that
   actually reads a folder's properties or a folder/message's table rows), `tree.py` (walks the folder
@@ -208,7 +208,7 @@ which a flat root-level package layout can silently do instead.
   `python -m mail_utils.cli <command>`; see `pyproject.toml`'s `[project.scripts]`). Subcommands:
   - `import` — sets up logging, decides full vs. incremental sync based on whether `sync_state` already has a
     `last_history_id`, and drives the fetch/parse/upsert loop. With `--filter`, see "Filtering" below.
-  - `import-pst <path>` — imports an Outlook `.pst` archive's messages into the same database (no
+  - `import-pst <path>` (alias: `import-outlook`) — imports an Outlook `.pst` archive's messages into the same database (no
     credentials/OAuth needed - it's a local file read). PST folders become `labels` rows (one per folder
     path, e.g. `Inbox/Projects`) exactly like Gmail labels, so `--filter label:...` works identically across
     both sources. Unlike `import`, this doesn't touch `sync_state` and isn't schedulable via `schedule` — a

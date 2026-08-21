@@ -43,12 +43,12 @@ from .gmail_client import (
     parse_attachments,
     parse_message,
 )
-from .pst.messages import fetch_message as pst_fetch_message
-from .pst.messages import parse_addresses as pst_parse_addresses
-from .pst.messages import parse_attachments as pst_parse_attachments
-from .pst.messages import parse_message as pst_parse_message
-from .pst.ndb import PSTFile
-from .pst.tree import folder_label_id, labels_for_folders, walk_folders
+from .outlook.messages import fetch_message as pst_fetch_message
+from .outlook.messages import parse_addresses as pst_parse_addresses
+from .outlook.messages import parse_attachments as pst_parse_attachments
+from .outlook.messages import parse_message as pst_parse_message
+from .outlook.ndb import PSTFile
+from .outlook.tree import folder_label_id, labels_for_folders, walk_folders
 from .scheduling import (
     ALLOWED_COMMANDS,
     ScheduleError,
@@ -851,11 +851,16 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
 
-    import_pst_cmd = subparsers.add_parser("import-pst", help="Import an Outlook .pst archive's messages into the local database")
+    import_pst_cmd = subparsers.add_parser(
+        "import-pst",
+        aliases=["import-outlook"],
+        help="Import an Outlook .pst archive's messages into the local database",
+    )
     import_pst_cmd.add_argument("pst_path", help="Path to the .pst file to import")
     import_pst_cmd.add_argument("--db", help=db_help)
     import_pst_cmd.set_defaults(func=_run_import_pst)
     subcommand_parsers["import-pst"] = import_pst_cmd
+    subcommand_parsers["import-outlook"] = import_pst_cmd
 
     import_tb_cmd = subparsers.add_parser(
         "import-thunderbird",

@@ -1,6 +1,6 @@
 import pytest
 
-from mail_utils.pst.ndb import (
+from mail_utils.outlook.ndb import (
     HEADER_SIZE,
     NDB_CRYPT_NONE,
     NDB_CRYPT_PERMUTE,
@@ -22,7 +22,7 @@ def test_decrypt_permute_decode_table_is_a_bijection():
 def test_decrypt_permute_round_trips_through_the_spec_encode_table():
     # [MS-PST] 5.1: mpbbR (encode) and mpbbI (decode) are meant to be inverses of each other -
     # encoding then decoding every byte value should return the identity.
-    from mail_utils.pst.ndb import _MPBB_CRYPT
+    from mail_utils.outlook.ndb import _MPBB_CRYPT
 
     encode_table = bytes(_MPBB_CRYPT[0:256])
     encoded = bytes(range(256)).translate(encode_table)
@@ -39,7 +39,7 @@ def test_decode_data_rejects_unsupported_crypt_method():
 
 
 def test_decode_data_permute_is_reversible_via_encode_table():
-    from mail_utils.pst.ndb import _MPBB_CRYPT
+    from mail_utils.outlook.ndb import _MPBB_CRYPT
 
     encode_table = bytes(_MPBB_CRYPT[0:256])
     original = b"hello pst"

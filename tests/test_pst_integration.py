@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from mail_utils.pst.messages import fetch_message, parse_addresses, parse_attachments, parse_message
-from mail_utils.pst.ndb import PSTFile
-from mail_utils.pst.tree import folder_label_id, labels_for_folders, walk_folders
+from mail_utils.outlook.messages import fetch_message, parse_addresses, parse_attachments, parse_message
+from mail_utils.outlook.ndb import PSTFile
+from mail_utils.outlook.tree import folder_label_id, labels_for_folders, walk_folders
 
 PST_PATH = Path(__file__).resolve().parent.parent / "data" / "personal-email-backup.pst"
 

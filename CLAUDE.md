@@ -43,7 +43,7 @@ Dependencies are declared once, in `pyproject.toml` — there is no separate `re
 
 Modules and packages under `src/mail_utils/` (src layout — see README's "Project layout" for the rationale):
 
-- **`pst/`** — read-only Outlook `.pst` parser (NDB/LTP layers) with zero external dependencies.
+- **`outlook/`** — read-only Outlook `.pst` parser (NDB/LTP layers) with zero external dependencies.
 - **`thunderbird/`** — read-only Thunderbird archive (`*.pcv`, `*.zip`, profile folders) parser: `archive.py`
   (Mbox store discovery and extraction), `tree.py` (`.sbd` hierarchy walk and label id derivation), and
   `messages.py` (Mbox parsing, MIME extraction, fallback date handling).
