@@ -100,10 +100,10 @@ each with one job:
   fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages; `--filter`
   switches to a filtered full listing that skips `sync_state` entirely, see `filters.py` above), `stats`
   (read-only reporting straight off the local SQLite file; no Gmail API calls, so it works offline and needs
-  no credentials), `export <output_dir>` (also offline/local-DB-only — writes one YAML-frontmatter `.md` file
-  per message, bucketed into `<YYYY>/<MM>/` subdirectories by `internal_date_ms`, `unknown/` for rows that
-  don't have one yet; uses PyYAML's `safe_dump` rather than hand-rolled string formatting specifically so
-  subjects/names with colons, quotes, or unicode serialize correctly), `schedule`/`unschedule` (thin wrappers
+  no credentials), `export <output_dir>` (also offline/local-DB-only — writes one YAML-frontmatter `.md` file or standard RFC 5322 `.eml` file via
+  `--format md|eml` per message, bucketed into `<YYYY>/<MM>/` subdirectories by `internal_date_ms`, `unknown/`
+  for rows that don't have one yet; uses PyYAML's `safe_dump` for Markdown and standard `email` library for EML
+  specifically so subjects/names with colons, quotes, or unicode serialize correctly), `schedule`/`unschedule` (thin wrappers
   around `scheduling.py` — `schedule` validates its inner command by parsing it against this same
   `build_parser()` before registering anything, so a typo'd flag fails immediately rather than at the next
   scheduled run), `help` (prints usage, prefixed with a short one-line description of the tool set via

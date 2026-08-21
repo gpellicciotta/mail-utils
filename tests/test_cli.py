@@ -1,5 +1,7 @@
 import argparse
+import email
 import logging
+from email.policy import default as email_policy_default
 from importlib.metadata import version as package_version
 
 import pytest
@@ -105,7 +107,19 @@ def test_export_subcommand_routes_to_run_export():
     args = build_parser().parse_args(["export", "some_dir"])
     assert args.command == "export"
     assert args.output_dir == "some_dir"
+    assert args.format == "md"
     assert args.func is _run_export
+
+
+def test_export_flag_format_parses():
+    assert build_parser().parse_args(["export", "out", "--format", "eml"]).format == "eml"
+    assert build_parser().parse_args(["export", "out", "-f", "eml"]).format == "eml"
+    assert build_parser().parse_args(["export", "out", "--format", "md"]).format == "md"
+
+
+def test_export_flag_format_rejects_invalid():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["export", "out", "--format", "txt"])
 
 
 def test_import_stats_export_accept_db_override():
@@ -255,7 +269,7 @@ def test_export_writes_year_month_bucketed_file_with_frontmatter(tmp_path, monke
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter=None))
 
     written = output_dir / "2019" / "08" / "msg1.md"
     assert written.exists()
@@ -268,6 +282,85 @@ def test_export_writes_year_month_bucketed_file_with_frontmatter(tmp_path, monke
     assert frontmatter["body_mime_type"] == "text/plain"
     assert "cc" not in frontmatter
     assert body.strip() == "Body text"
+
+
+def test_export_writes_eml_format_with_headers_and_body(tmp_path, monkeypatch):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(cc="boss@example.com", bcc="audit@example.com"))
+    upsert_labels(conn, [{"id": "Label_1", "name": "Work"}])
+    upsert_attachments(
+        conn,
+        "msg1",
+        [{"message_id": "msg1", "attachment_id": "a1", "filename": "report.pdf", "mime_type": "application/pdf", "size": 2048}],
+    )
+    conn.close()
+
+    output_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+
+    written = output_dir / "2019" / "08" / "msg1.eml"
+    assert written.exists()
+
+    msg = email.message_from_bytes(written.read_bytes(), policy=email_policy_default)
+    assert msg["Subject"] == "Hello: a test"
+    assert msg["From"] == "jane@example.com"
+    assert msg["To"] == "me@example.com"
+    assert msg["Cc"] == "boss@example.com"
+    assert msg["Bcc"] == "audit@example.com"
+    assert msg["Date"] == "Wed, 19 Aug 2026 10:00:00 -0700"
+    assert msg["X-Mail-Utils-ID"] == "msg1"
+    assert msg["X-Mail-Utils-Thread-ID"] == "thread1"
+    assert msg["X-Mail-Utils-Labels"] == "INBOX, Work"
+    assert msg["X-Mail-Utils-Attachment"] == "report.pdf (type=application/pdf; size=2048)"
+    assert msg.get_content_type() == "text/plain"
+    assert msg.get_content().strip() == "Body text"
+
+
+def test_export_writes_eml_format_html_body(tmp_path, monkeypatch):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    conn = init_db(db_path)
+    upsert_message(
+        conn,
+        _sample_message(
+            id="msg_html",
+            date=None,
+            internal_date_ms=1566230400000,
+            body_text="<p>HTML Body</p>",
+            body_mime_type="text/html",
+        ),
+    )
+    conn.close()
+
+    output_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+
+    written = output_dir / "2019" / "08" / "msg_html.eml"
+    assert written.exists()
+
+    msg = email.message_from_bytes(written.read_bytes(), policy=email_policy_default)
+    assert msg["Subject"] == "Hello: a test"
+    assert msg.get_content_type() == "text/html"
+    assert "<p>HTML Body</p>" in msg.get_content()
+    assert msg["Date"] == "Mon, 19 Aug 2019 16:00:00 +0000"
+
+
+def test_export_eml_buckets_missing_internal_date_as_unknown(tmp_path, monkeypatch):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(internal_date_ms=None))
+    conn.close()
+
+    output_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+
+    assert (output_dir / "unknown" / "msg1.eml").exists()
 
 
 def test_export_buckets_missing_internal_date_as_unknown(tmp_path, monkeypatch):
@@ -307,11 +400,22 @@ def test_export_filter_only_writes_matching_messages(tmp_path, monkeypatch):
     _two_message_db(tmp_path, monkeypatch)
     output_dir = tmp_path / "export"
 
-    _run_export(argparse.Namespace(output_dir=str(output_dir), filter="has:attachment"))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter="has:attachment"))
 
     written = list(output_dir.rglob("*.md"))
     assert len(written) == 1
     assert written[0].name == "msg1.md"
+
+
+def test_export_eml_filter_only_writes_matching_messages(tmp_path, monkeypatch):
+    _two_message_db(tmp_path, monkeypatch)
+    output_dir = tmp_path / "export"
+
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter="has:attachment"))
+
+    written = list(output_dir.rglob("*.eml"))
+    assert len(written) == 1
+    assert written[0].name == "msg1.eml"
 
 
 def test_export_invalid_filter_does_not_crash(tmp_path, monkeypatch, capsys):

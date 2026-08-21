@@ -205,13 +205,16 @@ which a flat root-level package layout can silently do instead.
     `.pst` is a static, already-complete file, not something to poll incrementally.
   - `stats` — reads `data/gmail.db` directly (no Gmail API calls, no credentials needed) and prints
     summary stats.
-  - `export <output_dir>` — dumps every message as a `.md` file (offline, reads only `data/gmail.db`), one
-    file per message under `<output_dir>/<YYYY>/<MM>/<message_id>.md` (bucketed by `internal_date_ms`;
-    messages without one land under `<output_dir>/unknown/`). Each file is a YAML frontmatter block (id,
-    thread_id, from/to/cc/bcc, subject, date, internal_date, labels resolved to names, attachments as
-    filename/mime_type/size, body_mime_type — empty/null fields are omitted rather than written blank)
-    followed by `---` and the message body. Reruns just overwrite files with identical content — messages
-    are immutable, so there's nothing to reconcile.
+  - `export <output_dir>` — dumps every message as a `.md` or `.eml` file (offline, reads only `data/gmail.db`),
+    one file per message under `<output_dir>/<YYYY>/<MM>/<message_id>.<ext>` (bucketed by `internal_date_ms`;
+    messages without one land under `<output_dir>/unknown/`). Accepts `--format md` (default) or `--format eml`.
+    In `.md` format, each file is a YAML frontmatter block (id, thread_id, from/to/cc/bcc, subject, date,
+    internal_date, labels resolved to names, attachments as filename/mime_type/size, body_mime_type — empty/null
+    fields are omitted rather than written blank) followed by `---` and the message body. In `.eml` format,
+    each file is a standard RFC 5322 MIME message including standard headers (`Subject`, `From`, `To`, `Cc`,
+    `Bcc`, `Date`), custom metadata headers (`X-Mail-Utils-ID`, `X-Mail-Utils-Thread-ID`, `X-Mail-Utils-Labels`,
+    `X-Mail-Utils-Attachment`), and the formatted body (`text/plain` or `text/html`). Reruns just overwrite
+    files with identical content — messages are immutable, so there's nothing to reconcile.
   - `schedule`/`unschedule` — register/remove a recurring `import` or `export`. See "Scheduling" below.
   - `help` (or no subcommand at all) — prints usage; add `--verbose` to also print full `--help` for every
     subcommand, one after another.

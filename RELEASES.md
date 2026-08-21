@@ -1,7 +1,8 @@
 # Release Notes
 
 ## vNext
-- Added `docs/email-formats.md`
+- Added `--format {md,eml}` (`-f`) option to `mail-utils export` to export messages as standard RFC 5322 MIME `.eml` files in addition to Markdown `.md` files (defaults to `md`).
+- Added `docs/emails-formats.md` and `docs/eml-export-support-plan.md`.
 
 ## v2.0.0 [released: 2026-08-20]
 

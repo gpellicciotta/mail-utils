@@ -8,6 +8,9 @@ import sys
 import time
 from collections import Counter
 from datetime import datetime, timezone
+from email.message import EmailMessage
+from email.policy import default as _email_policy_default
+from email.utils import format_datetime
 from importlib.metadata import version as _package_version
 from pathlib import Path
 
@@ -408,6 +411,102 @@ def _safe_export_filename(msg_id: str) -> str:
     return f"{safe[:_MAX_EXPORT_FILENAME_ID_LEN]}-{digest}"
 
 
+def _export_message_md(
+    target_file: Path,
+    msg_id: str,
+    thread_id: str | None,
+    sender: str | None,
+    recipient: str | None,
+    cc: str | None,
+    bcc: str | None,
+    subject: str | None,
+    date: str | None,
+    internal_date_iso: str | None,
+    labels: list[str],
+    body_mime_type: str | None,
+    attachments: list[dict],
+    body_text: str | None,
+) -> None:
+    frontmatter = {
+        "id": msg_id,
+        "thread_id": thread_id,
+        "from": sender,
+        "to": recipient,
+        "cc": cc,
+        "bcc": bcc,
+        "subject": subject,
+        "date": date,
+        "internal_date": internal_date_iso,
+        "labels": labels,
+        "body_mime_type": body_mime_type,
+        "attachments": attachments,
+    }
+    frontmatter = {k: v for k, v in frontmatter.items() if v not in (None, [], "")}
+
+    content = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True) + "---\n\n" + (body_text or "")
+    target_file.write_text(content, encoding="utf-8")
+
+
+def _export_message_eml(
+    target_file: Path,
+    msg_id: str,
+    thread_id: str | None,
+    sender: str | None,
+    recipient: str | None,
+    cc: str | None,
+    bcc: str | None,
+    subject: str | None,
+    date: str | None,
+    internal_date_ms: int | None,
+    labels: list[str],
+    body_mime_type: str | None,
+    attachments: list[dict],
+    body_text: str | None,
+) -> None:
+    msg = EmailMessage()
+    if subject:
+        msg["Subject"] = subject
+    if sender:
+        msg["From"] = sender
+    if recipient:
+        msg["To"] = recipient
+    if cc:
+        msg["Cc"] = cc
+    if bcc:
+        msg["Bcc"] = bcc
+    if date:
+        msg["Date"] = date
+    elif internal_date_ms:
+        dt = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
+        msg["Date"] = format_datetime(dt)
+
+    msg["X-Mail-Utils-ID"] = msg_id
+    if thread_id:
+        msg["X-Mail-Utils-Thread-ID"] = thread_id
+    if labels:
+        msg["X-Mail-Utils-Labels"] = ", ".join(labels)
+    if attachments:
+        for att in attachments:
+            att_desc = att.get("filename", "")
+            mime = att.get("mime_type")
+            size = att.get("size")
+            meta = []
+            if mime:
+                meta.append(f"type={mime}")
+            if size is not None:
+                meta.append(f"size={size}")
+            if meta:
+                att_desc += f" ({'; '.join(meta)})"
+            msg["X-Mail-Utils-Attachment"] = att_desc
+
+    if body_mime_type == "text/html":
+        msg.set_content(body_text or "", subtype="html", charset="utf-8")
+    else:
+        msg.set_content(body_text or "", subtype="plain", charset="utf-8")
+
+    target_file.write_bytes(msg.as_bytes(policy=_email_policy_default))
+
+
 def _run_export(args: argparse.Namespace) -> None:
     db_path = _resolve_db_path(args)
     if not db_path.exists():
@@ -415,6 +514,7 @@ def _run_export(args: argparse.Namespace) -> None:
         return
 
     output_dir = Path(args.output_dir)
+    export_format = getattr(args, "format", "md") or "md"
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
 
@@ -470,25 +570,42 @@ def _run_export(args: argparse.Namespace) -> None:
         subdir.mkdir(parents=True, exist_ok=True)
 
         labels = [label_names.get(lbl, lbl) for lbl in label_ids.split(",")] if label_ids else []
+        stem = _safe_export_filename(msg_id)
 
-        frontmatter = {
-            "id": msg_id,
-            "thread_id": thread_id,
-            "from": sender,
-            "to": recipient,
-            "cc": cc,
-            "bcc": bcc,
-            "subject": subject,
-            "date": date,
-            "internal_date": internal_date_iso,
-            "labels": labels,
-            "body_mime_type": body_mime_type,
-            "attachments": attachments_by_message.get(msg_id, []),
-        }
-        frontmatter = {k: v for k, v in frontmatter.items() if v not in (None, [], "")}
-
-        content = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True) + "---\n\n" + (body_text or "")
-        (subdir / f"{_safe_export_filename(msg_id)}.md").write_text(content, encoding="utf-8")
+        if export_format == "eml":
+            _export_message_eml(
+                subdir / f"{stem}.eml",
+                msg_id=msg_id,
+                thread_id=thread_id,
+                sender=sender,
+                recipient=recipient,
+                cc=cc,
+                bcc=bcc,
+                subject=subject,
+                date=date,
+                internal_date_ms=internal_date_ms,
+                labels=labels,
+                body_mime_type=body_mime_type,
+                attachments=attachments_by_message.get(msg_id, []),
+                body_text=body_text,
+            )
+        else:
+            _export_message_md(
+                subdir / f"{stem}.md",
+                msg_id=msg_id,
+                thread_id=thread_id,
+                sender=sender,
+                recipient=recipient,
+                cc=cc,
+                bcc=bcc,
+                subject=subject,
+                date=date,
+                internal_date_iso=internal_date_iso,
+                labels=labels,
+                body_mime_type=body_mime_type,
+                attachments=attachments_by_message.get(msg_id, []),
+                body_text=body_text,
+            )
 
         count += 1
         if count % EXPORT_PROGRESS_INTERVAL == 0:
@@ -622,8 +739,15 @@ def build_parser() -> argparse.ArgumentParser:
     stats.set_defaults(func=_run_stats)
     subcommand_parsers["stats"] = stats
 
-    export = subparsers.add_parser("export", help="Export all messages as markdown files")
-    export.add_argument("output_dir", help="Directory to write .md files into (created if missing)")
+    export = subparsers.add_parser("export", help="Export all messages as markdown or EML files")
+    export.add_argument("output_dir", help="Directory to write exported files into (created if missing)")
+    export.add_argument(
+        "--format",
+        "-f",
+        choices=["md", "eml"],
+        default="md",
+        help="Export format: 'md' (Markdown with YAML frontmatter, default) or 'eml' (standard RFC 5322 MIME format)",
+    )
     export.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
     export.add_argument("--db", help=db_help)
     export.set_defaults(func=_run_export)
