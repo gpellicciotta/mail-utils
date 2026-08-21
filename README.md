@@ -8,11 +8,12 @@ The core idea behind this project is to make it easy to make mails available as 
 ## Details
 
 Polls a personal Gmail account on a schedule and indexes new messages into a local SQLite database, using the
-Gmail API and OAuth 2.0. Can also import an Outlook `.pst` archive's messages into the same database
-(`import-pst`, no Gmail account/credentials involved for that path — see "Project layout" below).
+Gmail API and OAuth 2.0. Can also import an Outlook `.pst` archive (`import-pst`) or Mozilla Thunderbird archive
+(`.pcv`, `.zip`, profile folder via `import-thunderbird`) into the same database (no Gmail account/credentials
+involved for offline archive paths — see "Project layout" below).
 
-Read-only: the app only requests the `gmail.readonly` scope, and the `.pst` parser has no write support at
-all. Neither path ever sends, labels, or deletes anything.
+Read-only: the app only requests the `gmail.readonly` scope, and the `.pst`/Thunderbird parsers have no write
+support at all. Neither path ever sends, labels, or deletes anything.
 
 The app is cross-platform (verified in a `python:3.11-slim` Docker container; Windows is the primary dev
 environment, so the setup commands below are PowerShell, but the underlying commands — `python -m venv`,
@@ -132,10 +133,14 @@ mail-utils/
         ltp.py               #   Heap-on-Node / Property Context / Table Context layer
         tree.py              #   Folder/message tree walk, folder-path -> label id mapping
         messages.py          #   MAPI property decoding into gmail_client.py-matching dict shapes
+      thunderbird/          # Read-only Thunderbird (.pcv/.zip/profile) Mbox parser + schema mapping
+        archive.py           #   Archive and filesystem discovery, Mbox stream extraction
+        tree.py              #   .sbd folder hierarchy walk and label id generation
+        messages.py          #   Mbox MIME message parsing, address/attachment extraction
       db.py                 # SQLite schema and upsert helpers
       filters.py            # Local --filter interpreter for stats/export
       scheduling.py         # Windows Task Scheduler / cron job registration
-      cli.py                # Entry point: import/import-pst/stats/export/schedule/unschedule/help
+      cli.py                # Entry point: import/import-pst/import-thunderbird/stats/export/schedule/unschedule/help
       config.py             # Paths and scopes
   tests/                    # pytest suite (pure-function tests, no live API; PST integration tests
                              # skip themselves when data/personal-email-backup.pst isn't present)
@@ -185,10 +190,15 @@ which a flat root-level package layout can silently do instead.
   `parse_message`/`parse_addresses`/`parse_attachments` produce, so `cli.py`'s import loop doesn't care which
   source produced them). See `docs/pst-support-plan.md` for the implementation write-up, including several
   `[MS-PST]` spec subtleties that only surfaced against a real file.
+- **`thunderbird/`**: read-only parser for Mozilla Thunderbird archives (`*.pcv`, `*.zip`, or direct profile
+  directories) with zero third-party dependencies: `archive.py` (archive inspection and Mbox stream extraction),
+  `tree.py` (resolves `.sbd` subfolder directories into human-readable folder paths and stable label IDs), and
+  `messages.py` (Mbox parsing, RFC 2047 encoded header decoding, body text and attachment extraction, envelope
+  date fallback).
 - **`db.py`**: the SQLite schema (see "Database contents" below) and `init_db`/`get_sync_state`/
-  `set_sync_state`/`upsert_message` helpers. `upsert_message` keys on a source-prefixed message id (`gmail:`
-  or `outlook:`, see "Database contents" below), so re-running never duplicates rows and the two sources can
-  never collide in the same database.
+  `set_sync_state`/`upsert_message` helpers. `upsert_message` keys on a source-prefixed message id (`gmail:`,
+  `outlook:`, or `thunderbird:`, see "Database contents" below), so re-running never duplicates rows and different
+  sources can never collide in the same database.
 - **`filters.py`**: the local (non-Gmail-API) `--filter` interpreter used by `stats`/`export`. See
   "Filtering" below.
 - **`scheduling.py`**: pure command-construction (`build_windows_register_script`, `build_cron_line`, etc. —
@@ -203,6 +213,9 @@ which a flat root-level package layout can silently do instead.
     path, e.g. `Inbox/Projects`) exactly like Gmail labels, so `--filter label:...` works identically across
     both sources. Unlike `import`, this doesn't touch `sync_state` and isn't schedulable via `schedule` — a
     `.pst` is a static, already-complete file, not something to poll incrementally.
+  - `import-thunderbird <path>` (alias: `import-pcv`) — imports a Mozilla Thunderbird archive (`.pcv`, `.zip`)
+    or profile directory into the local database (no credentials/OAuth needed). Folders map into `labels` rows,
+    and messages are prefixed with `thunderbird:`.
   - `stats` — reads `data/gmail.db` directly (no Gmail API calls, no credentials needed) and prints
     summary stats.
   - `export <output_dir>` — dumps every message as a `.md` or `.eml` file (offline, reads only `data/gmail.db`),
@@ -220,9 +233,9 @@ which a flat root-level package layout can silently do instead.
     subcommand, one after another.
   - `version` — same as `--version` below (accepts its own `--verbose` too).
 
-  `import`, `import-pst`, `stats`, and `export` all accept `--db <path>` to point at a database other than
-  the default `data/gmail.db` — e.g. to maintain several independent databases, one per filter (see
-  "Scheduling" below for the multi-job pattern this enables).
+  `import`, `import-pst`, `import-thunderbird`, `stats`, and `export` all accept `--db <path>` to point at a
+  database other than the default `data/gmail.db` — e.g. to maintain several independent databases, one per filter
+  (see "Scheduling" below for the multi-job pattern this enables).
 
   `mail-utils --version` (or `mail-utils version`) prints the installed version (read live from package
   metadata, `importlib.metadata.version("mail-utils")`, rather than a separately-maintained string, so it's
@@ -320,23 +333,23 @@ it's otherwise non-obvious.
 
 ### `messages`
 
-One row per message — from `import` (Gmail) or `import-pst` (an Outlook `.pst`) — upserted by `id` (so
-reruns update rather than duplicate rows). The two sources share this same schema; nothing distinguishes
+One row per message — from `import` (Gmail), `import-pst` (an Outlook `.pst`), or `import-thunderbird` (Thunderbird archive) — upserted by `id` (so
+reruns update rather than duplicate rows). The three sources share this same schema; nothing distinguishes
 which source a row came from except the `id` prefix itself:
 
 | Column | Source | Notes |
 |---|---|---|
-| `id` | Gmail message id, prefixed `gmail:`; or, for `import-pst`, the message's `Message-ID` header prefixed `outlook:` (a content hash if that header's absent) | Primary key. Stable per message. The source prefix means a `gmail:`- and an `outlook:`-imported row can never collide, even if (per the `outlook:` id scheme) the same real email exists in both a Gmail account and a `.pst` backup of it. |
-| `thread_id` | Gmail thread id | Groups messages into a conversation. |
+| `id` | `gmail:<id>`, `outlook:<id>`, or `thunderbird:<id>` | Primary key. Stable per message. Sourced via Gmail API id, Outlook `Message-ID`, or Thunderbird `Message-ID` (content hash fallback if absent). Source prefixes prevent cross-source collisions. |
+| `thread_id` | Gmail thread id | Groups messages into a conversation (Gmail-only; `NULL` for PST/Thunderbird). |
 | `sender` | `From` header, raw | E.g. `"Jane Doe <jane@example.com>"` — not split into name/address. |
 | `recipient` | `To` header, raw | Only the `To` line. |
 | `cc` | `Cc` header, raw | `NULL` if the message has no `Cc` line. |
 | `bcc` | `Bcc` header, raw | See below — usually `NULL` even on messages that genuinely had Bcc recipients. |
 | `subject` | `Subject` header, raw | |
 | `date` | `Date` header, raw string | Set by the *sending* client — not normalized, can be missing/malformed, not trustworthy for sorting. Prefer `internal_date_ms`. |
-| `internal_date_ms` | Gmail's `internalDate` | Epoch **milliseconds**, UTC — Gmail's own server-side receipt timestamp, reliable and always present (unlike `date`). `Date.fromtimestamp(internal_date_ms / 1000)` (Python) or `new Date(internal_date_ms)` (JS) converts it. |
-| `snippet` | Gmail's `snippet` field | Short auto-generated preview (~100–200 chars) — separate from, and much shorter than, `body_text`. |
-| `label_ids` | Comma-joined `labelIds` (Gmail) or the single folder-derived label id (PST) | Gmail: internal label IDs (e.g. `INBOX,UNREAD,IMPORTANT`); custom labels appear as opaque `Label_12345` ids. PST: the one `outlook:<folder path>` id for the folder the message was found in (a PST message lives in exactly one folder, unlike Gmail's multi-label model). Join against `labels` (below) for display names/paths either way. |
+| `internal_date_ms` | Gmail `internalDate` / parsed timestamp | Epoch **milliseconds**, UTC — reliable timestamp for date bucketing and sorting. |
+| `snippet` | Gmail's `snippet` field | Short auto-generated preview (~100–200 chars) — Gmail only. |
+| `label_ids` | Comma-joined `labelIds` (Gmail) or folder label id (PST/Thunderbird) | Gmail: internal label IDs (e.g. `INBOX,UNREAD`). PST/Thunderbird: stable folder label ID for the folder where the message was stored. Join against `labels` for display names/paths. |
 | `body_text` | Decoded message body | See "Body text" below. |
 | `body_mime_type` | `"text/plain"` or `"text/html"` | Which MIME type `body_text` came from — see "Body text" below. `NULL` if there's no text part at all. |
 | `fetched_at` | Local clock, set on upsert | When this app wrote/updated the row — not when the email was sent or received. |
@@ -363,8 +376,8 @@ last successful (unfiltered) sync, used to ask the Gmail History API for only wh
 
 Maps a label id -> display name (`id`, `name`). For Gmail (`import`): covers system labels (`INBOX`, `SENT`,
 ...) and custom ones, refreshed in full from `users().labels().list()` at the start of every run, so it
-stays in sync with renames/additions. For a PST (`import-pst`): one row per folder path (id prefixed
-`outlook:`, e.g. `outlook:Inbox/Projects`; name is the plain path, `Inbox/Projects`), refreshed in full from
+stays in sync with renames/additions. For PST (`import-pst`) and Thunderbird (`import-thunderbird`): one row per folder path (id prefixed
+`outlook:` or `thunderbird_folder:`, name is the clean path like `iceage.anubex.com/INBOX`), refreshed in full from
 the archive's folder tree at the start of every run. Used by `stats`/`export` to show real label
 names/folder paths instead of opaque ids, and `messages.label_ids` on each row points into this table
 regardless of which source produced it.

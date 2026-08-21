@@ -1,10 +1,12 @@
 import argparse
 import hashlib
 import logging
+import mailbox
 import platform
 import re
 import sqlite3
 import sys
+import tempfile
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -58,6 +60,19 @@ from .scheduling import (
     unschedule_windows,
     windows_task_name,
 )
+from .thunderbird.archive import extract_mbox_to_file
+from .thunderbird.archive import walk_folders as tb_walk_folders
+from .thunderbird.messages import (
+    parse_addresses as tb_parse_addresses,
+)
+from .thunderbird.messages import (
+    parse_attachments as tb_parse_attachments,
+)
+from .thunderbird.messages import (
+    parse_message as tb_parse_message,
+)
+from .thunderbird.tree import folder_label_id as tb_folder_label_id
+from .thunderbird.tree import labels_for_folders as tb_labels_for_folders
 
 logger = logging.getLogger("mail_utils")
 
@@ -217,6 +232,45 @@ def _run_import_pst(args: argparse.Namespace) -> None:
 
     conn.close()
     logger.info("PST import complete: %d messages indexed", count)
+
+
+def _run_import_thunderbird(args: argparse.Namespace) -> None:
+    _setup_logging()
+    logger.info("Starting mail_utils Thunderbird import from %s", args.archive_path)
+
+    db_path = _resolve_db_path(args)
+    conn = init_db(db_path)
+
+    source_path = Path(args.archive_path)
+    folders = tb_walk_folders(source_path)
+    upsert_labels(conn, tb_labels_for_folders(folders))
+
+    count = 0
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        for folder in folders:
+            if folder.file_size == 0 and source_path.is_file():
+                continue
+            label_id = tb_folder_label_id(folder.path) if folder.path else None
+            temp_mbox = tmp_dir_path / "current.mbox"
+            extract_mbox_to_file(source_path, folder, temp_mbox)
+            box = mailbox.mbox(temp_mbox)
+            try:
+                for raw_msg in box:
+                    parsed = tb_parse_message(raw_msg, label_id=label_id)
+                    upsert_message(conn, parsed)
+                    upsert_addresses(conn, parsed["id"], tb_parse_addresses(raw_msg))
+                    upsert_attachments(conn, parsed["id"], tb_parse_attachments(raw_msg))
+                    count += 1
+                    if count % PROGRESS_LOG_INTERVAL == 0:
+                        logger.info("Thunderbird import progress: %d messages indexed so far", count)
+            finally:
+                box.close()
+                if temp_mbox.exists():
+                    temp_mbox.unlink()
+
+    conn.close()
+    logger.info("Thunderbird import complete: %d messages indexed", count)
 
 
 def _format_size(num_bytes: int) -> str:
@@ -732,6 +786,17 @@ def build_parser() -> argparse.ArgumentParser:
     import_pst_cmd.add_argument("--db", help=db_help)
     import_pst_cmd.set_defaults(func=_run_import_pst)
     subcommand_parsers["import-pst"] = import_pst_cmd
+
+    import_tb_cmd = subparsers.add_parser(
+        "import-thunderbird",
+        aliases=["import-pcv"],
+        help="Import a Mozilla Thunderbird archive (.pcv, .zip, or profile folder) into the local database",
+    )
+    import_tb_cmd.add_argument("archive_path", help="Path to the .pcv/.zip archive or Thunderbird profile directory to import")
+    import_tb_cmd.add_argument("--db", help=db_help)
+    import_tb_cmd.set_defaults(func=_run_import_thunderbird)
+    subcommand_parsers["import-thunderbird"] = import_tb_cmd
+    subcommand_parsers["import-pcv"] = import_tb_cmd
 
     stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
     stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")

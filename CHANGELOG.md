@@ -1,9 +1,12 @@
 # Changelog
 
-## vNext
+## v2.1.0 [released: 2026-08-21]
+- Added `import-thunderbird <path>` command (with alias `import-pcv`) to import Mozilla Thunderbird archives (`*.pcv`, `*.zip`) and profile directories into the local SQLite database.
+- Added `thunderbird/` package implementing Mbox stream parsing, `.sbd` directory hierarchy resolution, MIME body/attachment decoding, and envelope delimiter fallback date handling.
+- Messages from Thunderbird are prefixed with `thunderbird:`.
 - Added `--format {md,eml}` (`-f`) option to `mail-utils export` to export messages as standard RFC 5322 MIME `.eml` files in addition to Markdown `.md` files (defaults to `md`).
-- Added `docs/emails-formats.md` and `docs/eml-export-support-plan.md`.
-- Renamed `RELEASES.md` to the more standard `CHANGELOG.md`
+- Added `docs/emails-formats.md`, `docs/eml-export-support-plan.md`, and `docs/thunderbird-import-plan.md`.
+- Renamed `RELEASES.md` to the more standard `CHANGELOG.md`.
 
 ## v2.0.0 [released: 2026-08-20]
 - **Breaking change:** `messages.id` (and matching `message_addresses`/`attachments.message_id`) is now prefixed by source (`gmail:` or `outlook:`). Existing databases require migration via `python scripts/migrate-gmail-id-prefix.py --apply`.

@@ -11,6 +11,8 @@ from mail_utils import cli
 from mail_utils.cli import (
     _run_export,
     _run_import,
+    _run_import_pst,
+    _run_import_thunderbird,
     _run_schedule,
     _run_stats,
     _run_unschedule,
@@ -97,6 +99,25 @@ def test_import_subcommand_accepts_filter_flag():
     assert args.filter == "label:Work"
 
 
+def test_import_pst_subcommand_routes_to_run_import_pst():
+    args = build_parser().parse_args(["import-pst", "archive.pst"])
+    assert args.command == "import-pst"
+    assert args.pst_path == "archive.pst"
+    assert args.func is _run_import_pst
+
+
+def test_import_thunderbird_subcommand_routes_to_run_import_thunderbird():
+    args = build_parser().parse_args(["import-thunderbird", "archive.pcv"])
+    assert args.command == "import-thunderbird"
+    assert args.archive_path == "archive.pcv"
+    assert args.func is _run_import_thunderbird
+
+    args_alias = build_parser().parse_args(["import-pcv", "archive.pcv"])
+    assert args_alias.command == "import-pcv"
+    assert args_alias.archive_path == "archive.pcv"
+    assert args_alias.func is _run_import_thunderbird
+
+
 def test_stats_subcommand_routes_to_run_stats():
     args = build_parser().parse_args(["stats"])
     assert args.command == "stats"
@@ -124,6 +145,8 @@ def test_export_flag_format_rejects_invalid():
 
 def test_import_stats_export_accept_db_override():
     assert build_parser().parse_args(["import", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["import-pst", "a.pst", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["import-thunderbird", "a.pcv", "--db", "work.db"]).db == "work.db"
     assert build_parser().parse_args(["stats", "--db", "work.db"]).db == "work.db"
     assert build_parser().parse_args(["export", "out", "--db", "work.db"]).db == "work.db"
 
@@ -222,7 +245,7 @@ def test_main_help_verbose_prints_every_subcommand(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["mail-utils", "help", "--verbose"])
     cli.main()
     out = capsys.readouterr().out
-    for name in ("import", "stats", "export", "schedule", "unschedule", "version"):
+    for name in ("import", "import-pst", "import-thunderbird", "stats", "export", "schedule", "unschedule", "version"):
         assert f"mail-utils {name}" in out
 
 
@@ -230,7 +253,7 @@ def test_main_no_subcommand_verbose_prints_every_subcommand(monkeypatch, capsys)
     monkeypatch.setattr("sys.argv", ["mail-utils", "--verbose"])
     cli.main()
     out = capsys.readouterr().out
-    for name in ("import", "stats", "export", "schedule", "unschedule", "version"):
+    for name in ("import", "import-pst", "import-thunderbird", "stats", "export", "schedule", "unschedule", "version"):
         assert f"mail-utils {name}" in out
 
 

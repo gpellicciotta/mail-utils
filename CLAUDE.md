@@ -25,15 +25,14 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
 - Install/update in editable mode, with the `dev` extra (pytest, ruff): `.venv\Scripts\pip install -e ".[dev]"`
   (drop `[dev]` if you only need to run the app, not the tests/linter)
 - `mail-utils <command>` once installed (equivalent to `.venv\Scripts\python -m mail_utils.cli <command>`):
-  `import` (full sync first run, incremental after), `stats` (offline summary), `export <output_dir>`
-  (offline markdown dump), `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or
+  `import` (full sync first run, incremental after), `import-pst <path>` (Outlook .pst import),
+  `import-thunderbird <path>` (Thunderbird .pcv/profile import), `stats` (offline summary), `export <output_dir>`
+  (offline markdown/EML dump via `--format md|eml`), `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or
   cron, dispatched by `platform.system()`; `mail-utils schedule --job-name <name> --interval-minutes N --
   import|export [flags...]`, see README's "Scheduling" section for the `--` requirement and cron's interval
   constraints), `--version` (reads live package metadata, see Conventions below).
-- `import`/`stats`/`export` accept `--filter "..."` (see README's "Filtering" — `import --filter` is passed
-  straight through to Gmail's own search; `stats`/`export --filter` are evaluated locally by
-  `mail_utils/filters.py`, a deliberately smaller subset) and `--db <path>` to point at a database other
-  than the default `data/gmail.db`.
+- `import`/`import-pst`/`import-thunderbird`/`stats`/`export` accept `--db <path>` to point at a database other
+  than the default `data/gmail.db`. `import`/`stats`/`export` also accept `--filter "..."` (see README's "Filtering").
 - Run the test suite: `.venv\Scripts\python -m pytest`; lint/format: `.venv\Scripts\ruff check .` /
   `.venv\Scripts\ruff format .` (line-length 132, `[tool.ruff]` in `pyproject.toml`; CI runs both plus
   `pytest` plus `python -m build`).
@@ -42,9 +41,12 @@ Dependencies are declared once, in `pyproject.toml` — there is no separate `re
 
 ## Architecture
 
-Seven modules under `src/mail_utils/` (src layout — see README's "Project layout" for the rationale),
-each with one job:
+Modules and packages under `src/mail_utils/` (src layout — see README's "Project layout" for the rationale):
 
+- **`pst/`** — read-only Outlook `.pst` parser (NDB/LTP layers) with zero external dependencies.
+- **`thunderbird/`** — read-only Thunderbird archive (`*.pcv`, `*.zip`, profile folders) parser: `archive.py`
+  (Mbox store discovery and extraction), `tree.py` (`.sbd` hierarchy walk and label id derivation), and
+  `messages.py` (Mbox parsing, MIME extraction, fallback date handling).
 - **`config.py`** — `DATA_DIR` (`BASE_DIR / "data"`, gitignored in full) holding the secrets/database
   (`data/credentials.json`, `data/token.json`, `data/gmail.db`), plus a separate top-level, also gitignored,
   `LOG_DIR` (`BASE_DIR / "logs"`, `logs/mail-utils.log`) and the OAuth `SCOPES` list. Single source of truth
