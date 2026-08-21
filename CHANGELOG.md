@@ -10,6 +10,8 @@
 - Added `mail-utils search "<query>"` subcommand powered by SQLite `FTS5` full-text indexing, featuring BM25 ranking, snippet matching with excerpts, boolean syntax (`AND`, `OR`, `NOT`, prefix matches), and `--limit` / `--db` options.
 - Added `-r` / `--recursive` flag to `import`, `import-pst` (`import-outlook`), and `import-thunderbird` (`import-pcv`) to recursively extract and index nested email attachments (`message/rfc822` / `.eml`).
 - Renamed internal package `mail_utils.pst` to `mail_utils.outlook` for architectural consistency with `mail_utils.thunderbird`, adding `import-outlook` as a CLI alias for `import-pst`.
+- Overhauled and restructured project documentation: added `docs/requirements.md` (goals, functional & technical requirements), `docs/cli-spec.md` (full CLI specification and filter grammar), `docs/devops.md` (setup, testing, build, packaging, and CI/CD guide), updated `docs/tutorial.md`, and streamlined `README.md`.
+- Added committed, anonymized sample fixtures for Outlook PST (`tests/fixtures/sample.pst`) and Thunderbird (`tests/fixtures/sample.pcv`) with reproducible fixture generators, enabling unconditional end-to-end integration testing in CI without external dependencies.
 
 ## v2.1.0 [released: 2026-08-21]
 - Added `import-thunderbird <path>` command (with alias `import-pcv`) to import Mozilla Thunderbird archives (`*.pcv`, `*.zip`) and profile directories into the local SQLite database.
