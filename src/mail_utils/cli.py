@@ -1,6 +1,8 @@
 import argparse
+import hashlib
 import logging
 import platform
+import re
 import sqlite3
 import sys
 import time
@@ -36,6 +38,12 @@ from .gmail_client import (
     parse_attachments,
     parse_message,
 )
+from .pst.messages import fetch_message as pst_fetch_message
+from .pst.messages import parse_addresses as pst_parse_addresses
+from .pst.messages import parse_attachments as pst_parse_attachments
+from .pst.messages import parse_message as pst_parse_message
+from .pst.ndb import PSTFile
+from .pst.tree import folder_label_id, labels_for_folders, walk_folders
 from .scheduling import (
     ALLOWED_COMMANDS,
     ScheduleError,
@@ -90,9 +98,10 @@ def _full_sync(service, conn) -> None:
     count = 0
     for msg_id in list_all_message_ids(service):
         raw = fetch_message(service, msg_id)
-        upsert_message(conn, parse_message(raw))
-        upsert_addresses(conn, raw["id"], parse_addresses(raw))
-        upsert_attachments(conn, raw["id"], parse_attachments(raw))
+        parsed = parse_message(raw)
+        upsert_message(conn, parsed)
+        upsert_addresses(conn, parsed["id"], parse_addresses(raw))
+        upsert_attachments(conn, parsed["id"], parse_attachments(raw))
         count += 1
         if count % PROGRESS_LOG_INTERVAL == 0:
             if total:
@@ -113,9 +122,10 @@ def _incremental_sync(service, conn, last_history_id: str) -> None:
         count = 0
         for msg_id in list_changed_message_ids(service, last_history_id):
             raw = fetch_message(service, msg_id)
-            upsert_message(conn, parse_message(raw))
-            upsert_addresses(conn, raw["id"], parse_addresses(raw))
-            upsert_attachments(conn, raw["id"], parse_attachments(raw))
+            parsed = parse_message(raw)
+            upsert_message(conn, parsed)
+            upsert_addresses(conn, parsed["id"], parse_addresses(raw))
+            upsert_attachments(conn, parsed["id"], parse_attachments(raw))
             count += 1
             if count % PROGRESS_LOG_INTERVAL == 0:
                 logger.info("Incremental sync progress: %d messages indexed so far", count)
@@ -139,9 +149,10 @@ def _filtered_import(service, conn, query: str) -> None:
     count = 0
     for msg_id in list_all_message_ids(service, query=query):
         raw = fetch_message(service, msg_id)
-        upsert_message(conn, parse_message(raw))
-        upsert_addresses(conn, raw["id"], parse_addresses(raw))
-        upsert_attachments(conn, raw["id"], parse_attachments(raw))
+        parsed = parse_message(raw)
+        upsert_message(conn, parsed)
+        upsert_addresses(conn, parsed["id"], parse_addresses(raw))
+        upsert_attachments(conn, parsed["id"], parse_attachments(raw))
         count += 1
         if count % PROGRESS_LOG_INTERVAL == 0:
             logger.info("Filtered import progress: %d messages indexed so far", count)
@@ -175,6 +186,34 @@ def _run_import(args: argparse.Namespace) -> None:
 
     conn.close()
     logger.info("Run finished")
+
+
+def _run_import_pst(args: argparse.Namespace) -> None:
+    _setup_logging()
+    logger.info("Starting mail_utils PST import from %s", args.pst_path)
+
+    db_path = _resolve_db_path(args)
+    conn = init_db(db_path)
+
+    with PSTFile(args.pst_path) as pst:
+        folders = walk_folders(pst)
+        upsert_labels(conn, labels_for_folders(folders))
+
+        count = 0
+        for folder in folders:
+            label_id = folder_label_id(folder.path) if folder.path else None
+            for msg_nid in folder.message_nids:
+                raw = pst_fetch_message(pst, msg_nid)
+                parsed = pst_parse_message(raw, label_id=label_id)
+                upsert_message(conn, parsed)
+                upsert_addresses(conn, parsed["id"], pst_parse_addresses(raw))
+                upsert_attachments(conn, parsed["id"], pst_parse_attachments(raw))
+                count += 1
+                if count % PROGRESS_LOG_INTERVAL == 0:
+                    logger.info("PST import progress: %d messages indexed so far", count)
+
+    conn.close()
+    logger.info("PST import complete: %d messages indexed", count)
 
 
 def _format_size(num_bytes: int) -> str:
@@ -349,6 +388,25 @@ def _run_stats(args: argparse.Namespace) -> None:
 
 EXPORT_PROGRESS_INTERVAL = 500
 
+_UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_MAX_EXPORT_FILENAME_ID_LEN = 150
+
+
+def _safe_export_filename(msg_id: str) -> str:
+    """Turn a message id into a filesystem-safe filename stem (no extension).
+
+    Gmail ids are already safe (opaque hex strings), but a PST-sourced id can be the message's
+    real Internet Message-ID header (e.g. `outlook:<foo@bar.com>`), which routinely contains
+    characters Windows rejects in filenames (`:`, `<`, `>`, ...) and can be far longer than any
+    Gmail id. Unsafe characters become `_`; an overlong result is truncated with a short content
+    hash appended so two ids that only differ after the truncation point still get distinct files.
+    """
+    safe = _UNSAFE_FILENAME_CHARS.sub("_", msg_id)
+    if len(safe) <= _MAX_EXPORT_FILENAME_ID_LEN:
+        return safe
+    digest = hashlib.sha1(msg_id.encode("utf-8")).hexdigest()[:8]
+    return f"{safe[:_MAX_EXPORT_FILENAME_ID_LEN]}-{digest}"
+
 
 def _run_export(args: argparse.Namespace) -> None:
     db_path = _resolve_db_path(args)
@@ -430,7 +488,7 @@ def _run_export(args: argparse.Namespace) -> None:
         frontmatter = {k: v for k, v in frontmatter.items() if v not in (None, [], "")}
 
         content = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True) + "---\n\n" + (body_text or "")
-        (subdir / f"{msg_id}.md").write_text(content, encoding="utf-8")
+        (subdir / f"{_safe_export_filename(msg_id)}.md").write_text(content, encoding="utf-8")
 
         count += 1
         if count % EXPORT_PROGRESS_INTERVAL == 0:
@@ -551,6 +609,12 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
+
+    import_pst_cmd = subparsers.add_parser("import-pst", help="Import an Outlook .pst archive's messages into the local database")
+    import_pst_cmd.add_argument("pst_path", help="Path to the .pst file to import")
+    import_pst_cmd.add_argument("--db", help=db_help)
+    import_pst_cmd.set_defaults(func=_run_import_pst)
+    subcommand_parsers["import-pst"] = import_pst_cmd
 
     stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
     stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")

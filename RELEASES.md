@@ -1,7 +1,21 @@
 # Release Notes
 
-## v1.0.0
-Released on 2026-08-19
+## v2.0.0
+
+New `import-pst <path>` command imports an Outlook `.pst` archive's messages into the same
+`data/gmail.db` tables `import` already populates, via a hand-rolled read-only `[MS-PST]` parser
+(new `pst/` package — see `docs/pst-support-plan.md` for the implementation write-up). PST folders
+map to the same `labels`/`messages.label_ids` mechanism Gmail labels already use, so `label:`
+filtering in `stats`/`export --filter` works identically across both sources.
+
+**Breaking change:** `messages.id` (and the matching `message_addresses`/`attachments.message_id`)
+is now prefixed by source — `gmail:` for Gmail-imported rows, `outlook:` for PST-imported rows —
+so the two can never collide in the same database. An existing `data/gmail.db` needs a one-time
+migration to add the `gmail:` prefix to its existing rows before running `import` or `import-pst`
+again: `python scripts/migrate-gmail-id-prefix.py --apply` (dry-run without `--apply`; takes a
+timestamped backup automatically before writing).
+
+## v1.0.0 [released: 2026-08-19]
 
 First stable release. Small CLI polish, from `TODO.md`:
 
@@ -12,8 +26,7 @@ First stable release. Small CLI polish, from `TODO.md`:
   Pellicciotta`, instead of two separate lines. `--verbose`'s `RELEASES.md` entry no longer repeats the
   `## v<version>` heading line, since the version's already in the line above it.
 
-## v0.19.0
-Released on 2026-08-19
+## v0.19.0 [released: 2026-08-19]
 
 - All secrets/generated data (`credentials.json`, `token.json`, the SQLite database) now live under a single
   gitignored `data/` folder by default (`data/credentials.json`, `data/token.json`, `data/gmail.db`), driven by
@@ -28,8 +41,7 @@ Released on 2026-08-19
   `logs/mail-utils.log`; the console formatting also drops milliseconds (the file log keeps them for precise
   diagnostics).
 
-## v0.18.0
-Released on 2026-08-19
+## v0.18.0 [released: 2026-08-19]
 
 Small usability polish, from `TODO.md`:
 
@@ -47,8 +59,7 @@ Small usability polish, from `TODO.md`:
 - `--filter "label:X"` (on `stats`/`export`) now matches labels **containing** `X`, not just an exact name —
   e.g. `label:investing` now matches both `to-read/investing` and `to-remember/investing`.
 
-## v0.17.0
-Released on 2026-08-19
+## v0.17.0 [released: 2026-08-19]
 
 Aligned with `python-project-template` v1.0.0:
 
@@ -65,8 +76,7 @@ Aligned with `python-project-template` v1.0.0:
 - Removed a stale note in `CLAUDE.md` claiming the template hand-maintains a duplicate `__version__` — it
   doesn't, as of the template's v1.0.0.
 
-## v0.16.0
-Released on 2026-08-19
+## v0.16.0 [released: 2026-08-19]
 
 **Breaking change:** the project is renamed from `gmail-ingest` to `mail-utils` — package
 `src/gmail_ingest/` → `src/mail_utils/`, `pyproject.toml`'s `name`/`[project.scripts]`, the console script
@@ -79,8 +89,7 @@ migrates those automatically.
 
 Also pushed to a new GitHub repository: https://github.com/gpellicciotta/mail-utils.
 
-## v0.15.0
-Released on 2026-08-19
+## v0.15.0 [released: 2026-08-19]
 
 Added `ruff` (dev dependency, `[tool.ruff]` `line-length = 132` in `pyproject.toml`) — ran `ruff format`
 across all source and tests, and applied its default lint fixes (modernized `Optional[str]`/`Iterator` typing
@@ -96,8 +105,7 @@ form throughout instead of mixing it with the more verbose `python -m gmail_inge
 reflowed everything to the new 132-character line width (433 → 338 lines). `CLAUDE.md` got a lighter version
 of the same pass. No functional/behavior change.
 
-## v0.14.0
-Released on 2026-08-19
+## v0.14.0 [released: 2026-08-19]
 
 **Breaking change:** `register_task.ps1` is gone, replaced by a cross-platform `schedule`/`unschedule`
 CLI subcommand pair (Windows Task Scheduler via PowerShell, or cron on Linux/macOS, dispatched by
@@ -130,8 +138,7 @@ gmail-ingest unschedule --job-name work
 `import`, `stats`, and `export` also gained `--db <path>`, to point at a database other than the default
 `gmail_index.db` — what makes the multi-job pattern above useful in the first place.
 
-## v0.13.0
-Released on 2026-08-19
+## v0.13.0 [released: 2026-08-19]
 
 **Bug fix:** `config.BASE_DIR` silently broke in the `v0.10.0` src-layout
 migration — `config.py` moved one directory deeper (`gmail_ingest/` →
@@ -144,8 +151,7 @@ actually written to the wrong location (nothing had run a real
 never exercised the real computation), but this would have broken the
 very next real run. Added `tests/test_config.py` as a regression guard.
 
-## v0.12.0
-Released on 2026-08-19
+## v0.12.0 [released: 2026-08-19]
 
 Housekeeping, no code change: verified the full test suite and CLI
 (`--version`, `help`) run correctly on Linux, in a `python:3.11-slim`
@@ -154,8 +160,7 @@ pure-Python/pathlib design needed no changes. Updated README/CLAUDE.md's
 framing accordingly: the app itself is cross-platform, only the
 scheduling story (`register_task.ps1`) is currently Windows-only.
 
-## v0.11.0
-Released on 2026-08-19
+## v0.11.0 [released: 2026-08-19]
 
 `gmail-ingest --version` now works, printing the installed version read
 live from package metadata (`importlib.metadata.version("gmail-ingest")`)
@@ -164,8 +169,7 @@ stays the only place it's actually written. (Deliberately not copying
 `python-template-project`'s hand-synced `__version__` pattern, which is
 exactly the kind of duplication that drifts.)
 
-## v0.10.0
-Released on 2026-08-19
+## v0.10.0 [released: 2026-08-19]
 
 Housekeeping, no behavior change: moved the package from a flat
 `gmail_ingest/` at the repo root to `src/gmail_ingest/` (src layout),
@@ -175,8 +179,7 @@ auto-detects the src layout, same as the template. Also added the
 template's CI "build" step (`python -m build`, after tests) to
 `.github/workflows/ci.yml`, verified locally.
 
-## v0.9.0
-Released on 2026-08-19
+## v0.9.0 [released: 2026-08-19]
 
 **Breaking change:** the `update` subcommand is renamed to `import` —
 `python -m gmail_ingest.cli update` is now `python -m gmail_ingest.cli
@@ -208,8 +211,7 @@ differently by design:
 
 See `README.md`'s new "Filtering" section for full details.
 
-## v0.8.0
-Released on 2026-08-19
+## v0.8.0 [released: 2026-08-19]
 
 New `export` command: `gmail-ingest export <output_dir>` dumps every
 message as a YAML-frontmatter markdown file — one `.md` per message,
@@ -231,8 +233,7 @@ case produced a given `body_text` without re-deriving it — needed by
 `export`, but generally useful. Same "populated going forward only"
 migration caveat as `internal_date_ms`/`cc`/`bcc`.
 
-## v0.7.0
-Released on 2026-08-19
+## v0.7.0 [released: 2026-08-19]
 
 Housekeeping, no behavior change:
 
@@ -243,8 +244,7 @@ Housekeeping, no behavior change:
 - Added `.github/workflows/ci.yml`: installs via `pip install -e ".[dev]"`
   and runs `pytest` on push/PR.
 
-## v0.6.0
-Released on 2026-08-19
+## v0.6.0 [released: 2026-08-19]
 
 Capture Gmail's own `internalDate` (epoch milliseconds, UTC) into a new
 `internal_date_ms` column — the reliable, server-side receipt timestamp,
@@ -253,8 +253,7 @@ header, which can be missing, malformed, or spoofed). Migrated onto
 existing databases automatically via `_ensure_column`, same as `cc`/`bcc`
 in `v0.2.0`; existing rows are `NULL` until re-synced.
 
-## v0.5.0
-Released on 2026-08-19
+## v0.5.0 [released: 2026-08-19]
 
 **Breaking change:** `main.py` and `stats.py` are gone, replaced by a single `cli.py` entry point with
 subcommands: `update` (was `python -m gmail_ingest.main`, now `python -m gmail_ingest.cli update`), `stats`
@@ -267,8 +266,7 @@ Also:
   `gmail-ingest stats` work directly — no `python -m` needed.
 - New `tests/test_cli.py` covers the subcommand-routing logic (no live credentials needed).
 
-## v0.4.0
-Released on 2026-08-19
+## v0.4.0 [released: 2026-08-19]
 
 Attachment metadata capture: a new `attachments` table (`message_id`,
 `attachment_id`, `filename`, `mime_type`, `size`) — `gmail_client.parse_attachments`
@@ -285,8 +283,7 @@ X.X MB" summary.
 Same "populated going forward only" caveat as the last two releases:
 existing rows won't retroactively gain attachment data until re-synced.
 
-## v0.3.0
-Released on 2026-08-19
+## v0.3.0 [released: 2026-08-19]
 
 Recipient statistics: a new `message_addresses` table (`message_id`,
 `role`, `address`, `name`) captures every individual address from a
@@ -302,8 +299,7 @@ Like `labels`, and like the `cc`/`bcc` columns added in `v0.2.0`, this is
 populated going forward only — a database from before this table existed
 won't have historical rows until those messages are re-synced.
 
-## v0.2.0
-Released on 2026-08-19
+## v0.2.0 [released: 2026-08-19]
 
 Capture `Cc`/`Bcc` headers into new `cc`/`bcc` columns on `messages`.
 Migration is automatic — `db.init_db` adds the columns to an existing
@@ -317,8 +313,7 @@ servers, including Gmail for incoming mail, strip it before delivery to
 anyone but the Bcc'd recipient. It reliably shows up only in your own
 `Sent` copies.
 
-## v0.1.0
-Released on 2026-08-19
+## v0.1.0 [released: 2026-08-19]
 
 First working version.
 

@@ -48,7 +48,7 @@ def test_parse_message_maps_headers_and_metadata():
     }
     parsed = parse_message(raw)
     assert parsed == {
-        "id": "msg1",
+        "id": "gmail:msg1",
         "thread_id": "thread1",
         "sender": "Jane Doe <jane@example.com>",
         "recipient": "me@example.com",
@@ -102,9 +102,9 @@ def test_parse_addresses_splits_and_normalizes_multi_address_headers():
     }
     rows = parse_addresses(raw)
     assert rows == [
-        {"message_id": "msg1", "role": "from", "address": "jane@example.com", "name": "Jane Doe"},
-        {"message_id": "msg1", "role": "to", "address": "bob@example.com", "name": "Bob"},
-        {"message_id": "msg1", "role": "to", "address": "carl@example.com", "name": "Carl, Jr"},
+        {"message_id": "gmail:msg1", "role": "from", "address": "jane@example.com", "name": "Jane Doe"},
+        {"message_id": "gmail:msg1", "role": "to", "address": "bob@example.com", "name": "Bob"},
+        {"message_id": "gmail:msg1", "role": "to", "address": "carl@example.com", "name": "Carl, Jr"},
     ]
 
 
@@ -116,7 +116,7 @@ def test_parse_addresses_dedupes_repeated_address_in_same_header():
         },
     }
     rows = parse_addresses(raw)
-    assert rows == [{"message_id": "msg1", "role": "to", "address": "a@x.com", "name": None}]
+    assert rows == [{"message_id": "gmail:msg1", "role": "to", "address": "a@x.com", "name": None}]
 
 
 def test_parse_addresses_skips_absent_headers():
@@ -152,8 +152,14 @@ def test_parse_attachments_finds_nested_filenamed_parts():
     }
     rows = parse_attachments(raw)
     assert rows == [
-        {"message_id": "msg1", "attachment_id": "att1", "filename": "invoice.pdf", "mime_type": "application/pdf", "size": 12345},
-        {"message_id": "msg1", "attachment_id": "att2", "filename": "photo.png", "mime_type": "image/png", "size": 999},
+        {
+            "message_id": "gmail:msg1",
+            "attachment_id": "att1",
+            "filename": "invoice.pdf",
+            "mime_type": "application/pdf",
+            "size": 12345,
+        },
+        {"message_id": "gmail:msg1", "attachment_id": "att2", "filename": "photo.png", "mime_type": "image/png", "size": 999},
     ]
 
 

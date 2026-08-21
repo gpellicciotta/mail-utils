@@ -11,6 +11,13 @@ class HistoryExpiredError(Exception):
     """Raised when Gmail can no longer diff from the stored historyId."""
 
 
+ID_PREFIX = "gmail:"
+"""Prefixed onto every row's id/message_id so it can never collide with an `outlook:`-prefixed
+row from a PST import into the same database (see pst/messages.py) - the prefix alone carries the
+source, so there's no separate `source` column. Raw (unprefixed) Gmail message ids are still what
+every Gmail API call itself uses - only the stored row id changes."""
+
+
 def build_gmail_service(creds: Credentials):
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
@@ -127,7 +134,7 @@ def parse_message(raw: dict) -> dict:
     headers = _headers(raw)
     body_text, body_mime_type = _extract_body_text(raw.get("payload", {}))
     return {
-        "id": raw["id"],
+        "id": ID_PREFIX + raw["id"],
         "thread_id": raw.get("threadId"),
         "sender": headers.get("from"),
         "recipient": headers.get("to"),
@@ -154,7 +161,7 @@ def parse_addresses(raw: dict) -> list:
     one header (e.g. several To: recipients) are each their own row;
     duplicate addresses within the same header+message are collapsed.
     """
-    message_id = raw["id"]
+    message_id = ID_PREFIX + raw["id"]
     headers = _headers(raw)
     rows = []
     for role in ("from", "to", "cc", "bcc"):
@@ -180,7 +187,7 @@ def parse_attachments(raw: dict) -> list:
     up as a "filename" on their MIME part, and this only captures
     metadata, not content, so there's no reason to exclude either.
     """
-    message_id = raw["id"]
+    message_id = ID_PREFIX + raw["id"]
     attachments = []
 
     def walk(part: dict) -> None:
