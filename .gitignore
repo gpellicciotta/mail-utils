@@ -17,8 +17,10 @@ token.json
 # Local data
 *.db
 logs/
+data/
 export/
 exports/
-data/
 *.pst
 *.pcv
+!tests/fixtures/*.pst
+!tests/fixtures/*.pcv

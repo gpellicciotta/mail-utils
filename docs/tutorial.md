@@ -1,66 +1,102 @@
 # Tutorial
 
-A short walkthrough for a first-time user, after "Setup" in the top-level README has already been completed
-(venv created, `data/credentials.json` in place, dependencies installed).
+A complete walkthrough for a first-time user, demonstrating setup, ingestion, searching, analytics, exporting, and scheduling.
 
-## 1. Sanity-check the install
+---
+
+## 1. Sanity-Check the Installation
 
 ```powershell
 .venv\Scripts\mail-utils --version
 .venv\Scripts\mail-utils help
 ```
 
-`--version` prints the installed version and copyright; add `--verbose` to also print the matching
-`CHANGELOG.md` entry. `help` (or running with no subcommand at all) prints the subcommand list.
+- `--version` prints the installed version and copyright notice; add `--verbose` to view the release changelog.
+- `help` prints the available subcommands.
 
-## 2. First import
+---
 
+## 2. Ingest Messages
+
+### A. Gmail API Ingestion
 ```powershell
 .venv\Scripts\mail-utils import
 ```
+The first run prompts for OAuth browser consent, then performs a full sync into `data/gmail.db`. Subsequent runs are fast incremental syncs.
 
-The first run opens a browser for the one-time Google consent screen, then does a full mailbox listing into
-`data/gmail.db`. Every run after that is incremental (Gmail's History API), with no browser prompt. Progress
-is logged to `logs/mail-utils.log`.
+To extract nested attached emails recursively:
+```powershell
+.venv\Scripts\mail-utils import --recursive
+```
 
-## 3. Look at what got indexed
+### B. Microsoft Outlook `.pst` Import
+```powershell
+.venv\Scripts\mail-utils import-pst path\to\archive.pst
+```
+(or alias `.venv\Scripts\mail-utils import-outlook path\to\archive.pst`).
+
+### C. Mozilla Thunderbird Archive Import
+```powershell
+.venv\Scripts\mail-utils import-thunderbird path\to\backup.pcv
+```
+(or alias `.venv\Scripts\mail-utils import-pcv path\to\backup.pcv`).
+
+---
+
+## 3. Search Emails with FTS5
+
+Instant full-text keyword search across subjects, bodies, senders, and recipients:
+
+```powershell
+.venv\Scripts\mail-utils search "project alpha"
+.venv\Scripts\mail-utils search "invoice OR receipt"
+.venv\Scripts\mail-utils search "contract NOT draft" -n 10
+```
+
+---
+
+## 4. Explore Offline Database Statistics
 
 ```powershell
 .venv\Scripts\mail-utils stats
 ```
+Displays total messages, distinct conversation threads, date ranges, top labels, and frequency tables for senders and recipients.
 
-Offline (no Gmail API calls) — reads `data/gmail.db` directly. Prints message/thread counts, top labels, and
-top senders/recipients. See README's "Database contents" for exactly what each column holds.
-
-## 4. Try the local filter syntax
-
-`stats` and `export` both accept `--filter`, evaluated locally against the database (see README's "Filtering"
-for the full grammar):
-
+Scope stats with local filters:
 ```powershell
 .venv\Scripts\mail-utils stats --filter "from:example.com after:2026/01/01"
-.venv\Scripts\mail-utils stats --filter "has:attachment"
+.venv\Scripts\mail-utils stats --filter "has:attachment label:INBOX"
 ```
 
-## 5. Export a subset to read as markdown
+---
 
-Exporting the whole mailbox writes one `.md` file per message, which can be a lot — scope it with `--filter`
-first:
+## 5. Export Messages to Disk
 
+### Markdown with YAML Frontmatter
 ```powershell
-.venv\Scripts\mail-utils export .\export-test --filter "has:attachment after:2026/07/01"
+.venv\Scripts\mail-utils export .\exported-md --format md --filter "has:attachment"
 ```
 
-Each file is a YAML frontmatter block (from/to/subject/labels/attachments/...) followed by the message body,
-bucketed under `<output_dir>\<YYYY>\<MM>\`.
+### Standard RFC 5322 MIME (`.eml`) Files
+```powershell
+.venv\Scripts\mail-utils export .\exported-eml --format eml
+```
 
-## 6. Schedule recurring imports
+Messages are organized chronologically into `<output_dir>\<YYYY>\<MM>\<msg_id>.(md|eml)`.
 
-Once a manual `import` works end-to-end:
+---
+
+## 6. Schedule Recurring Imports
+
+Register a recurring 30-minute sync task:
 
 ```powershell
+# Windows Task Scheduler (or cron on Linux/macOS)
 .venv\Scripts\mail-utils schedule -- import
-```
 
-Registers a recurring `import` every 30 minutes (Windows Task Scheduler, or cron on Linux/macOS). See README's
-"Scheduling" section for custom intervals, multiple named jobs (`--job-name`), and `unschedule`.
+# List active scheduled jobs
+.venv\Scripts\mail-utils schedule --list
+
+# Remove scheduled job
+.venv\Scripts\mail-utils unschedule
+```

@@ -1,5 +1,4 @@
 import argparse
-import sqlite3
 
 from mail_utils import cli
 from mail_utils.cli import _run_search, _sanitize_fts_query
@@ -126,4 +125,3 @@ def test_run_search_no_matches(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "No matching messages found." in out
     assert "0 matching messages found" in out
-

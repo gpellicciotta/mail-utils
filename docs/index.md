@@ -1,13 +1,20 @@
 # Documentation Index
 
-Almost all technical documentation can all be found here, except the following which reside at the project's root:
-- [README.md](../README.md): a short introduction to this project
-- [CHANGELOG.md](../CHANGELOG.md): the project's full, versioned, changelog
-- [TODO.md](../TODO.md): the project's known issues and todo's 
+Welcome to the `mail-utils` technical documentation.
 
-Following are the most important documents that can be found here:
+### Core Documentation
+- [`requirements.md`](requirements.md) — High-level goals, functional requirements, and technical invariants.
+- [`cli-spec.md`](cli-spec.md) — Complete command-line interface specification and filter grammar.
+- [`devops.md`](devops.md) — Setup, testing, linting, packaging, and CI/CD guide.
+- [`tutorial.md`](tutorial.md) — First-time user walkthrough for importing, searching, stats, exporting, and scheduling.
+- [`emails-formats.md`](emails-formats.md) — Reference on single-message and mailbox storage formats (.eml, .msg, .mbox, .pst).
 
-- [`tutorial.md`](tutorial.md) — short first-time-user walkthrough (import, stats, filter, export, schedule).
-- [`emails-formats.md`](emails-formats.md) — overview of standard email file formats (.eml, .msg, .mbox, Maildir, .pst, .msf).
-- [`eml-export-support-plan.md`](eml-export-support-plan.md) — design and implementation plan for .eml export support.
-- [`pst-support-plan.md`](pst-support-plan.md) — design and implementation plan for Outlook .pst import.
+### Design & Technical Plans
+- [`pst-support-plan.md`](pst-support-plan.md) — Architecture and specification for the pure-Python `[MS-PST]` parser.
+- [`thunderbird-import-plan.md`](thunderbird-import-plan.md) — Architecture and format handling for Thunderbird PCV/Mbox archives.
+- [`eml-export-support-plan.md`](eml-export-support-plan.md) — Design notes for standard RFC 5322 `.eml` message export.
+
+### Root References
+- [`README.md`](../README.md) — Project overview and quickstart links.
+- [`CHANGELOG.md`](../CHANGELOG.md) — Version history and release notes.
+- [`TODO.md`](../TODO.md) — Backlog and upcoming roadmap.

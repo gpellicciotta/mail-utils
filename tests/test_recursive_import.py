@@ -1,5 +1,4 @@
 import email.message
-import sqlite3
 
 from mail_utils.cli import _process_gmail_msg, _process_tb_message
 from mail_utils.db import init_db
@@ -130,4 +129,3 @@ def test_gmail_extract_and_recursive_import(tmp_path, monkeypatch):
     assert subjects == {"Parent Email", "Child Attached Email"}
 
     conn.close()
-
