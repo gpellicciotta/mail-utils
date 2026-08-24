@@ -16,5 +16,7 @@ Welcome to the `mail-utils` technical documentation.
 
 ### Root References
 - [`README.md`](../README.md) — Project overview and quickstart links.
+- [`LICENSE.md`](../LICENSE.md) — Project license.
 - [`CHANGELOG.md`](../CHANGELOG.md) — Version history and release notes.
 - [`TODO.md`](../TODO.md) — Backlog and upcoming roadmap.
+- [Development Guidelines](https://github.com/gpellicciotta/dev-guidelines) — Cross-project development guidelines.

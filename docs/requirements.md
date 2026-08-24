@@ -24,3 +24,5 @@ This document outlines the high-level vision, functional requirements, technical
 
 1. 3rd Party dependencies limited to: Python and SQLite
 2. All functionalities are covered by tests
+3. Project complies with [cross-project development guidelines](https://github.com/gpellicciotta/dev-guidelines)
+

@@ -1,5 +1,22 @@
 # TODO
 
-Ordered by priority.
+An overview of all tasks and their planning.
 
-(No outstanding items)
+> Tasks are listed by milestone.
+> See [coordinating-work-guidelines](https://github.com/gpellicciotta/dev-guidelines/blob/main/guidelines/coordinating-work-guidelines.md) for the full coordination protocol.
+>
+> Status: `[ ]` available · `[~]` active · `[!]` blocked · `[?]` needs-review
+> Owner: `@name` shown only when active/blocked/needs-review.
+> Dependencies: `(needs Tnnnn)` shown only when unresolved.
+
+---
+
+## Next Milestone
+
+*(no active tasks)*
+
+---
+
+### Backlog
+
+*(no backlog items yet)*

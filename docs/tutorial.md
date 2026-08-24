@@ -31,6 +31,7 @@ A complete walkthrough for a first-time user, demonstrating setup, ingestion, se
 # When no file is given, syncs with Gmail (if credentials exist)
 .venv\Scripts\mail-utils import
 ```
+The first run prompts for OAuth browser consent, then performs a full sync into `data/gmail.db`. Subsequent runs are fast incremental syncs.
 
 ### B. Dedicated Importers
 You can also use the explicit format subcommands:
@@ -40,9 +41,11 @@ You can also use the explicit format subcommands:
 
 # Microsoft Outlook (.pst)
 .venv\Scripts\mail-utils import-pst path\to\archive.pst
+# (or alias .venv\Scripts\mail-utils import-outlook path\to\archive.pst)
 
 # Mozilla Thunderbird (.pcv, .zip, profile directory)
 .venv\Scripts\mail-utils import-thunderbird path\to\backup.pcv
+# (or alias .venv\Scripts\mail-utils import-pcv path\to\backup.pcv)
 ```
 
 Add `--recursive` (or `-r`) to unpack and index nested email attachments.

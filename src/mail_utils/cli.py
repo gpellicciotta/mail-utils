@@ -91,7 +91,7 @@ def _get_version() -> str:
     try:
         return _package_version("mail-utils")
     except PackageNotFoundError:
-        return "2.2.1"
+        return "2.3.0"
 
 
 class _UTCFormatter(logging.Formatter):
@@ -1085,8 +1085,10 @@ def _run_unschedule(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mail-utils",
-        description="Polls a personal Gmail account and indexes new messages into a local, read-only SQLite database.",
+        description="A lightweight, privacy-preserving, local email archive indexing and extraction utility.",
+        add_help=False,
     )
+    parser.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     parser.add_argument("--version", action="store_true", help="Show version and exit")
     parser.add_argument(
         "--verbose",
@@ -1098,11 +1100,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommand_parsers = {}
 
-    help_cmd = subparsers.add_parser("help", help="Show this help message")
+    help_cmd = subparsers.add_parser("help", help="Show this help message and exit", add_help=False)
+    help_cmd.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     help_cmd.add_argument("--verbose", action="store_true", help="Also print full --help for every subcommand")
+    help_cmd.add_argument("subcommand", nargs="?", default=None, help="Optional subcommand to show help for")
     subcommand_parsers["help"] = help_cmd
 
-    version_cmd = subparsers.add_parser("version", help="Show version and exit (same as --version)")
+    version_cmd = subparsers.add_parser("version", help="Show version and exit (same as --version)", add_help=False)
+    version_cmd.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     version_cmd.add_argument("--verbose", action="store_true", help="Also print the matching CHANGELOG.md entry")
     subcommand_parsers["version"] = version_cmd
 
@@ -1243,9 +1248,9 @@ def _find_release_entry(version: str) -> str | None:
     return entry.strip()
 
 
-def _print_version(verbose: bool) -> None:
-    ver = _package_version("mail-utils")
-    print(f"mail-utils {ver} - Copyright (c) Giovanni Pellicciotta")
+def _print_version(verbose: bool = False) -> None:
+    ver = _get_version()
+    print(f"mail-utils v{ver} - Copyright (c) Giovanni Pellicciotta")
     if verbose:
         entry = _find_release_entry(ver)
         if entry:
@@ -1256,30 +1261,46 @@ def _print_version(verbose: bool) -> None:
                 print(body)
 
 
+def _print_help(parser: argparse.ArgumentParser, verbose: bool = False) -> None:
+    ver = _get_version()
+    print(f"mail-utils v{ver} - Copyright (c) Giovanni Pellicciotta\n")
+    print("A lightweight, privacy-preserving, local email archive indexing and extraction utility.\n")
+    if verbose:
+        parser.print_help()
+        for name, sub in parser._subcommand_parsers.items():
+            print(f"\n{'-' * 60}\nmail-utils {name}\n{'-' * 60}")
+            sub.print_help()
+    else:
+        parser.print_help()
+    print("\nExit codes:")
+    print("  0  Success")
+    print("  1  Runtime error or operation failure")
+    print("  2  Invalid command-line arguments")
+
+
 def _print_full_help(parser: argparse.ArgumentParser) -> None:
-    parser.print_help()
-    for name, sub in parser._subcommand_parsers.items():
-        print(f"\n{'-' * 60}\nmail-utils {name}\n{'-' * 60}")
-        sub.print_help()
+    _print_help(parser, verbose=True)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    if args.version or args.command == "version":
-        _print_version(args.verbose)
-        return
+    if getattr(args, "version", False) or args.command == "version":
+        _print_version(getattr(args, "verbose", False))
+        return 0
 
-    if args.command is None or args.command == "help":
-        if args.verbose:
-            _print_full_help(parser)
-        else:
-            parser.print_help()
-        return
+    if getattr(args, "help", False) or args.command in (None, "help"):
+        subcmd = getattr(args, "subcommand", None)
+        if subcmd and subcmd in parser._subcommand_parsers:
+            parser._subcommand_parsers[subcmd].print_help()
+            return 0
+        _print_help(parser, verbose=getattr(args, "verbose", False))
+        return 0
 
     args.func(args)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

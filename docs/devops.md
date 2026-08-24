@@ -122,3 +122,10 @@ GitHub Actions runs automated checks on every push and pull request via [`.githu
 4. **Test Suite**: `pytest`
 5. **Package Build**: `python -m build`
 
+---
+
+## 7. Development Guidelines
+
+This project adheres to the [cross-project development guidelines](https://github.com/gpellicciotta/dev-guidelines) including coding standards, task coordination protocols, and CLI standards.
+
+

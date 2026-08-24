@@ -40,7 +40,7 @@ def test_print_version_shows_version_and_copyright(capsys):
     cli._print_version(verbose=False)
     out = capsys.readouterr().out
     assert out.splitlines() == [
-        f"mail-utils {package_version('mail-utils')} - Copyright (c) Giovanni Pellicciotta",
+        f"mail-utils v{package_version('mail-utils')} - Copyright (c) Giovanni Pellicciotta",
     ]
 
 
@@ -48,7 +48,7 @@ def test_print_version_verbose_includes_release_entry(tmp_path, monkeypatch, cap
     ver = package_version("mail-utils")
     monkeypatch.setattr(cli, "BASE_DIR", tmp_path)
     (tmp_path / "CHANGELOG.md").write_text(
-        f"# Changelog\n\n## v{ver}\nReleased on 2026-08-19\n\n- Did a thing.\n\n## v0.0.1\nOlder.\n",
+        f"# Versioned Changes\n\n## v{ver}\nReleased on 2026-08-19\n\n- Did a thing.\n\n## v0.0.1\nOlder.\n",
         encoding="utf-8",
     )
 
@@ -64,7 +64,7 @@ def test_main_handles_version_flag(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["mail-utils", "--version"])
     cli.main()
     out = capsys.readouterr().out
-    assert out.startswith(f"mail-utils {package_version('mail-utils')}")
+    assert out.startswith(f"mail-utils v{package_version('mail-utils')}")
 
 
 def _log_record(created: float) -> logging.LogRecord:
@@ -245,7 +245,7 @@ def test_main_handles_version_subcommand(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["mail-utils", "version"])
     cli.main()
     out = capsys.readouterr().out
-    assert out.startswith(f"mail-utils {package_version('mail-utils')}")
+    assert out.startswith(f"mail-utils v{package_version('mail-utils')}")
 
 
 def test_version_subcommand_verbose_flag_parses():
@@ -262,6 +262,8 @@ def test_main_help_verbose_prints_every_subcommand(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["mail-utils", "help", "--verbose"])
     cli.main()
     out = capsys.readouterr().out
+    assert f"mail-utils v{package_version('mail-utils')}" in out
+    assert "Exit codes:" in out
     for name in ("import", "import-pst", "import-thunderbird", "stats", "export", "schedule", "unschedule", "version"):
         assert f"mail-utils {name}" in out
 
@@ -270,8 +272,36 @@ def test_main_no_subcommand_verbose_prints_every_subcommand(monkeypatch, capsys)
     monkeypatch.setattr("sys.argv", ["mail-utils", "--verbose"])
     cli.main()
     out = capsys.readouterr().out
+    assert f"mail-utils v{package_version('mail-utils')}" in out
+    assert "Exit codes:" in out
     for name in ("import", "import-pst", "import-thunderbird", "stats", "export", "schedule", "unschedule", "version"):
         assert f"mail-utils {name}" in out
+
+
+def test_main_help_standard_formatting(monkeypatch, capsys):
+    for argv in (["mail-utils", "help"], ["mail-utils", "--help"], ["mail-utils", "-h"], ["mail-utils"]):
+        monkeypatch.setattr("sys.argv", argv)
+        cli.main()
+        out = capsys.readouterr().out
+        assert out.startswith(f"mail-utils v{package_version('mail-utils')} - Copyright (c) Giovanni Pellicciotta")
+        assert "A lightweight, privacy-preserving, local email archive indexing and extraction utility." in out
+        assert "Exit codes:" in out
+        assert "0  Success" in out
+
+
+def test_main_help_specific_subcommand(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["mail-utils", "help", "import"])
+    cli.main()
+    out = capsys.readouterr().out
+    assert "usage: mail-utils import" in out
+
+
+def test_mandatory_docs_exist():
+    base_dir = cli.BASE_DIR
+    for filename in ("LICENSE.md", "CHANGELOG.md", "TODO.md", "README.md"):
+        assert (base_dir / filename).is_file(), f"{filename} is missing"
+    for doc_name in ("index.md", "requirements.md", "devops.md"):
+        assert (base_dir / "docs" / doc_name).is_file(), f"docs/{doc_name} is missing"
 
 
 def _sample_message(**overrides) -> dict:

@@ -10,6 +10,9 @@ bin/
 .pytest_cache/
 .ruff_cache/
 
+# Task worktrees
+work/
+
 # Secrets - never commit these
 credentials.json
 token.json

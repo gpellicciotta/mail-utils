@@ -57,11 +57,12 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - [**Requirements & Architecture** (`docs/requirements.md`)](docs/requirements.md) — High-level goals, functional requirements, and technical invariants.
 - [**DevOps & Infrastructure** (`docs/devops.md`)](docs/devops.md) — Environment setup, testing, linting, packaging, and CI/CD guide.
 - [**Email Formats Reference** (`docs/emails-formats.md`)](docs/emails-formats.md) — Guide to `.eml`, `.msg`, `.mbox`, and `.pst` file structures.
-- [**Changelog** (`CHANGELOG.md`)](CHANGELOG.md) — Release notes and version history.
+- [**Changelog** (`CHANGELOG.md`)](CHANGELOG.md) — Version history and release notes.
 - [**Roadmap & Backlog** (`TODO.md`)](TODO.md) — Prioritized upcoming features and improvements.
+- [**Development Guidelines**](https://github.com/gpellicciotta/dev-guidelines) — Cross-project development guidelines and coordination protocols.
 
 ---
 
 ## License
 
-MIT License. Copyright (c) Giovanni Pellicciotta.
+[MIT License](LICENSE.md). Copyright (c) Giovanni Pellicciotta.

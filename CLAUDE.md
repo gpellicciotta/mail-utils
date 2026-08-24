@@ -26,11 +26,13 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   (drop `[dev]` if you only need to run the app, not the tests/linter)
 - `mail-utils <command>` once installed (equivalent to `.venv\Scripts\python -m mail_utils.cli <command>`):
   `import [<source_path>]` (smart unified import with auto-detection for Outlook PST, Thunderbird backup/profile, or Gmail fallback),
-  `import-gmail` (Gmail API sync), `import-pst <path>` (Outlook .pst import), `import-thunderbird <path>` (Thunderbird .pcv/profile import),
-  `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary), `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
+  `import-gmail` (Gmail API sync), `import-pst <path>` (Outlook .pst import, alias `import-outlook`),
+  `import-thunderbird <path>` (Thunderbird .pcv/profile import, alias `import-pcv`),
+  `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary),
+  `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
   `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or cron, dispatched by `platform.system()`;
   `mail-utils schedule --job-name <name> --interval-minutes N -- import|import-gmail|export [flags...]`, see docs/cli-spec.md for
-  scheduling details), `--version` (reads live package metadata).
+  scheduling details), `version` / `--version` (reads live package metadata), `help` / `-h` / `--help` (usage and exit codes).
 - `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export` accept `--db <path>` to point at a database other
   than the default `data/gmail.db`. `import`/`import-gmail`/`import-pst`/`import-thunderbird` accept `-r`/`--recursive` to import
   nested email attachments. `import`/`import-gmail`/`stats`/`export` also accept `--filter "..."` (see docs/cli-spec.md).
@@ -168,7 +170,9 @@ caught it until a real run would have. `tests/test_config.py` now guards against
   `TODO.md`.
 - `CHANGELOG.md` and `TODO.md` live at the repo root, not under `docs/`, for visibility. Other documentation
   (design notes, detailed plans, investigation write-ups) belongs under `docs/` instead.
+- This project complies with the [cross-project development guidelines](https://github.com/gpellicciotta/dev-guidelines) (task coordination, coding guidelines, CLI standards).
 - Any change that alters what's stored (new/changed/removed column, changed parsing behavior) must update both
   `README.md`'s "Database contents" tables and, if it's a behavior change to already-synced data, note whether
   existing rows in someone's `data/gmail.db` need a resync to pick it up (they generally won't be
   auto-migrated — there's no schema migration mechanism here, only `CREATE TABLE IF NOT EXISTS`).
+

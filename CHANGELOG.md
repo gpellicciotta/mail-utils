@@ -1,4 +1,26 @@
-# Changelog
+# Versioned Changes
+
+A summarized overview of all changes, per version of this project.
+
+> Entries will be added in reverse chronological order, so with the most recent at the top.
+> 
+> Status codes used are:
+> - `[in development]` - actively being developed
+> - `[{{date}}]` - frozen/finalized on {{date}}
+> - `[released: {{date}}]` - released to package manager or production on {{date}}
+> - `[broken]` - considered broken and not be used
+
+---
+
+## v2.3.0 [released: 2026-08-24]
+- Aligned project with latest development guidelines (https://github.com/gpellicciotta/dev-guidelines).
+- Renamed `LICENSE` to `LICENSE.md`.
+- Restructured `TODO.md` with milestone sections (`## Next Milestone`, `### Backlog`) per coordinating work guidelines, and added `work/` to `.gitignore`.
+- Updated mandatory documentation (`docs/requirements.md`, `docs/devops.md`, `docs/index.md`, `README.md`, `CLAUDE.md`).
+- Standardized CLI output format and exit codes across commands:
+  - Formatted `version` and `--version` output to `{name} v{version} - {copyright}` with exit code 0.
+  - Standardized multi-line help message format for `help`, `-h`, `--help`, and no-subcommand invocation with version banner, short description, command usage, and exit codes explanation.
+- Updated test suite (`tests/test_cli.py`) to verify version format, multi-line help, exit codes, and mandatory documentation structure.
 
 ## v2.2.1 [released: 2026-08-21]
 - Fixed POSIX / GitHub Actions CI test failure in `test_run_import_no_args_without_credentials_reports_error` by properly monkeypatching module configuration attributes instead of read-only `Path` instance methods.
