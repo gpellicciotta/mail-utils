@@ -21,6 +21,7 @@ A summarized overview of all changes, per version of this project.
 - DevEx: Give every `scripts/` tool a `version`/`help` action and `-v`/`-h` options matching `mail-utils`'s own CLI format.
 - BackEnd: Add `authors`/`classifiers` to `pyproject.toml` package metadata.
 - Docs: Fix stale Python-version, CI-matrix, and third-party-dependency claims, and stray numbered/skipped headings across the doc set.
+- DevEx: Scope `pytest` to `tests/` so it no longer collides with test files in sibling task worktrees under `work/`.
 
 ## v2.3.0 [released: 2026-08-24]
 - Aligned project with latest development guidelines (https://github.com/gpellicciotta/dev-guidelines).
