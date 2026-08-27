@@ -147,10 +147,29 @@ format `mail-utils` already exports as `.eml` is exactly what Thunderbird itself
 **Verdict:** nothing for `mail-utils` to build. This is a five-minute manual operation with an existing,
 well-maintained free add-on. Worth a doc pointer, not code.
 
-## Recommended plan, if the Gmail scope decision comes back "yes"
+## Resolution
 
-Only applicable once the [Decision needed](#decision-needed) question is explicitly resolved in favor of
-adding a write scope. Sketch, in priority order:
+All three open questions below were answered, and the resulting command shipped as T0002 — see
+`docs/cli-spec.md` §2.9 and `tasks/T0002-gmail-restore-import.md` for the implementation record. This
+section is kept as the historical record of the decision; treat the CLI spec as authoritative for current
+behavior.
+
+- **Gmail write scope**: approved, narrowly scoped to one command only (`STORE_IN_GMAIL_SCOPES` in
+  `config.py`, requested only when that command runs — see `CLAUDE.md`'s read-only note).
+- **Source**: restricted to `mail-utils`-native representations only, as this note originally
+  recommended — but expanded from "EML export directory only" to *either* an EML export directory *or*
+  the local database directly (skipping the export step entirely). Arbitrary foreign EML/mbox trees
+  remain explicitly out of scope.
+- **GYB**: decided against - a native command was preferred over routing through GYB's separate backup
+  format, since it lets `mail-utils`'s own label/date metadata round-trip directly.
+- The shipped command is named `store-in-gmail`, not `import-to-gmail`/`restore-gmail` as sketched below -
+  renamed specifically to avoid being one word away from the existing (and semantically opposite)
+  `import-gmail` command.
+- Scope grew beyond the original sketch during implementation: `--filter` (same grammar as `export`),
+  `--max-messages` (capped, resumable runs), a per-run tracking label, and quota-aware throttling with
+  retry/backoff were all added - see the task file for the full rationale.
+
+## Original sketch (superseded by the Resolution above)
 
 1. Add `gmail.insert` to `config.py`'s `SCOPES` behind a clear, separate opt-in (e.g. only requested when
    the new command is actually used, or a `--i-understand-this-is-not-read-only` style explicit flag) so
@@ -167,7 +186,7 @@ adding a write scope. Sketch, in priority order:
    (nothing to restore from) and that restored messages get new Gmail message IDs.
 5. Test against a disposable/sandbox Gmail account before ever pointing this at anything real.
 
-## Open questions
+## Open questions (resolved — see Resolution above)
 
 - Does the user actually want a Gmail write path in `mail-utils`, given the explicit read-only design
   invariant? (Primary blocker — see [Decision needed](#decision-needed).)

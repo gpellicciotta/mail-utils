@@ -1,15 +1,20 @@
 import argparse
 import email
 import logging
+from datetime import datetime
 from email.policy import default as email_policy_default
 from importlib.metadata import version as package_version
 from pathlib import Path
 
 import pytest
 import yaml
+from googleapiclient.errors import HttpError
 
 from mail_utils import cli
 from mail_utils.cli import (
+    _eml_tree_candidates,
+    _gmail_call_with_backoff,
+    _resolve_label_ids,
     _run_export,
     _run_import,
     _run_import_gmail,
@@ -17,17 +22,127 @@ from mail_utils.cli import (
     _run_import_thunderbird,
     _run_schedule,
     _run_stats,
+    _run_store_in_gmail,
     _run_unschedule,
+    _throttle_gmail_store,
     _validate_inner_command,
     build_parser,
 )
 from mail_utils.db import (
+    get_sync_state,
     init_db,
+    is_stored_in_gmail,
     upsert_addresses,
     upsert_attachments,
     upsert_labels,
     upsert_message,
 )
+
+
+class _FakeExec:
+    def __init__(self, result):
+        self._result = result
+
+    def execute(self):
+        return self._result
+
+
+class _FakeResp:
+    def __init__(self, status):
+        self.status = status
+        self.reason = "rate limit exceeded"
+
+
+def _rate_limit_error(status=429):
+    return HttpError(_FakeResp(status), b"rate limit exceeded")
+
+
+class _FakeMessagesResource:
+    def __init__(self, fail_first_n_imports=0):
+        self.import_calls = []
+        self._fail_remaining = fail_first_n_imports
+
+    def import_(self, userId, body, internalDateSource, neverMarkSpam):
+        if self._fail_remaining > 0:
+            self._fail_remaining -= 1
+            raise _rate_limit_error()
+        self.import_calls.append(
+            {"userId": userId, "body": body, "internalDateSource": internalDateSource, "neverMarkSpam": neverMarkSpam}
+        )
+        return _FakeExec({"id": f"new_gmail_id_{len(self.import_calls)}"})
+
+
+class _FakeLabelsResource:
+    def __init__(self, existing):
+        self._existing = list(existing)
+        self.create_calls = []
+
+    def list(self, userId):
+        return _FakeExec({"labels": list(self._existing)})
+
+    def create(self, userId, body):
+        self.create_calls.append(body)
+        new = {"id": f"Label_{body['name']}", "name": body["name"]}
+        self._existing.append(new)
+        return _FakeExec(new)
+
+
+class _FakeUsers:
+    def __init__(self, existing_labels, fail_first_n_imports=0):
+        self.messages_resource = _FakeMessagesResource(fail_first_n_imports)
+        self.labels_resource = _FakeLabelsResource(existing_labels)
+
+    def messages(self):
+        return self.messages_resource
+
+    def labels(self):
+        return self.labels_resource
+
+
+class _FakeService:
+    def __init__(self, existing_labels=(), fail_first_n_imports=0):
+        self.users_resource = _FakeUsers(existing_labels, fail_first_n_imports)
+
+    def users(self):
+        return self.users_resource
+
+
+def _write_eml_export(path, **overrides):
+    fields = {
+        "msg_id": "msg1",
+        "thread_id": "thread1",
+        "sender": "jane@example.com",
+        "recipient": "me@example.com",
+        "cc": None,
+        "bcc": None,
+        "subject": "Hello",
+        "date": "Wed, 19 Aug 2026 10:00:00 -0700",
+        "internal_date_ms": None,
+        "labels": ["INBOX"],
+        "body_mime_type": "text/plain",
+        "attachments": [],
+        "body_text": "Body text",
+    }
+    fields.update(overrides)
+    cli._export_message_eml(path, **fields)
+
+
+def _no_sleep(monkeypatch):
+    """Stub out time.sleep so throttling/backoff in store-in-gmail tests don't slow the suite down."""
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+
+
+class _IncrementingClock:
+    """Fake `datetime` with a `.now()` that advances by a second on every call - used to guarantee two
+    store-in-gmail invocations mint distinct tracking-label timestamps, since the real clock's one-second
+    resolution could otherwise make two fast, back-to-back test runs collide on the same label name."""
+
+    def __init__(self):
+        self._n = 0
+
+    def now(self, tz=None):
+        self._n += 1
+        return datetime(2026, 1, 1, 0, 0, self._n, tzinfo=tz)
 
 
 def test_version_flag_parses():
@@ -109,6 +224,262 @@ def test_import_gmail_subcommand_routes_to_run_import_gmail():
     assert args.command == "import-gmail"
     assert args.filter == "label:Work"
     assert args.func is _run_import_gmail
+
+
+def test_store_in_gmail_subcommand_parses_and_routes():
+    args = build_parser().parse_args(["store-in-gmail", "some/dir", "--dry-run", "--filter", "label:Work", "--max-messages", "5"])
+    assert args.command == "store-in-gmail"
+    assert args.source_dir == "some/dir"
+    assert args.dry_run is True
+    assert args.filter == "label:Work"
+    assert args.max_messages == 5
+    assert args.func is _run_store_in_gmail
+
+
+def test_store_in_gmail_subcommand_source_dir_is_optional():
+    args = build_parser().parse_args(["store-in-gmail"])
+    assert args.source_dir is None
+    assert args.max_messages is None
+
+
+def test_eml_tree_candidates_yields_none_id_for_foreign_file(tmp_path, capsys):
+    cli._setup_logging()
+    foreign = tmp_path / "foreign.eml"
+    foreign.write_bytes(b"From: a@example.com\r\nSubject: Not ours\r\n\r\nBody\r\n")
+
+    (candidate,) = list(_eml_tree_candidates([foreign]))
+
+    assert candidate[0] is None
+    assert "no X-Mail-Utils-ID header" in capsys.readouterr().out
+
+
+def test_eml_tree_candidates_yields_id_and_labels_for_mail_utils_export(tmp_path):
+    eml_path = tmp_path / "msg1.eml"
+    _write_eml_export(eml_path, labels=["INBOX", "Work"])
+
+    (candidate,) = list(_eml_tree_candidates([eml_path]))
+
+    msg_id, source_path, raw_bytes, label_names = candidate
+    assert msg_id == "msg1"
+    assert source_path == eml_path
+    assert label_names == ["INBOX", "Work"]
+    assert b"msg1" in raw_bytes
+
+
+def test_resolve_label_ids_reuses_cache_without_creating():
+    service = _FakeService()
+    cache = {"INBOX": "INBOX"}
+    ids = _resolve_label_ids(service, ["INBOX"], cache)
+    assert ids == ["INBOX"]
+    assert service.users_resource.labels_resource.create_calls == []
+
+
+def test_gmail_call_with_backoff_retries_then_succeeds(monkeypatch):
+    _no_sleep(monkeypatch)
+    service = _FakeService(fail_first_n_imports=2)
+
+    result = _gmail_call_with_backoff(cli.import_message, service, b"raw", label_ids=["INBOX"])
+
+    assert result == {"id": "new_gmail_id_1"}
+
+
+def test_gmail_call_with_backoff_gives_up_after_max_retries(monkeypatch):
+    _no_sleep(monkeypatch)
+    service = _FakeService(fail_first_n_imports=99)
+
+    with pytest.raises(HttpError):
+        _gmail_call_with_backoff(cli.import_message, service, b"raw", label_ids=["INBOX"])
+
+
+def test_throttle_gmail_store_sleeps_when_called_too_soon(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(cli.time, "time", lambda: 100.0)
+
+    _throttle_gmail_store(last_call_time=100.0)
+
+    assert sleeps and sleeps[0] > 0
+
+
+def test_throttle_gmail_store_does_not_sleep_when_enough_time_passed(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(cli.time, "time", lambda: 100.0)
+
+    _throttle_gmail_store(last_call_time=0.0)
+
+    assert sleeps == []
+
+
+def test_run_store_in_gmail_reports_missing_source_dir(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "DB_PATH", tmp_path / "gmail_index.db")
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(tmp_path / "missing"), dry_run=False))
+    assert "not found" in capsys.readouterr().out
+
+
+def test_run_store_in_gmail_reports_missing_database_when_source_omitted(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "DB_PATH", tmp_path / "gmail_index.db")
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False))
+    assert "No database found" in capsys.readouterr().out
+
+
+def test_run_store_in_gmail_dry_run_from_eml_tree_reports_without_touching_credentials(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(cli, "get_credentials", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")))
+
+    source_dir = tmp_path / "export"
+    source_dir.mkdir()
+    _write_eml_export(source_dir / "msg1.eml")
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=True, filter=None, max_messages=None))
+
+    out = capsys.readouterr().out
+    assert "Would store" in out
+    assert "1 messages stored, 0 skipped" in out
+
+
+def test_run_store_in_gmail_dry_run_from_database_reports_without_touching_credentials(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(cli, "get_credentials", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")))
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message())
+    conn.close()
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=True, filter=None, max_messages=None))
+
+    out = capsys.readouterr().out
+    assert "Would store" in out
+    assert "local database" in out
+    assert "1 messages stored, 0 skipped" in out
+
+
+def test_run_store_in_gmail_end_to_end_stores_applies_tracking_label_and_skips_foreign(tmp_path, monkeypatch, capsys):
+    _no_sleep(monkeypatch)
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
+    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    source_dir = tmp_path / "export"
+    source_dir.mkdir()
+    _write_eml_export(source_dir / "msg1.eml", msg_id="msg1")
+    (source_dir / "foreign.eml").write_bytes(b"From: a@example.com\r\nSubject: Not ours\r\n\r\nBody\r\n")
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+
+    conn = init_db(db_path)
+    assert is_stored_in_gmail(conn, "msg1") is True
+    out = capsys.readouterr().out
+    assert "1 messages stored, 1 skipped" in out
+    assert "last message stored: msg1" in out
+
+    (import_call,) = fake_service.users_resource.messages_resource.import_calls
+    tracking_label_ids = [
+        c["id"] for c in fake_service.users_resource.labels_resource._existing if c["name"].startswith("mail-utils-store-in-gmail-")
+    ]
+    assert len(tracking_label_ids) == 1
+    assert "INBOX" in import_call["body"]["labelIds"]
+    assert tracking_label_ids[0] in import_call["body"]["labelIds"]
+
+
+def test_run_store_in_gmail_max_messages_stops_early_and_is_resumable(tmp_path, monkeypatch, capsys):
+    _no_sleep(monkeypatch)
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
+    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    source_dir = tmp_path / "export"
+    source_dir.mkdir()
+    _write_eml_export(source_dir / "a-msg1.eml", msg_id="msg1")
+    _write_eml_export(source_dir / "b-msg2.eml", msg_id="msg2")
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=1))
+    first_out = capsys.readouterr().out
+    assert "1 messages stored, 0 skipped" in first_out
+    assert "Stopped after reaching --max-messages 1" in first_out
+
+    conn = init_db(db_path)
+    assert is_stored_in_gmail(conn, "msg1") is True
+    assert is_stored_in_gmail(conn, "msg2") is False
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+    second_out = capsys.readouterr().out
+    assert "1 messages stored, 1 skipped" in second_out
+    assert "last message stored: msg2" in second_out
+
+    conn = init_db(db_path)
+    assert is_stored_in_gmail(conn, "msg2") is True
+
+    tracking_labels = [
+        lbl for lbl in fake_service.users_resource.labels_resource._existing if lbl["name"].startswith("mail-utils-store-in-gmail-")
+    ]
+    assert len(tracking_labels) == 1, "the capped run and its continuation should share one tracking label, not mint two"
+    call1, call2 = fake_service.users_resource.messages_resource.import_calls
+    assert tracking_labels[0]["id"] in call1["body"]["labelIds"]
+    assert tracking_labels[0]["id"] in call2["body"]["labelIds"]
+
+    assert get_sync_state(conn, "gmail_store_run_label") == "", "a fully-completed run should clear the run marker"
+
+
+def test_run_store_in_gmail_starts_a_new_tracking_label_after_a_run_completes(tmp_path, monkeypatch, capsys):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(cli, "datetime", _IncrementingClock())
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
+    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    source_dir = tmp_path / "export"
+    source_dir.mkdir()
+    _write_eml_export(source_dir / "msg1.eml", msg_id="msg1")
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+    capsys.readouterr()
+
+    _write_eml_export(source_dir / "msg2.eml", msg_id="msg2")
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+    capsys.readouterr()
+
+    tracking_labels = {
+        lbl["name"]
+        for lbl in fake_service.users_resource.labels_resource._existing
+        if lbl["name"].startswith("mail-utils-store-in-gmail-")
+    }
+    assert len(tracking_labels) == 2, "a run that completed fully should not have its label reused by the next, unrelated run"
+
+
+def test_run_store_in_gmail_filter_restricts_database_source(tmp_path, monkeypatch, capsys):
+    _no_sleep(monkeypatch)
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(id="msg1", subject="Work update"))
+    upsert_message(conn, _sample_message(id="msg2", subject="Personal note"))
+    upsert_labels(conn, [{"id": "Label_1", "name": "Work"}])
+    conn.close()
+
+    fake_service = _FakeService()
+    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, filter="subject:Work", max_messages=None))
+
+    conn = init_db(db_path)
+    assert is_stored_in_gmail(conn, "msg1") is True
+    assert is_stored_in_gmail(conn, "msg2") is False
+    out = capsys.readouterr().out
+    assert "Filter matched 1 messages" in out
 
 
 def test_import_pst_subcommand_routes_to_run_import_pst():

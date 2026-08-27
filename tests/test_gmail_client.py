@@ -1,6 +1,61 @@
 import base64
 
-from mail_utils.gmail_client import _extract_body_text, parse_addresses, parse_attachments, parse_message
+from mail_utils.gmail_client import (
+    _extract_body_text,
+    create_label,
+    import_message,
+    parse_addresses,
+    parse_attachments,
+    parse_message,
+)
+
+
+class _FakeExec:
+    def __init__(self, result):
+        self._result = result
+
+    def execute(self):
+        return self._result
+
+
+class _FakeMessagesResource:
+    def __init__(self):
+        self.import_calls = []
+
+    def import_(self, userId, body, internalDateSource, neverMarkSpam):
+        self.import_calls.append(
+            {"userId": userId, "body": body, "internalDateSource": internalDateSource, "neverMarkSpam": neverMarkSpam}
+        )
+        return _FakeExec({"id": "new_gmail_id"})
+
+
+class _FakeLabelsResource:
+    def __init__(self):
+        self.create_calls = []
+
+    def create(self, userId, body):
+        self.create_calls.append({"userId": userId, "body": body})
+        return _FakeExec({"id": f"Label_{body['name']}", "name": body["name"]})
+
+
+class _FakeUsers:
+    def __init__(self):
+        self.messages_resource = _FakeMessagesResource()
+        self.labels_resource = _FakeLabelsResource()
+
+    def messages(self):
+        return self.messages_resource
+
+    def labels(self):
+        return self.labels_resource
+
+
+class _FakeService:
+    def __init__(self):
+        self.users_resource = _FakeUsers()
+
+    def users(self):
+        return self.users_resource
 
 
 def _b64(text: str) -> str:
@@ -166,3 +221,33 @@ def test_parse_attachments_finds_nested_filenamed_parts():
 def test_parse_attachments_returns_empty_when_none_present():
     raw = {"id": "msg1", "payload": _text_part("text/plain", "Body")}
     assert parse_attachments(raw) == []
+
+
+def test_import_message_base64url_encodes_raw_bytes_and_sets_flags():
+    service = _FakeService()
+    raw_bytes = b"From: a@example.com\r\nSubject: Hi\r\n\r\nBody"
+
+    result = import_message(service, raw_bytes, label_ids=["INBOX", "Label_1"])
+
+    assert result == {"id": "new_gmail_id"}
+    (call,) = service.users_resource.messages_resource.import_calls
+    assert call["userId"] == "me"
+    assert call["internalDateSource"] == "dateHeader"
+    assert call["neverMarkSpam"] is True
+    assert call["body"]["labelIds"] == ["INBOX", "Label_1"]
+    assert base64.urlsafe_b64decode(call["body"]["raw"]) == raw_bytes
+
+
+def test_import_message_omits_label_ids_when_none_given():
+    service = _FakeService()
+    import_message(service, b"raw", label_ids=None)
+    (call,) = service.users_resource.messages_resource.import_calls
+    assert "labelIds" not in call["body"]
+
+
+def test_create_label_calls_labels_create_with_name():
+    service = _FakeService()
+    result = create_label(service, "Work/Projects")
+    assert result == {"id": "Label_Work/Projects", "name": "Work/Projects"}
+    (call,) = service.users_resource.labels_resource.create_calls
+    assert call == {"userId": "me", "body": {"name": "Work/Projects"}}

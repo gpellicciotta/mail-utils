@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS labels (
     name TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS gmail_store_state (
+    message_id TEXT PRIMARY KEY,
+    gmail_id   TEXT,
+    stored_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS message_addresses (
     message_id TEXT NOT NULL,
     role       TEXT NOT NULL,
@@ -118,6 +124,20 @@ def set_sync_state(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute(
         "INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
+    )
+    conn.commit()
+
+
+def is_stored_in_gmail(conn: sqlite3.Connection, message_id: str) -> bool:
+    row = conn.execute("SELECT 1 FROM gmail_store_state WHERE message_id = ?", (message_id,)).fetchone()
+    return row is not None
+
+
+def mark_stored_in_gmail(conn: sqlite3.Connection, message_id: str, gmail_id: str | None) -> None:
+    conn.execute(
+        "INSERT INTO gmail_store_state (message_id, gmail_id) VALUES (?, ?) "
+        "ON CONFLICT(message_id) DO UPDATE SET gmail_id = excluded.gmail_id, stored_at = datetime('now')",
+        (message_id, gmail_id),
     )
     conn.commit()
 

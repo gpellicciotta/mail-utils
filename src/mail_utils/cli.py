@@ -10,7 +10,9 @@ import tempfile
 import time
 import zipfile
 from collections import Counter
+from collections.abc import Iterator
 from datetime import datetime, timezone
+from email import message_from_bytes
 from email.message import EmailMessage
 from email.policy import default as _email_policy_default
 from email.utils import format_datetime
@@ -19,12 +21,15 @@ from importlib.metadata import version as _package_version
 from pathlib import Path
 
 import yaml
+from googleapiclient.errors import HttpError
 
 from .auth import get_credentials
-from .config import BASE_DIR, CREDENTIALS_PATH, DB_PATH, LOG_DIR, LOG_PATH, TOKEN_PATH
+from .config import BASE_DIR, CREDENTIALS_PATH, DB_PATH, LOG_DIR, LOG_PATH, STORE_IN_GMAIL_SCOPES, TOKEN_PATH
 from .db import (
     get_sync_state,
     init_db,
+    is_stored_in_gmail,
+    mark_stored_in_gmail,
     set_sync_state,
     upsert_addresses,
     upsert_attachments,
@@ -35,9 +40,11 @@ from .filters import FilterError, message_matches, parse_filter
 from .gmail_client import (
     HistoryExpiredError,
     build_gmail_service,
+    create_label,
     fetch_message,
     get_current_history_id,
     get_profile,
+    import_message,
     list_all_message_ids,
     list_changed_message_ids,
     list_labels,
@@ -249,6 +256,266 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
     conn.close()
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
+
+
+def _resolve_label_ids(service, label_names: list[str], cache: dict[str, str]) -> list[str]:
+    """Translate label display names (as written to X-Mail-Utils-Labels)
+    back to Gmail label IDs, creating any that don't already exist.
+
+    `cache` should start seeded with every existing label (from
+    list_labels()) so system labels (INBOX, STARRED, ...) - whose id equals
+    their name - are never mistakenly re-created."""
+    ids = []
+    for name in label_names:
+        label_id = cache.get(name)
+        if label_id is None:
+            label_id = _gmail_call_with_backoff(create_label, service, name)["id"]
+            cache[name] = label_id
+        ids.append(label_id)
+    return ids
+
+
+_GMAIL_STORE_MAX_CALLS_PER_SECOND = 8
+"""Caps `messages.import` calls under Gmail's per-user quota (25 units/call, 250 units/sec moving
+average - roughly 10 calls/sec) with headroom left for the label list/create calls sharing the
+same per-user budget."""
+
+_GMAIL_STORE_MAX_RETRIES = 5
+
+
+def _throttle_gmail_store(last_call_time: float) -> float:
+    """Sleep just long enough to keep import calls under _GMAIL_STORE_MAX_CALLS_PER_SECOND.
+    Returns the timestamp to pass as `last_call_time` on the next call."""
+    min_interval = 1.0 / _GMAIL_STORE_MAX_CALLS_PER_SECOND
+    now = time.time()
+    wait = min_interval - (now - last_call_time)
+    if wait > 0:
+        time.sleep(wait)
+    return time.time()
+
+
+def _gmail_call_with_backoff(func, *args, **kwargs):
+    """Call a Gmail API function, retrying with exponential backoff if Gmail reports a rate-limit
+    error (HTTP 429, or 403 with a rate/quota-related reason) - a transient burst (e.g. right after
+    creating several new labels) shouldn't abort an entire store-in-gmail run."""
+    delay = 1.0
+    for attempt in range(1, _GMAIL_STORE_MAX_RETRIES + 1):
+        try:
+            return func(*args, **kwargs)
+        except HttpError as e:
+            status = getattr(e.resp, "status", None)
+            is_rate_limit = status == 429 or (status == 403 and "rate" in str(e).lower())
+            if not is_rate_limit or attempt == _GMAIL_STORE_MAX_RETRIES:
+                raise
+            logger.info("Gmail rate limit hit, retrying in %.0fs (attempt %d/%d)", delay, attempt, _GMAIL_STORE_MAX_RETRIES)
+            time.sleep(delay)
+            delay *= 2
+
+
+def _eml_tree_candidates(eml_paths: list[Path]) -> Iterator[tuple[str | None, Path, bytes, list[str]]]:
+    """Yield (msg_id, source_path, raw_bytes, label_names) for each .eml file - msg_id is None
+    (candidate excluded by the caller) for a file with no X-Mail-Utils-ID header, i.e. not
+    something `mail-utils export --format eml` wrote."""
+    for eml_path in eml_paths:
+        raw_bytes = eml_path.read_bytes()
+        parsed = message_from_bytes(raw_bytes, policy=_email_policy_default)
+        msg_id = parsed.get("X-Mail-Utils-ID")
+        if not msg_id:
+            logger.info("Skipping %s: no X-Mail-Utils-ID header (not a mail-utils export)", eml_path)
+            yield None, eml_path, raw_bytes, []
+            continue
+        labels_header = parsed.get("X-Mail-Utils-Labels")
+        label_names = [name.strip() for name in labels_header.split(",")] if labels_header else []
+        yield msg_id, eml_path, raw_bytes, label_names
+
+
+def _db_candidates(conn: sqlite3.Connection) -> Iterator[tuple[str, Path | None, bytes, list[str]]]:
+    """Yield (msg_id, None, raw_bytes, label_names) straight from the local database, building the
+    same RFC 5322 shape `export --format eml` would have written (via _build_eml_message) without
+    needing a prior export step. Ordered by id for deterministic, resumable processing."""
+    label_names_by_id = dict(conn.execute("SELECT id, name FROM labels"))
+    attachments_by_message: dict[str, list] = {}
+    for message_id, filename, mime_type, size in conn.execute(
+        "SELECT message_id, filename, mime_type, size FROM attachments ORDER BY message_id"
+    ):
+        attachments_by_message.setdefault(message_id, []).append({"filename": filename, "mime_type": mime_type, "size": size})
+
+    rows = conn.execute(
+        "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
+        "internal_date_ms, label_ids, body_text, body_mime_type FROM messages ORDER BY id"
+    ).fetchall()
+
+    for (
+        msg_id,
+        thread_id,
+        sender,
+        recipient,
+        cc,
+        bcc,
+        subject,
+        date,
+        internal_date_ms,
+        label_ids,
+        body_text,
+        body_mime_type,
+    ) in rows:
+        label_names = [label_names_by_id.get(lbl, lbl) for lbl in label_ids.split(",")] if label_ids else []
+        msg = _build_eml_message(
+            msg_id=msg_id,
+            thread_id=thread_id,
+            sender=sender,
+            recipient=recipient,
+            cc=cc,
+            bcc=bcc,
+            subject=subject,
+            date=date,
+            internal_date_ms=internal_date_ms,
+            labels=label_names,
+            body_mime_type=body_mime_type,
+            attachments=attachments_by_message.get(msg_id, []),
+            body_text=body_text,
+        )
+        yield msg_id, None, msg.as_bytes(policy=_email_policy_default), label_names
+
+
+_GMAIL_STORE_RUN_LABEL_KEY = "gmail_store_run_label"
+
+
+def _get_or_start_gmail_store_run_label(conn: sqlite3.Connection) -> str:
+    """Return the tracking-label name for the current in-progress store-in-gmail run, persisted in
+    `sync_state` so an interrupted or --max-messages-capped run continues under the *same* label when
+    the command is rerun, rather than minting a fresh timestamp every invocation. Only called once a
+    run is actually about to store its first message, so a no-op rerun (nothing left to store) never
+    creates a label at all."""
+    run_label_name = get_sync_state(conn, _GMAIL_STORE_RUN_LABEL_KEY)
+    if not run_label_name:
+        run_label_name = f"mail-utils-store-in-gmail-{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H-%M-%SZ')}"
+        set_sync_state(conn, _GMAIL_STORE_RUN_LABEL_KEY, run_label_name)
+    return run_label_name
+
+
+def _finish_gmail_store_run(conn: sqlite3.Connection) -> None:
+    """Clear the persisted run label once a run has gone through every candidate without being cut
+    short by --max-messages, so the *next* invocation starts a fresh run/label instead of continuing
+    this (now complete) one."""
+    set_sync_state(conn, _GMAIL_STORE_RUN_LABEL_KEY, "")
+
+
+def _run_store_in_gmail(args: argparse.Namespace) -> None:
+    _setup_logging()
+    version = _get_version()
+    start_time = time.time()
+    db_path = _resolve_db_path(args)
+    source_dir = Path(args.source_dir) if getattr(args, "source_dir", None) else None
+    dry_run = getattr(args, "dry_run", False)
+    filter_str = getattr(args, "filter", None)
+    max_messages = getattr(args, "max_messages", None)
+
+    logger.info("Mail Utils %s operation started: Store in Gmail", version)
+    logger.info("Source:    %s", f"{source_dir} (EML export directory)" if source_dir else f"{db_path} (local database)")
+    logger.info("Database:  %s", db_path)
+    if filter_str:
+        logger.info("Filter:    %s", filter_str)
+    if max_messages is not None:
+        logger.info("Max:       %d messages this run", max_messages)
+    if dry_run:
+        logger.info("Dry run:   True (no messages will be stored)")
+
+    if source_dir is not None and not source_dir.is_dir():
+        logger.info("Error: Source directory '%s' not found.", source_dir)
+        return
+    if source_dir is None and not db_path.exists():
+        logger.info("No database found at %s", db_path)
+        return
+
+    conn = init_db(db_path)
+    cur = conn.cursor()
+
+    matching_ids = None
+    if filter_str:
+        try:
+            matching_ids = _compute_matching_ids(cur, filter_str)
+        except FilterError as e:
+            logger.info("Invalid --filter: %s", e)
+            conn.close()
+            return
+        logger.info("Filter matched %d messages", len(matching_ids))
+
+    if source_dir is not None:
+        eml_paths = sorted(source_dir.rglob("*.eml"))
+        candidates = _eml_tree_candidates(eml_paths)
+        total = len(matching_ids) if matching_ids is not None else len(eml_paths)
+    else:
+        candidates = _db_candidates(conn)
+        (row_count,) = cur.execute("SELECT COUNT(*) FROM messages").fetchone()
+        total = len(matching_ids) if matching_ids is not None else row_count
+
+    service = None
+    label_cache: dict[str, str] = {}
+    run_label_id = None
+    if not dry_run:
+        creds = get_credentials(STORE_IN_GMAIL_SCOPES)
+        service = build_gmail_service(creds)
+        label_cache = {lbl["name"]: lbl["id"] for lbl in list_labels(service)}
+
+    count = 0
+    skipped = 0
+    last_stored_msg_id = None
+    last_call_time = 0.0
+    hit_max_messages = False
+    for msg_id, source_path, raw_bytes, label_names in candidates:
+        if msg_id is None:
+            skipped += 1
+            continue
+        if matching_ids is not None and msg_id not in matching_ids:
+            continue
+        if is_stored_in_gmail(conn, msg_id):
+            skipped += 1
+            continue
+        if max_messages is not None and count >= max_messages:
+            hit_max_messages = True
+            break
+
+        if dry_run:
+            location = source_path if source_path is not None else msg_id
+            logger.info("Would store %s with labels: %s", location, ", ".join(label_names) or "(none)")
+            count += 1
+            last_stored_msg_id = msg_id
+        else:
+            if run_label_id is None:
+                run_label_name = _get_or_start_gmail_store_run_label(conn)
+                run_label_id = _resolve_label_ids(service, [run_label_name], label_cache)[0]
+                logger.info("Tracking label: %s", run_label_name)
+            label_ids = _resolve_label_ids(service, label_names, label_cache)
+            if run_label_id not in label_ids:
+                label_ids = [*label_ids, run_label_id]
+            last_call_time = _throttle_gmail_store(last_call_time)
+            result = _gmail_call_with_backoff(import_message, service, raw_bytes, label_ids=label_ids)
+            mark_stored_in_gmail(conn, msg_id, result.get("id"))
+            count += 1
+            last_stored_msg_id = msg_id
+            logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
+
+        if (count + skipped) % PROGRESS_LOG_INTERVAL == 0:
+            elapsed = time.time() - start_time
+            pct = (100.0 * (count + skipped) / total) if total else 0
+            logger.info("Store progress: %d/%d messages (%.1f%% - elapsed: %.1fs)", count + skipped, total, pct, elapsed)
+
+    if not dry_run and not hit_max_messages:
+        _finish_gmail_store_run(conn)
+
+    conn.close()
+    elapsed = time.time() - start_time
+    if hit_max_messages:
+        logger.info("Stopped after reaching --max-messages %d - rerun the same command to continue.", max_messages)
+    logger.info(
+        "Mail Utils %s operation ended in %.1fs: %d messages stored, %d skipped, last message stored: %s",
+        version,
+        elapsed,
+        count,
+        skipped,
+        last_stored_msg_id or "none",
+    )
 
 
 def _detect_file_format(path: Path) -> str:
@@ -692,8 +959,7 @@ def _export_message_md(
     target_file.write_text(content, encoding="utf-8")
 
 
-def _export_message_eml(
-    target_file: Path,
+def _build_eml_message(
     *,
     msg_id: str,
     thread_id: str | None,
@@ -708,7 +974,10 @@ def _export_message_eml(
     body_mime_type: str | None,
     attachments: list,
     body_text: str | None,
-) -> None:
+) -> EmailMessage:
+    """Build the same standard RFC 5322 message `export --format eml` writes to disk - also used
+    to build store-in-gmail's database-source candidates on the fly, so a database-sourced store
+    produces byte-for-byte the same message shape as storing a previously exported .eml file."""
     msg = EmailMessage()
     if subject:
         msg["Subject"] = subject
@@ -749,6 +1018,41 @@ def _export_message_eml(
         msg.set_content(body_text or "", subtype="html", charset="utf-8")
     else:
         msg.set_content(body_text or "", subtype="plain", charset="utf-8")
+    return msg
+
+
+def _export_message_eml(
+    target_file: Path,
+    *,
+    msg_id: str,
+    thread_id: str | None,
+    sender: str | None,
+    recipient: str | None,
+    cc: str | None,
+    bcc: str | None,
+    subject: str | None,
+    date: str | None,
+    internal_date_ms: int | None,
+    labels: list,
+    body_mime_type: str | None,
+    attachments: list,
+    body_text: str | None,
+) -> None:
+    msg = _build_eml_message(
+        msg_id=msg_id,
+        thread_id=thread_id,
+        sender=sender,
+        recipient=recipient,
+        cc=cc,
+        bcc=bcc,
+        subject=subject,
+        date=date,
+        internal_date_ms=internal_date_ms,
+        labels=labels,
+        body_mime_type=body_mime_type,
+        attachments=attachments,
+        body_text=body_text,
+    )
 
     target_file.write_bytes(msg.as_bytes(policy=_email_policy_default))
 
@@ -1180,6 +1484,28 @@ def build_parser() -> argparse.ArgumentParser:
     import_tb_cmd.set_defaults(func=_run_import_thunderbird)
     subcommand_parsers["import-thunderbird"] = import_tb_cmd
     subcommand_parsers["import-pcv"] = import_tb_cmd
+
+    store_in_gmail_cmd = subparsers.add_parser(
+        "store-in-gmail",
+        help="Store previously-exported (or already-indexed) mail into a live Gmail mailbox (requests write-capable scopes)",
+    )
+    store_in_gmail_cmd.add_argument(
+        "source_dir",
+        nargs="?",
+        default=None,
+        help="Directory of .eml files to store, e.g. output of 'mail-utils export --format eml' "
+        "(omit to store directly from the local database instead)",
+    )
+    store_in_gmail_cmd.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
+    store_in_gmail_cmd.add_argument(
+        "--max-messages", type=int, help="Store at most this many messages this run; rerun the same command to continue"
+    )
+    store_in_gmail_cmd.add_argument(
+        "--dry-run", action="store_true", help="Report what would be stored without contacting Gmail or requesting credentials"
+    )
+    store_in_gmail_cmd.add_argument("--db", help=db_help)
+    store_in_gmail_cmd.set_defaults(func=_run_store_in_gmail)
+    subcommand_parsers["store-in-gmail"] = store_in_gmail_cmd
 
     search_cmd = subparsers.add_parser("search", help="Full-text search indexed messages using SQLite FTS5")
     search_cmd.add_argument("query", help="Search query (supports boolean operators AND, OR, NOT, and prefix queries)")

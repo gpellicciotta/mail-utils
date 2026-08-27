@@ -8,9 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 database (`data/gmail.db`), using the Gmail API and OAuth 2.0. It's a personal, single-user tool — not a
 package/library, no server, no multi-tenant concerns.
 
-**Read-only is a hard design invariant, not just a default:** the app only ever requests the `gmail.readonly`
-scope (`config.py`'s `SCOPES`). It never sends, labels, or deletes anything. Don't add write/send/delete
-capability without explicitly discussing it first — that's a deliberate scope decision, not an oversight.
+**Read-only is the default, not an absolute rule — but any exception is a deliberate, narrowly-scoped
+decision, never an oversight.** Every command except one only ever requests the `gmail.readonly` scope
+(`config.py`'s `SCOPES`) and never sends, labels, or deletes anything. The one exception is `store-in-gmail`
+(see `docs/reverse-import-plan.md` for the feasibility study behind it, and `docs/cli-spec.md` §2.9 for the
+command itself): it writes mail-utils messages back into a live Gmail mailbox via `users.messages.import`,
+sourced either from a `mail-utils export --format eml` directory or directly from the local database, and
+requests the additional `gmail.insert`/`gmail.labels` scopes (`config.py`'s `STORE_IN_GMAIL_SCOPES`) only
+when actually invoked — every other command's credential request is unaffected. Don't add further
+write/send/delete capability without explicitly discussing it first.
 
 The app is cross-platform (pure Python/stdlib + pathlib, no Windows-specific code) — verified by running the
 full test suite and CLI in a `python:3.11-slim` Docker container. Scheduling is cross-platform too:
@@ -30,12 +36,18 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   `import-thunderbird <path>` (Thunderbird .pcv/profile import, alias `import-pcv`),
   `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary),
   `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
+  `store-in-gmail [<source_dir>]` (writes mail into a live Gmail mailbox — the one write-capable command,
+  see the read-only note above and docs/cli-spec.md §2.9; source is a `mail-utils export --format eml`
+  directory, or the local database directly if `source_dir` is omitted),
   `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or cron, dispatched by `platform.system()`;
   `mail-utils schedule --job-name <name> --interval-minutes N -- import|import-gmail|export [flags...]`, see docs/cli-spec.md for
   scheduling details), `version` / `--version` (reads live package metadata), `help` / `-h` / `--help` (usage and exit codes).
-- `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export` accept `--db <path>` to point at a database other
-  than the default `data/gmail.db`. `import`/`import-gmail`/`import-pst`/`import-thunderbird` accept `-r`/`--recursive` to import
-  nested email attachments. `import`/`import-gmail`/`stats`/`export` also accept `--filter "..."` (see docs/cli-spec.md).
+- `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export`/`store-in-gmail` accept `--db <path>` to point at a
+  database other than the default `data/gmail.db`. `import`/`import-gmail`/`import-pst`/`import-thunderbird` accept `-r`/`--recursive`
+  to import nested email attachments. `import`/`import-gmail`/`stats`/`export`/`store-in-gmail` also accept `--filter "..."`
+  (see docs/cli-spec.md). `store-in-gmail` additionally accepts `--dry-run` (preview without contacting Gmail or requesting
+  credentials) and `--max-messages N` (cap this run's writes — pairs with the persistent `gmail_store_state` table to make an
+  interrupted or capped run resumable by simply rerunning the same command).
 - Run the test suite: `.venv\Scripts\python -m pytest`; lint/format: `.venv\Scripts\ruff check .` /
   `.venv\Scripts\ruff format .` (line-length 132, `[tool.ruff]` in `pyproject.toml`; CI runs both plus
   `pytest` plus `python -m build`).
@@ -52,10 +64,15 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   `messages.py` (Mbox parsing, MIME extraction, fallback date handling).
 - **`config.py`** — `DATA_DIR` (`BASE_DIR / "data"`, gitignored in full) holding the secrets/database
   (`data/credentials.json`, `data/token.json`, `data/gmail.db`), plus a separate top-level, also gitignored,
-  `LOG_DIR` (`BASE_DIR / "logs"`, `logs/mail-utils.log`) and the OAuth `SCOPES` list. Single source of truth
-  for both; nothing else in the codebase hardcodes a path.
-- **`auth.py`** — `get_credentials()`: loads/refreshes `data/token.json` silently when possible, otherwise
-  runs the one-time interactive `InstalledAppFlow` browser consent using `data/credentials.json`.
+  `LOG_DIR` (`BASE_DIR / "logs"`, `logs/mail-utils.log`) and the OAuth `SCOPES` list (read-only, used by
+  every command but one). `STORE_IN_GMAIL_SCOPES` extends `SCOPES` with `gmail.insert`/`gmail.labels`,
+  requested only by `store-in-gmail`. Single source of truth for both; nothing else in the codebase
+  hardcodes a path.
+- **`auth.py`** — `get_credentials(scopes=None)`: loads/refreshes `data/token.json` silently when possible,
+  otherwise runs the one-time interactive `InstalledAppFlow` browser consent using `data/credentials.json`.
+  Defaults to `SCOPES`; `store-in-gmail` passes `STORE_IN_GMAIL_SCOPES` instead, which re-triggers consent if
+  the cached token doesn't already cover the broader set (checked via `creds.scopes`) — every other caller is
+  unaffected since it never asks for more than the cached read-only token already grants.
 - **`gmail_client.py`** — thin wrapper over the Gmail API: paginated full-mailbox listing
   (`list_all_message_ids`), paginated History API diffing (`list_changed_message_ids`, raises
   `HistoryExpiredError` on a 404 so the caller can fall back to a full resync), label listing
@@ -66,15 +83,20 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   `parse_attachments`, which walks the MIME tree collecting every part with a filename (metadata only —
   filename/mime type/size/`attachmentId` — never the bytes). `parse_message`'s body extraction also records
   `body_mime_type` (`"text/plain"` or `"text/html"`) alongside `body_text`, so downstream consumers (like
-  `cli.py`'s `export`) can tell which case they're in without re-deriving it. See `README.md`'s "Database
-  contents" section for the exact, currently-documented behavior (and known gaps — `TODO.md` tracks fixing
-  them).
-- **`db.py`** — SQLite schema and upsert helpers. Five tables: `messages` (upserted by Gmail's message `id`, so
+  `cli.py`'s `export`) can tell which case they're in without re-deriving it. `import_message` (writes a raw
+  RFC 5322 message via `users.messages.import`, base64url-encoding it, with `internalDateSource="dateHeader"`
+  and `neverMarkSpam=True`) and `create_label` (`users.labels.create`) are the write-side counterparts used
+  only by `store-in-gmail`. See `README.md`'s "Database contents" section for the exact, currently-documented
+  behavior (and known gaps — `TODO.md` tracks fixing them).
+- **`db.py`** — SQLite schema and upsert helpers. `messages` (upserted by Gmail's message `id`, so
   reruns never duplicate), `sync_state` (currently just `last_history_id`), `labels` (id -> display name,
   refreshed in full every run), `message_addresses` and `attachments` (each one row per message/role/address or
   message/attachment, replaced in full for a given message on every rerun via `upsert_addresses`/
   `upsert_attachments` — delete-then-insert, not an upsert, since Gmail messages are immutable so there's
-  nothing to merge).
+  nothing to merge), and `gmail_store_state` (`message_id` -> the Gmail-assigned `gmail_id` it was stored as,
+  via `is_stored_in_gmail`/`mark_stored_in_gmail`) so `store-in-gmail` reruns skip messages already stored
+  instead of duplicating them — this is also what makes an interrupted or `--max-messages`-capped run
+  resumable: rerunning the same command just picks up where the last one left off.
 - **`filters.py`** — `parse_filter`/`message_matches`: the local (non-Gmail-API) filter interpreter used by
   `stats --filter`/`export --filter`. Deliberately a smaller grammar than Gmail's own — `label:`, `from:`,
   `to:`, `cc:`, `bcc:`, `subject:`, `after:YYYY/MM/DD`, `before:YYYY/MM/DD`, `has:attachment`, bare
@@ -115,7 +137,29 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   `argparse`'s `description=`; so does running with no subcommand — either accepts `--verbose` to also print
   full `--help` for every subcommand in turn, via `_print_full_help`, which walks the `subcommand_parsers`
   dict `build_parser` attaches to the returned parser as `_subcommand_parsers`), and `version` (a subcommand
-  alias for `--version`, handled the same way in `main()`; also accepts its own `--verbose`). `import`/`stats`/`export`
+  alias for `--version`, handled the same way in `main()`; also accepts its own `--verbose`), and `store-in-gmail [<source_dir>]`
+  (the one write-capable command — candidates come from `_eml_tree_candidates` (walks `.eml` files under
+  `source_dir`, sorted by path, skipping any without an `X-Mail-Utils-ID` header) when `source_dir` is
+  given, or from `_db_candidates` (reads the local database directly, ordered by `id`, building the same
+  RFC 5322 shape via `_build_eml_message` that `export --format eml` would have written) when it's omitted;
+  either way, candidates already present in `gmail_store_state` are skipped, `--filter` (same grammar as
+  `stats`/`export`, via `_compute_matching_ids`) can further restrict them, and `--max-messages` stops the
+  run early once that many have been stored — safe to do since `gmail_store_state` makes rerunning the same
+  command pick up exactly where it left off. Every message stored also gets one label unique to that run
+  (`mail-utils-store-in-gmail-<UTC timestamp>`, resolved/created lazily on the run's first actual store via
+  `_get_or_start_gmail_store_run_label`/`_resolve_label_ids`). That label name is itself persisted in
+  `sync_state` (`_GMAIL_STORE_RUN_LABEL_KEY`) the moment it's minted and only cleared once a run goes
+  through every candidate without being cut short by `--max-messages` (`_finish_gmail_store_run`) — so a
+  capped run, or one interrupted outright (crash, Ctrl-C), continues under the *same* timestamp label when
+  rerun instead of scattering its messages across several differently-timestamped labels; only a run that
+  actually finished starts a fresh label next time. `_throttle_gmail_store` paces `messages.import` calls
+  under Gmail's per-user quota (25 units/call, ~10 calls/sec ceiling) and `_gmail_call_with_backoff` retries
+  with exponential backoff on a 429/rate-limited 403 so a transient burst doesn't abort the run. Labels are
+  resolved to IDs via `_resolve_label_ids`, creating any that don't already exist. `--dry-run` runs the same
+  candidate/skip/filter logic without requesting credentials or calling the API, so it never touches
+  `gmail_store_state`, only previews what a real run would do — and every stored message, plus the run's
+  final summary, is logged explicitly (`Stored <id> as Gmail message <new-id>` per message; the end-of-run
+  line always states the last message successfully stored). `import`/`stats`/`export`/`store-in-gmail`
   all take `--db <path>` (via `_resolve_db_path`) to override the default `data/gmail.db`. `stats --filter`/
   `export --filter` compute a matching-id set once via `_compute_matching_ids` and either build a
   `filtered_ids` temp table (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just

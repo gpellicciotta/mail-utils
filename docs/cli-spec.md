@@ -121,6 +121,7 @@ mail-utils export <output_dir> [-f|--format {md,eml}] [--filter <filter>] [--db 
 
 ---
 
+### 2.8 `schedule` / `unschedule`
 Registers and manages recurring scheduled tasks (Windows Task Scheduler or cron).
 
 ```powershell
@@ -133,6 +134,50 @@ mail-utils unschedule [--job-name <name>]
 - `--interval-minutes <N>`: Execution interval in minutes (default: `30`).
 - `--list`: List currently active scheduled jobs.
 - `-- <command>`: The inner command to execute (e.g. `import` or `export /backup/dir`).
+
+---
+
+### 2.9 `store-in-gmail`
+Writes mail-utils messages into a live Gmail mailbox - either from a `mail-utils export --format eml`
+directory, or directly from the local database. Unlike every other command, this one requests write-capable
+OAuth scopes (`gmail.insert`, `gmail.labels`) on top of the usual read-only `gmail.readonly` - see
+`docs/requirements.md`'s "Read-Only / Non-Destructive" principle for why this is a deliberate,
+narrowly-scoped exception rather than a default.
+
+```powershell
+mail-utils store-in-gmail [<source_dir>] [--filter <filter>] [--max-messages <N>] [--dry-run] [--db <path>]
+```
+
+- `<source_dir>` (optional): Directory of `.eml` files to store (searched recursively). Only files carrying
+  the `X-Mail-Utils-ID` header `mail-utils export --format eml` writes are stored; any other `.eml` file is
+  skipped with a log message. **Omit it** to store directly from the local database instead - no export
+  step needed first.
+- `--filter <filter>`: Local filter expression (same grammar as `stats`/`export`, e.g. `label:Work
+  from:jane has:attachment`), restricting which messages get stored. Evaluated against the local database
+  regardless of source.
+- `--max-messages <N>`: Store at most `N` messages this run, then stop. Safe to do since progress is
+  persisted (see below) - rerun the same command to continue with the next batch.
+- `--dry-run`: Reports what would be stored, with which labels, without contacting Gmail or requesting
+  (broader) credentials.
+- `--db <path>`: Database used both to track which messages have already been stored (so reruns are
+  idempotent and an interrupted or `--max-messages`-capped run is trivially resumable) and, when
+  `<source_dir>` is omitted, as the actual source of the messages to store.
+
+Preserves the original `Date:` header as the message's arrival date and translates each message's labels
+back into Gmail labels, creating any that don't already exist. Every message stored during one run also
+gets an additional label unique to that run - `mail-utils-store-in-gmail-<UTC timestamp>` - so the whole
+batch is easy to find and review in Gmail afterwards. That timestamp stays fixed for the whole run, and an
+interrupted or `--max-messages`-capped run continues under the *same* label when you simply rerun the same
+command - only once a run goes through every remaining candidate does the next invocation start a new one.
+Calls are paced under Gmail's per-user quota and
+retried with backoff on a rate-limit response, so a large store-in-gmail run shouldn't trip Gmail's limits.
+Every message stored is logged individually, and the run's final summary always states how many messages
+were stored/skipped and which message was stored last.
+
+Attachment *content* is never stored - `mail-utils` has never captured attachment bytes, only metadata
+(filename, MIME type, size) - so stored messages are attachment-less regardless of source. Stored messages
+get a new Gmail-assigned message ID; the original id survives only as the message's own `X-Mail-Utils-ID`
+header.
 
 ---
 

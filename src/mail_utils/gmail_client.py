@@ -103,6 +103,23 @@ def fetch_message(service, msg_id: str) -> dict:
     return service.users().messages().get(userId="me", id=msg_id, format="full").execute()
 
 
+def import_message(service, raw_bytes: bytes, label_ids: list[str] | None = None) -> dict:
+    """Write `raw_bytes` (a full RFC 5322 message) into the mailbox via
+    `users.messages.import` - applies normal spam/classification scanning
+    like an incoming SMTP delivery would, except `neverMarkSpam=True`
+    suppresses the spam side effect specifically for this restore use case.
+    `internalDateSource="dateHeader"` keeps the message's original Date:
+    header as its arrival date rather than "now"."""
+    body = {"raw": base64.urlsafe_b64encode(raw_bytes).decode("ascii")}
+    if label_ids:
+        body["labelIds"] = label_ids
+    return service.users().messages().import_(userId="me", body=body, internalDateSource="dateHeader", neverMarkSpam=True).execute()
+
+
+def create_label(service, name: str) -> dict:
+    return service.users().labels().create(userId="me", body={"name": name}).execute()
+
+
 def _decode_part(data: str) -> str:
     return base64.urlsafe_b64decode(data.encode("UTF-8")).decode("UTF-8", errors="replace")
 
