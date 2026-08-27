@@ -9,19 +9,13 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0007
+**Next ID:** 0008
 
 ---
 
 ## Next Milestone
 
-- [ ] A0003 Ensure all scripts comply with the guidelines
-
----
-
-### Backlog
-
-- [ ] T0004 capture-attachment-content
+- [ ] A0007 Replace setup.ps1 with scripts/bootstrap-dev-environment.py, just like what was done recently in hinolugi-counters
 - [ ] A0005 Fix unhandled sqlite3.OperationalError crash in import-pst/import-thunderbird/store-in-gmail
       Root cause: init_db() calls sqlite3.connect(db_path) without ensuring db_path's parent directory
       (data/ by default) exists first, so a truly fresh checkout with no data/ dir yet crashes with a raw
@@ -29,6 +23,12 @@ An overview of all tasks and their planning.
       credentials before touching the database. Fix: create the parent directory (or give a friendly
       "directory not found" message) in init_db() or _resolve_db_path() before connecting. Found while
       building T0002 (store-in-gmail).
+
+---
+
+### Backlog
+
+- [ ] T0004 capture-attachment-content
 - [ ] A0006 Verify store-in-gmail end-to-end against a real (disposable/sandbox) Gmail account
       T0002 shipped with only mocked-service unit tests (no real Gmail account touched in CI, by design).
       Before relying on store-in-gmail against any real mailbox, run it end-to-end against a disposable or
