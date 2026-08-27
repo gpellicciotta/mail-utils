@@ -14,29 +14,28 @@ Usage:
 A timestamped backup copy of the database is made before any write.
 """
 
-import argparse
 import shutil
 import sqlite3
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from _cli_common import build_action_parser, get_mail_utils_version, print_help, print_version
+
 from mail_utils.config import DB_PATH
 
+PROG = "migrate-gmail-id-prefix"
+DESCRIPTION = "One-off migration that prefixes existing messages.id rows with 'gmail:' to match the current id scheme."
+EXIT_CODES = [(0, "Success"), (1, "Database not found or migration failed"), (2, "Invalid command-line arguments")]
 PREFIX = "gmail:"
 UNPREFIXED_WHERE = "id NOT LIKE 'gmail:%' AND id NOT LIKE 'outlook:%'"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--db", help=f"Database to migrate (default: {DB_PATH})")
-    parser.add_argument("--apply", action="store_true", help="Actually write the change (default: dry run)")
-    args = parser.parse_args()
-
+def _run_migrate(args) -> int:
     db_path = Path(args.db) if args.db else DB_PATH
     if not db_path.exists():
-        parser.error(f"Database not found: {db_path}")
+        print(f"Database not found: {db_path}", file=sys.stderr)
+        return 1
 
     conn = sqlite3.connect(str(db_path))
     unprefixed = conn.execute(f"SELECT COUNT(*) FROM messages WHERE {UNPREFIXED_WHERE}").fetchone()[0]
@@ -46,11 +45,11 @@ def main() -> None:
     if unprefixed == 0:
         print("Nothing to do.")
         conn.close()
-        return
+        return 0
     if not args.apply:
         print("Dry run only - re-run with --apply to write this change.")
         conn.close()
-        return
+        return 0
 
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     backup_path = db_path.with_name(f"{db_path.stem}.pre-gmail-id-prefix-{stamp}{db_path.suffix}")
@@ -81,7 +80,25 @@ def main() -> None:
         conn.close()
 
     print(f"Migrated {unprefixed} messages. Backup kept at {backup_path}.")
+    return 0
+
+
+def main() -> int:
+    version = get_mail_utils_version()
+    parser = build_action_parser(PROG, DESCRIPTION, ["migrate", "version", "help"], "migrate")
+    parser.add_argument("--db", help=f"Database to migrate (default: {DB_PATH})")
+    parser.add_argument("--apply", action="store_true", help="Actually write the change (default: dry run)")
+    args = parser.parse_args()
+
+    if args.version or args.action == "version":
+        print_version(PROG, version)
+        return 0
+    if args.help or args.action == "help":
+        print_help(PROG, version, DESCRIPTION, parser, EXIT_CODES)
+        return 0
+
+    return _run_migrate(args)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

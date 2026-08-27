@@ -12,18 +12,23 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+from _cli_common import build_action_parser, print_help, print_version
+
+PROG = "bootstrap-dev-environment"
+DESCRIPTION = (
+    "Creates the virtual environment, installs mail-utils in editable mode, lints, tests, and builds distributable artifacts."
+)
+EXIT_CODES = [(0, "Success"), (1, "One or more bootstrap steps failed")]
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_DIR = REPO_ROOT / ".venv"
 DATA_DIR = REPO_ROOT / "data"
 DIST_DIR = REPO_ROOT / "bin" / "distributions"
-APP_AUTHOR = "Giovanni Pellicciotta"
 
 
 def get_project_version() -> str:
@@ -84,34 +89,20 @@ def setup() -> int:
     return 0 if all_ok else 1
 
 
-def main() -> None:
+def main() -> int:
     version = get_project_version()
-
-    parser = argparse.ArgumentParser(
-        description=(
-            "mail-utils - Local Development Bootstrap\n"
-            "============================================================\n"
-            "Creates the virtual environment, installs mail-utils in editable mode, lints,\n"
-            "tests, and builds distributable artifacts."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "action",
-        nargs="?",
-        default="setup",
-        choices=["setup", "version"],
-        help="Action to perform (default: setup)",
-    )
-    parser.add_argument("--version", "-v", action="store_true", help="Print version information and exit")
+    parser = build_action_parser(PROG, DESCRIPTION, ["setup", "version", "help"], "setup")
     args = parser.parse_args()
 
     if args.version or args.action == "version":
-        print(f"bootstrap-dev-environment v{version} - Copyright (c) {APP_AUTHOR}")
-        sys.exit(0)
+        print_version(PROG, version)
+        return 0
+    if args.help or args.action == "help":
+        print_help(PROG, version, DESCRIPTION, parser, EXIT_CODES)
+        return 0
 
-    sys.exit(setup())
+    return setup()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

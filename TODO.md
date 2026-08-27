@@ -15,14 +15,6 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [~] A0009 Bring scripts/ scripts into full compliance with the CLI and Python guidelines  @claude
-      Follow-up to A0003, which only fixed naming. Gaps found: generate-sample-pst.py has no argparse/
-      version/help at all; migrate-gmail-id-prefix.py has argparse but no version action/--version, and
-      its -h output doesn't match the mandated {name} v{version} - {copyright} + exit-codes template;
-      bootstrap-dev-environment.py has version/--version but its -h output is missing the exit-codes
-      section. Also normalize the inconsistent package-import assumption between generate-sample-pst.py
-      (assumes editable install) and migrate-gmail-id-prefix.py (manual sys.path insert).
-
 ---
 
 ### Backlog

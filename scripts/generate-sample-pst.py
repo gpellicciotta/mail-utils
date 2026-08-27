@@ -1,5 +1,8 @@
 import struct
+import sys
 from pathlib import Path
+
+from _cli_common import build_action_parser, get_mail_utils_version, print_help, print_version
 
 from mail_utils.outlook.messages import fetch_message, parse_message
 from mail_utils.outlook.ndb import (
@@ -11,6 +14,11 @@ from mail_utils.outlook.ndb import (
     make_nid,
 )
 from mail_utils.outlook.tree import walk_folders
+
+PROG = "generate-sample-pst"
+DESCRIPTION = "Generates a small synthetic Outlook .pst test fixture and verifies it parses back correctly."
+DEFAULT_TARGET = Path("tests/fixtures/sample.pst")
+EXIT_CODES = [(0, "Success"), (1, "Generation or verification failed")]
 
 PROP_DISPLAY_NAME = 0x3001
 PROP_LTP_ROW_ID = 0x67F2
@@ -233,10 +241,8 @@ def generate_sample_pst(target_path: Path):
     print("Generated sample PST:", target_path, len(full_pst), "bytes")
 
 
-if __name__ == "__main__":
-    out = Path("tests/fixtures/sample.pst")
-    generate_sample_pst(out)
-    with PSTFile(out) as pst:
+def _verify(target_path: Path) -> None:
+    with PSTFile(target_path) as pst:
         folders = walk_folders(pst)
         print("Walked folders:", [f.path for f in folders])
         for f in folders:
@@ -245,3 +251,24 @@ if __name__ == "__main__":
                 raw = fetch_message(pst, nid)
                 msg = parse_message(raw)
                 print("    Msg:", msg["id"], msg["sender"], msg["subject"])
+
+
+def main() -> int:
+    version = get_mail_utils_version()
+    parser = build_action_parser(PROG, DESCRIPTION, ["generate", "version", "help"], "generate")
+    args = parser.parse_args()
+
+    if args.version or args.action == "version":
+        print_version(PROG, version)
+        return 0
+    if args.help or args.action == "help":
+        print_help(PROG, version, DESCRIPTION, parser, EXIT_CODES)
+        return 0
+
+    generate_sample_pst(DEFAULT_TARGET)
+    _verify(DEFAULT_TARGET)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

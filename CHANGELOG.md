@@ -18,6 +18,7 @@ A summarized overview of all changes, per version of this project.
 - DevEx: Rename `scripts/generate_sample_pst.py` to `scripts/generate-sample-pst.py` for naming-convention compliance.
 - DevEx: Replace `setup.ps1` with cross-platform `scripts/bootstrap-dev-environment.py`.
 - BackEnd: Fix crash on a fresh checkout when `import-pst`/`import-thunderbird`/`store-in-gmail` run before `data/` exists.
+- DevEx: Give every `scripts/` tool a `version`/`help` action and `-v`/`-h` options matching `mail-utils`'s own CLI format.
 
 ## v2.3.0 [released: 2026-08-24]
 - Aligned project with latest development guidelines (https://github.com/gpellicciotta/dev-guidelines).
