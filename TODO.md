@@ -9,7 +9,7 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0001
+**Next ID:** 0002
 
 ---
 
@@ -21,4 +21,4 @@ An overview of all tasks and their planning.
 
 ### Backlog
 
-*(no backlog items yet)*
+- [~] T0001 reverse-mail-import @claude
