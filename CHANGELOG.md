@@ -16,6 +16,7 @@ A summarized overview of all changes, per version of this project.
 - Docs: Add a feasibility study for restoring exported mail back into Gmail, Outlook, and Thunderbird.
 - BackEnd: Add opt-in `store-in-gmail` command to write exported or indexed mail into a live Gmail mailbox.
 - DevEx: Rename `scripts/generate_sample_pst.py` to `scripts/generate-sample-pst.py` for naming-convention compliance.
+- DevEx: Replace `setup.ps1` with cross-platform `scripts/bootstrap-dev-environment.py`.
 
 ## v2.3.0 [released: 2026-08-24]
 - Aligned project with latest development guidelines (https://github.com/gpellicciotta/dev-guidelines).

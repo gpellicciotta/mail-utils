@@ -20,9 +20,10 @@ python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 ```
 
-Alternatively, run the automated bootstrap script:
-```powershell
-.\setup.ps1
+Alternatively, run the automated bootstrap script (cross-platform - creates the virtual environment,
+installs the dev extra, lints, tests, and builds distributable artifacts in one step):
+```shell
+python scripts/bootstrap-dev-environment.py
 ```
 
 ---
