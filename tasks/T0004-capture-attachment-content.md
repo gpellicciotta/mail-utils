@@ -1,10 +1,10 @@
 # T0004: Capture full attachment content, not just metadata
 
-- **Status:** available
-- **Owner:** none
-- **Started:** —
-- **Branch:** —
-- **Worktree:** —
+- **Status:** active
+- **Owner:** claude
+- **Started:** 2026-08-27
+- **Branch:** task/T0004-capture-attachment-content
+- **Worktree:** ./work/T0004-capture-attachment-content
 
 ## Goal
 

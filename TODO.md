@@ -9,17 +9,25 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0009
+**Next ID:** 0010
 
 ---
 
 ## Next Milestone
 
+- [~] A0009 Bring scripts/ scripts into full compliance with the CLI and Python guidelines  @claude
+      Follow-up to A0003, which only fixed naming. Gaps found: generate-sample-pst.py has no argparse/
+      version/help at all; migrate-gmail-id-prefix.py has argparse but no version action/--version, and
+      its -h output doesn't match the mandated {name} v{version} - {copyright} + exit-codes template;
+      bootstrap-dev-environment.py has version/--version but its -h output is missing the exit-codes
+      section. Also normalize the inconsistent package-import assumption between generate-sample-pst.py
+      (assumes editable install) and migrate-gmail-id-prefix.py (manual sys.path insert).
+
 ---
 
 ### Backlog
 
-- [ ] T0004 capture-attachment-content
+- [~] T0004 capture-attachment-content  @claude
 - [ ] A0008 Reconcile the minimum supported Python version across pyproject.toml, docs/devops.md, and CI
       pyproject.toml's `requires-python` says `>=3.10`, docs/devops.md's "Local Environment & Dependencies"
       section says "Python 3.11+", and `.github/workflows` actually only runs CI against 3.11 - so 3.10 is
