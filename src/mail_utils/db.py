@@ -104,6 +104,7 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
 
 
 def init_db(db_path: Path) -> sqlite3.Connection:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.executescript(SCHEMA)
     conn.commit()
