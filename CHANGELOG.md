@@ -12,6 +12,9 @@ A summarized overview of all changes, per version of this project.
 
 ---
 
+## vNext
+- Docs: Add a feasibility study for restoring exported mail back into Gmail, Outlook, and Thunderbird.
+
 ## v2.3.0 [released: 2026-08-24]
 - Aligned project with latest development guidelines (https://github.com/gpellicciotta/dev-guidelines).
 - Renamed `LICENSE` to `LICENSE.md`.

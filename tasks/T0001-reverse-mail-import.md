@@ -1,6 +1,6 @@
 # T0001: Reverse mail import (filesystem exports back into Gmail/Outlook/Thunderbird)
 
-- **Status:** active
+- **Status:** Completed
 - **Owner:** claude
 - **Started:** 2026-08-27
 - **Branch:** task/T0001-reverse-mail-import
@@ -56,12 +56,12 @@ None.
 
 ## Implementation Checklist
 
-- [ ] Research Gmail-side import mechanisms and their guarantees/limits.
-- [ ] Map current `mail-utils` export data model against what a restore would need.
-- [ ] Survey existing Gmail-restore tools (e.g. backup/restore utilities, IMAP-sync tools).
-- [ ] Survey existing Outlook PST-writing / mail-restore tools.
-- [ ] Survey existing Thunderbird mbox-reimport tooling/add-ons.
-- [ ] Write `docs/reverse-import-plan.md` with feasibility verdict + recommendation.
+- [x] Research Gmail-side import mechanisms and their guarantees/limits.
+- [x] Map current `mail-utils` export data model against what a restore would need.
+- [x] Survey existing Gmail-restore tools (e.g. backup/restore utilities, IMAP-sync tools).
+- [x] Survey existing Outlook PST-writing / mail-restore tools.
+- [x] Survey existing Thunderbird mbox-reimport tooling/add-ons.
+- [x] Write `docs/reverse-import-plan.md` with feasibility verdict + recommendation.
 
 ## Test Strategy
 
@@ -77,12 +77,23 @@ and Thunderbird. `TODO.md` and `CHANGELOG.md` (if applicable — see note in Val
 ## Progress Log
 
 - 2026-08-27: Task claimed, worktree created, research started.
+- 2026-08-27: Researched Gmail API `messages.import`/`.insert` semantics, quota/rate limits, and OAuth
+  scope requirements; cross-referenced against `gmail_client.parse_attachments`/`parse_message` and
+  `README.md`'s "Database contents" to confirm attachment bytes are the one unrecoverable data-loss point
+  regardless of target platform. Surveyed existing tools (GYB, imapsync, IMAP Upload for Gmail; Aid4Mail
+  and Outlook COM automation for `.pst`; ImportExportTools NG for Thunderbird). Wrote up findings,
+  feasibility verdict, and a conditional implementation sketch in `docs/reverse-import-plan.md`, linked
+  from `docs/index.md`. Flagged the Gmail write-scope decision as the explicit blocker per `CLAUDE.md`'s
+  read-only invariant, rather than assuming it away. Added a `vNext` `CHANGELOG.md` entry for the new doc.
 
 ## Validation Record
 
-N/A (research/planning task; no code paths exercised). No `CHANGELOG.md` entry expected unless the
-findings lead directly to a code or doc change beyond the plan document itself.
+N/A — research/planning task, no code paths exercised. No separate reviewer available (solo, AI agent);
+per the Review Tiers table, findings are being presented to the human user for explicit permission before
+integration.
 
 ## Completion Record
 
-(pending)
+Reviewed and approved by the user on 2026-08-27 (solo, AI agent — no separate reviewer). The Gmail
+write-scope decision flagged in `docs/reverse-import-plan.md`'s "Decision needed" section was also
+approved in the same exchange, opening follow-up task T0002 for the actual implementation.
