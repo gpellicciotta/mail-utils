@@ -11,10 +11,11 @@ package/library, no server, no multi-tenant concerns.
 **Read-only is the default, not an absolute rule — but any exception is a deliberate, narrowly-scoped
 decision, never an oversight.** Every command except one only ever requests the `gmail.readonly` scope
 (`config.py`'s `SCOPES`) and never sends, labels, or deletes anything. The one exception is `store-in-gmail`
-(see `docs/reverse-import-plan.md` for the feasibility study behind it, and `docs/cli-spec.md` §2.9 for the
-command itself): it writes mail-utils messages back into a live Gmail mailbox via `users.messages.import`,
-sourced either from a `mail-utils export --format eml` directory or directly from the local database, and
-requests the additional `gmail.insert`/`gmail.labels` scopes (`config.py`'s `STORE_IN_GMAIL_SCOPES`) only
+(see `docs/reverse-import-plan.md` for the feasibility study behind it, and `docs/cli-spec.md`'s
+`store-in-gmail` entry for the command itself): it writes mail-utils messages back into a live Gmail
+mailbox via `users.messages.import`, sourced either from a `mail-utils export --format eml` directory
+or directly from the local database, and requests the additional `gmail.insert`/`gmail.labels` scopes
+(`config.py`'s `STORE_IN_GMAIL_SCOPES`) only
 when actually invoked — every other command's credential request is unaffected. Don't add further
 write/send/delete capability without explicitly discussing it first.
 
@@ -37,7 +38,7 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary),
   `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
   `store-in-gmail [<source_dir>]` (writes mail into a live Gmail mailbox — the one write-capable command,
-  see the read-only note above and docs/cli-spec.md §2.9; source is a `mail-utils export --format eml`
+  see the read-only note above and docs/cli-spec.md's `store-in-gmail` entry; source is a `mail-utils export --format eml`
   directory, or the local database directly if `source_dir` is omitted),
   `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or cron, dispatched by `platform.system()`;
   `mail-utils schedule --job-name <name> --interval-minutes N -- import|import-gmail|export [flags...]`, see docs/cli-spec.md for

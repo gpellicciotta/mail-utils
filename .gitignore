@@ -10,6 +10,10 @@ bin/
 .pytest_cache/
 .ruff_cache/
 
+# IDE/editor
+.vscode/
+.idea/
+
 # Task worktrees
 work/
 

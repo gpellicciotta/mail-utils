@@ -24,7 +24,13 @@ This document outlines the high-level vision, functional requirements, technical
 
 ## Technical Requirements & Invariants
 
-1. 3rd Party dependencies limited to: Python and SQLite
+1. Third-party dependencies are kept to the minimum actually needed - currently:
+   - `google-api-python-client`, `google-auth-httplib2`, `google-auth-oauthlib`: required to authenticate
+     against and call the Gmail API (`import-gmail`, `store-in-gmail`); no pure-stdlib alternative exists
+     for OAuth 2.0 + the Gmail REST API.
+   - `PyYAML`: used only for `export --format md`'s YAML frontmatter (`safe_dump`); stdlib has no YAML
+     writer. All local archive parsing (Outlook PST, Thunderbird PCV/Mbox) remains zero-dependency, per the
+     "Zero Heavy External Dependencies" core principle above.
 2. All functionalities are covered by tests
 3. Project complies with [cross-project development guidelines](https://github.com/gpellicciotta/dev-guidelines)
 

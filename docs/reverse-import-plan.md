@@ -150,7 +150,7 @@ well-maintained free add-on. Worth a doc pointer, not code.
 ## Resolution
 
 All three open questions below were answered, and the resulting command shipped as T0002 — see
-`docs/cli-spec.md` §2.9 and `tasks/T0002-gmail-restore-import.md` for the implementation record. This
+`docs/cli-spec.md`'s `store-in-gmail` entry and `tasks/T0002-gmail-restore-import.md` for the implementation record. This
 section is kept as the historical record of the decision; treat the CLI spec as authoritative for current
 behavior.
 

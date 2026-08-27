@@ -4,7 +4,7 @@ This document details the read-only implementation of the `[MS-PST]` specificati
 
 ---
 
-## 1. Overview & Architecture
+## Overview & Architecture
 
 The Outlook parser lives under `src/mail_utils/outlook/` and is implemented from scratch with zero third-party dependencies:
 
@@ -27,7 +27,7 @@ The Outlook parser lives under `src/mail_utils/outlook/` and is implemented from
 
 ---
 
-## 2. Key `[MS-PST]` Implementation Insights
+## Key `[MS-PST]` Implementation Insights
 
 1. **Table Context Row Matrix Resolution**:
    - In large Table Contexts spanning multiple blocks, each ~8KB block reserves padding at its tail.
@@ -43,7 +43,7 @@ The Outlook parser lives under `src/mail_utils/outlook/` and is implemented from
 
 ---
 
-## 3. Data Invariants & CLI Integration
+## Data Invariants & CLI Integration
 
 - **Message IDs**: Stored with `outlook:<Message-ID>` or a deterministic SHA-1 fallback.
 - **Labels**: PST folder paths (e.g. `Inbox/Projects`) are mapped to `labels` rows and stored in `messages.label_ids`.
@@ -55,7 +55,7 @@ The Outlook parser lives under `src/mail_utils/outlook/` and is implemented from
 
 ---
 
-## 4. Out of Scope
+## Out of Scope
 
 - ANSI (32-bit legacy) PST format (only modern Unicode 64-bit PSTs supported).
 - `NDB_CRYPT_CYCLIC` obfuscation.

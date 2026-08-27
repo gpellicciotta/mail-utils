@@ -4,9 +4,9 @@ This document covers setup, building, testing, linting, packaging, and CI/CD inf
 
 ---
 
-## 1. Local Environment & Dependencies
+## Local Environment & Dependencies
 
-`mail-utils` requires Python 3.11+ and uses a standard `src/` layout. All project dependencies and tool configurations are defined in [`pyproject.toml`](../pyproject.toml). There is no separate `requirements.txt`.
+`mail-utils` requires Python 3.10+ and uses a standard `src/` layout. All project dependencies and tool configurations are defined in [`pyproject.toml`](../pyproject.toml). There is no separate `requirements.txt`.
 
 ### Bootstrap Setup
 
@@ -28,7 +28,7 @@ python scripts/bootstrap-dev-environment.py
 
 ---
 
-## 2. Directory Layout & Data Separation
+## Directory Layout & Data Separation
 
 The repository strictly separates code, configuration, local databases, and runtime logs:
 
@@ -57,7 +57,7 @@ mail-utils/
 
 ---
 
-## 3. Testing
+## Testing
 
 The test suite uses `pytest` and contains unit tests, command tests, and integration tests with anonymized fixtures.
 
@@ -78,7 +78,7 @@ The test suite uses `pytest` and contains unit tests, command tests, and integra
 
 ---
 
-## 4. Linting & Formatting
+## Linting & Formatting
 
 Code formatting and linting are handled by `ruff` with a maximum line length of 132 characters (configured in `pyproject.toml`).
 
@@ -98,7 +98,7 @@ Code formatting and linting are handled by `ruff` with a maximum line length of 
 
 ---
 
-## 5. Building & Packaging
+## Building & Packaging
 
 Build distribution artifacts (Source Distribution `.tar.gz` and Pure Python Wheel `.whl`):
 
@@ -113,19 +113,18 @@ The resulting packages will be placed in `dist/`:
 
 ---
 
-## 6. Continuous Integration (CI)
+## Continuous Integration (CI)
 
-GitHub Actions runs automated checks on every push and pull request via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml):
+GitHub Actions runs automated checks on every push and pull request via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), on Ubuntu with Python 3.11:
 
-1. **Environment Matrix**: Python 3.11, 3.12, 3.13 on Ubuntu and Windows.
-2. **Lint Check**: `ruff check .`
-3. **Format Check**: `ruff format --check .`
-4. **Test Suite**: `pytest`
-5. **Package Build**: `python -m build`
+- **Lint Check**: `ruff check .`
+- **Format Check**: `ruff format --check .`
+- **Test Suite**: `pytest`
+- **Package Build**: `python -m build`
 
 ---
 
-## 7. Development Guidelines
+## Development Guidelines
 
 This project adheres to the [cross-project development guidelines](https://github.com/gpellicciotta/dev-guidelines) including coding standards, task coordination protocols, and CLI standards.
 

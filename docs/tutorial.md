@@ -4,7 +4,7 @@ A complete walkthrough for a first-time user, demonstrating setup, ingestion, se
 
 ---
 
-## 1. Sanity-Check the Installation
+## Sanity-Check the Installation
 
 ```powershell
 .venv\Scripts\mail-utils --version
@@ -16,7 +16,7 @@ A complete walkthrough for a first-time user, demonstrating setup, ingestion, se
 
 ---
 
-## 2. Ingest Messages
+## Ingest Messages
 
 ### A. Smart Unified Import
 `mail-utils import` automatically recognizes the archive format or falls back to Gmail:
@@ -52,7 +52,7 @@ Add `--recursive` (or `-r`) to unpack and index nested email attachments.
 
 ---
 
-## 3. Search Emails with FTS5
+## Search Emails with FTS5
 
 Instant full-text keyword search across subjects, bodies, senders, and recipients:
 
@@ -64,7 +64,7 @@ Instant full-text keyword search across subjects, bodies, senders, and recipient
 
 ---
 
-## 4. Explore Offline Database Statistics
+## Explore Offline Database Statistics
 
 ```powershell
 .venv\Scripts\mail-utils stats
@@ -79,7 +79,7 @@ Scope stats with local filters:
 
 ---
 
-## 5. Export Messages to Disk
+## Export Messages to Disk
 
 ### Markdown with YAML Frontmatter
 ```powershell
@@ -95,7 +95,7 @@ Messages are organized chronologically into `<output_dir>\<YYYY>\<MM>\<msg_id>.(
 
 ---
 
-## 6. Schedule Recurring Imports
+## Schedule Recurring Imports
 
 Register a recurring 30-minute sync task:
 

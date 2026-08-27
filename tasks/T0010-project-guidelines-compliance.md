@@ -1,6 +1,6 @@
 # T0010: Bring the project into full compliance with dev-guidelines and python-project-template
 
-- **Status:** active
+- **Status:** Completed
 - **Owner:** claude
 - **Started:** 2026-08-27
 - **Branch:** task/T0010-project-guidelines-compliance
@@ -32,11 +32,17 @@ Findings from the audit, all to be fixed in this task:
 4. `docs/index.md` skips a heading level (H1 straight to H3 for "Core Documentation" / "Design & Technical
    Plans" / "Root References") - violates markdown-guidelines.md's "maintain a logical heading hierarchy
    without skipping levels". Bump those three to H2.
-5. `docs/cli-spec.md` (`## 1. Global Invocations...`, `### 2.1 import`, etc.) and `docs/devops.md`
-   (`## 1. Local Environment...` through `## 7. Development Guidelines`) use numbered headings throughout -
-   violates markdown-guidelines.md's explicit "Avoid headers starting with numbers" rule. Strip the
-   numbering from every heading in both files (checked: no anchor links elsewhere reference these headings
-   by their numbered text, so this is safe).
+5. `docs/cli-spec.md`, `docs/devops.md`, `docs/pst-support-plan.md`, `docs/thunderbird-import-plan.md`, and
+   `docs/tutorial.md` all use numbered headings throughout (`## 1. ...`, `### 2.1 ...`) - violates
+   markdown-guidelines.md's explicit "Avoid headers starting with numbers" rule. Strip the numbering from
+   every heading in all five files (README.md's apparent matches are shell comments inside a code fence,
+   not real headings - left alone). `docs/cli-spec.md`'s numbered `store-in-gmail` section (was `### 2.9`)
+   was referenced by exact section number ("§2.9") from four other places (`CLAUDE.md` x2,
+   `docs/reverse-import-plan.md`, `tasks/T0002-gmail-restore-import.md`) - updated all four to reference it
+   by name instead of number so they don't go stale.
+   Also: `docs/devops.md`'s CI section claimed a "Python 3.11, 3.12, 3.13 on Ubuntu and Windows" matrix that
+   doesn't exist - `.github/workflows/ci.yml` only ever ran a single Ubuntu/3.11 job. Corrected the doc to
+   describe the actual job instead of fabricating a matrix to match the false claim.
 6. `docs/requirements.md`'s "Technical Requirements & Invariants" claims "3rd Party dependencies limited
    to: Python and SQLite" - factually wrong today: `pyproject.toml` depends on `google-api-python-client`,
    `google-auth-httplib2`, `google-auth-oauthlib` (Gmail API access), and `PyYAML` (Markdown export
@@ -71,15 +77,17 @@ numbered-heading scan afterward to confirm the fixes stuck.
 
 ## Implementation Checklist
 
-- [ ] Fix `docs/devops.md` Python version text (item 1)
-- [ ] Add `authors` to `pyproject.toml` (item 2)
-- [ ] Add `classifiers` to `pyproject.toml` (item 3)
-- [ ] Fix `docs/index.md` heading levels (item 4)
-- [ ] Strip numbered headings from `docs/cli-spec.md` and `docs/devops.md` (item 5)
-- [ ] Correct `docs/requirements.md`'s dependency claim and justify each real dependency (item 6)
-- [ ] Add `.vscode/`/`.idea/` to `.gitignore` (item 7)
-- [ ] Log the python-project-template CI/version-mismatch finding in that repo's own `TODO.md`
-- [ ] Re-run `ruff check .`, `ruff format --check .`, `pytest -q`
+- [x] Fix `docs/devops.md` Python version text (item 1)
+- [x] Add `authors` to `pyproject.toml` (item 2)
+- [x] Add `classifiers` to `pyproject.toml` (item 3)
+- [x] Fix `docs/index.md` heading levels (item 4)
+- [x] Strip numbered headings from all 5 affected docs, fix the CI-matrix claim, fix the 4 stale `§2.9`
+      references (item 5)
+- [x] Correct `docs/requirements.md`'s dependency claim and justify each real dependency (item 6)
+- [x] Add `.vscode/`/`.idea/` to `.gitignore` (item 7)
+- [x] Log the python-project-template CI/version-mismatch finding in that repo's own `TODO.md` (edited only
+      - not committed there; that repo's own commit/push needs its own separate approval)
+- [x] Re-run `ruff check .`, `ruff format --check .`, `pytest -q`
 
 ## Test Strategy
 
@@ -95,11 +103,30 @@ python-project-template's `TODO.md`.
 ## Progress Log
 
 - 2026-08-27: Task created from the promoted A0008, scope defined from audit findings above.
+- 2026-08-27: All 7 scope items fixed in `./work/T0010-project-guidelines-compliance`. While re-scanning
+  after the cli-spec.md/devops.md heading fix, found the same numbered-heading violation also present in
+  `docs/pst-support-plan.md`, `docs/thunderbird-import-plan.md`, and `docs/tutorial.md` - fixed those too
+  rather than leaving a partial pass. Also found and fixed: `docs/devops.md`'s CI section claimed a
+  3-version/2-OS matrix that never existed in `ci.yml`; four files held a `§2.9` reference to `cli-spec.md`
+  that would have gone stale once that heading's numbering was removed. Logged the python-project-template
+  finding in that repo's `TODO.md` (edit only, not committed - separate repo, separate approval needed).
 
 ## Validation Record
 
-(not yet recorded)
+- `ruff check .`: All checks passed.
+- `ruff format --check .`: all files already formatted.
+- `pytest -q`: 152 passed, 2 skipped (the 2 skips are the local-fixture-file integration tests, which skip
+  whenever the untracked personal `.pst`/`.pcv` fixtures aren't present locally - expected in a fresh
+  worktree, not a regression; same 2 skip in the primary checkout when those files are absent there too).
+- Re-ran the heading-hierarchy scan and the numbered-heading grep across all docs after the fix: zero
+  remaining violations (README.md's numeric `#` matches are shell comments inside a code fence, confirmed
+  not real headings).
+- Reviewer: solo AI agent, no PR - summary presented to the user for explicit permission before merging,
+  per the "No PR, solo, AI Agent" review tier.
 
 ## Completion Record
 
-(not yet recorded)
+- **Completed:** 2026-08-27
+- **Summary:** Fixed all 7 audited compliance gaps against dev-guidelines/python-project-template, plus 3
+  additional numbered-heading violations and a stale CI-matrix claim found during re-verification. Logged
+  one cross-project finding in python-project-template's own TODO.md.

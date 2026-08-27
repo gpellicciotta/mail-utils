@@ -4,7 +4,7 @@ This document defines the command-line interface, subcommands, options, exit cod
 
 ---
 
-## 1. Global Invocations & Flags
+## Global Invocations & Flags
 
 ```powershell
 mail-utils [--version] [--verbose] [<command>] [<args>...]
@@ -21,9 +21,9 @@ mail-utils [--version] [--verbose] [<command>] [<args>...]
 
 ---
 
-## 2. Subcommand Specifications
+## Subcommand Specifications
 
-### 2.1 `import`
+### `import`
 Unified, smart import command. Automatically identifies the source format if a path is provided, or synchronizes with Gmail if no path is given.
 
 ```powershell
@@ -41,7 +41,7 @@ mail-utils import [<source_path>] [--filter <query>] [-r|--recursive] [--db <pat
 
 ---
 
-### 2.2 `import-gmail`
+### `import-gmail`
 Dedicated subcommand to ingest new messages from Gmail via the Gmail API.
 
 ```powershell
@@ -54,7 +54,7 @@ mail-utils import-gmail [--filter <query>] [-r|--recursive] [--db <path>]
 
 ---
 
-### 2.3 `import-pst` (alias: `import-outlook`)
+### `import-pst` (alias: `import-outlook`)
 Ingests messages and folder hierarchies from a Microsoft Outlook `.pst` file.
 
 ```powershell
@@ -68,7 +68,7 @@ mail-utils import-outlook <pst_path> [-r|--recursive] [--db <path>]
 
 ---
 
-### 2.4 `import-thunderbird` (alias: `import-pcv`)
+### `import-thunderbird` (alias: `import-pcv`)
 Ingests messages from a Mozilla Thunderbird backup (`.pcv`, `.zip`) or profile directory.
 
 ```powershell
@@ -82,7 +82,7 @@ mail-utils import-pcv <archive_path> [-r|--recursive] [--db <path>]
 
 ---
 
-### 2.5 `search`
+### `search`
 Full-text searches indexed messages using SQLite `FTS5`.
 
 ```powershell
@@ -95,7 +95,7 @@ mail-utils search <query> [-n|--limit <N>] [--db <path>]
 
 ---
 
-### 2.6 `stats`
+### `stats`
 Displays offline summary statistics from the local database.
 
 ```powershell
@@ -107,7 +107,7 @@ mail-utils stats [--filter <filter>] [--db <path>]
 
 ---
 
-### 2.7 `export`
+### `export`
 Exports messages to disk as Markdown (`.md`) or standard MIME (`.eml`) files.
 
 ```powershell
@@ -121,7 +121,7 @@ mail-utils export <output_dir> [-f|--format {md,eml}] [--filter <filter>] [--db 
 
 ---
 
-### 2.8 `schedule` / `unschedule`
+### `schedule` / `unschedule`
 Registers and manages recurring scheduled tasks (Windows Task Scheduler or cron).
 
 ```powershell
@@ -137,7 +137,7 @@ mail-utils unschedule [--job-name <name>]
 
 ---
 
-### 2.9 `store-in-gmail`
+### `store-in-gmail`
 Writes mail-utils messages into a live Gmail mailbox - either from a `mail-utils export --format eml`
 directory, or directly from the local database. Unlike every other command, this one requests write-capable
 OAuth scopes (`gmail.insert`, `gmail.labels`) on top of the usual read-only `gmail.readonly` - see
@@ -181,7 +181,7 @@ header.
 
 ---
 
-## 3. Local Filter Grammar Reference
+## Local Filter Grammar Reference
 
 The local `--filter` syntax used by `stats` and `export` supports:
 - `label:<name>` (e.g. `label:INBOX`, `label:"Work/Projects"`)
@@ -197,7 +197,7 @@ The local `--filter` syntax used by `stats` and `export` supports:
 
 ---
 
-## 4. Output & Logging Conventions
+## Output & Logging Conventions
 
 - **Console Output**: Clean, human-readable text without timestamp or `[INFO]` log prefixes.
 - **Log File (`logs/mail-utils.log`)**: Full dual-logged output with UTC timestamps and log levels. Multi-line records are indented to match the header width.

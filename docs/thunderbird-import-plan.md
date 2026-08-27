@@ -4,7 +4,7 @@ This document details the design and implementation of Mozilla Thunderbird archi
 
 ---
 
-## 1. Thunderbird Archive Structure
+## Thunderbird Archive Structure
 
 Thunderbird profiles and MozBackup `.pcv` files use a standard ZIP layout:
 - **`Mail/`**: Local Folders and POP3 accounts (e.g. `Mail/Local Folders/`).
@@ -15,7 +15,7 @@ Thunderbird profiles and MozBackup `.pcv` files use a standard ZIP layout:
 
 ---
 
-## 2. Architecture & Design
+## Architecture & Design
 
 ### Module Structure under `src/mail_utils/thunderbird/`
 - **`archive.py`**: Abstraction over `.pcv` (ZIP) archives and filesystem directory trees. Provides streaming extraction of Mbox stores into temporary files.
@@ -37,7 +37,7 @@ Thunderbird profiles and MozBackup `.pcv` files use a standard ZIP layout:
 
 ---
 
-## 3. CLI Command
+## CLI Command
 
 ```powershell
 mail-utils import-thunderbird <archive_or_directory_path> [--db <path>] [-r]

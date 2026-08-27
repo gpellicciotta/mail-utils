@@ -59,7 +59,7 @@ Final scope, after two rounds of user feedback expanded it well beyond the origi
 - Tests (`tests/test_gmail_client.py`, `tests/test_cli.py`): mock the Gmail service; cover label
   resolution/creation, idempotency, `--dry-run`, `--filter`, `--max-messages` + resumability, the tracking
   label, and the backoff/throttle helpers directly.
-- Docs: `README.md`, `CLAUDE.md` (Commands + Architecture), `docs/cli-spec.md` §2.9, `docs/requirements.md`,
+- Docs: `README.md`, `CLAUDE.md` (Commands + Architecture), `docs/cli-spec.md`'s `store-in-gmail` entry, `docs/requirements.md`,
   `docs/reverse-import-plan.md` (Open questions resolved), `CHANGELOG.md` `vNext`, `TODO.md` entry removed
   on completion.
 

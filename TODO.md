@@ -15,8 +15,6 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [~] T0010 project-guidelines-compliance  @claude
-
 ---
 
 ### Backlog
