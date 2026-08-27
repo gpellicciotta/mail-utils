@@ -9,16 +9,17 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0003
+**Next ID:** 0005
 
 ---
 
 ## Next Milestone
 
-*(no active tasks)*
+- [ ] A0003 Ensure all scripts comply with the guidelines
 
 ---
 
 ### Backlog
 
 - [~] T0002 gmail-restore-import @claude
+- [ ] T0004 capture-attachment-content
