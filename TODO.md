@@ -9,7 +9,7 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0014
+**Next ID:** 0015
 
 ---
 
@@ -19,6 +19,7 @@ An overview of all tasks and their planning.
 
 ### Backlog
 
+- [ ] T0014 preserve-html-body-and-inline-images
 - [ ] A0006 (needs T0013) Verify store-in-gmail end-to-end against a real (disposable/sandbox) Gmail account
       T0002 shipped with only mocked-service unit tests (no real Gmail account touched in CI, by design).
       Before relying on store-in-gmail against any real mailbox, run it end-to-end against a disposable or
