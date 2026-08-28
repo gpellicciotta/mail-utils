@@ -71,14 +71,14 @@ folded in here rather than done as a quick standalone edit.
   `store-in-gmail` — otherwise the first real `store-in-gmail` run against that account upgrades scope on
   its own via `auth.py::get_credentials`'s existing re-consent behavior, unchanged.
 - **`--db` becomes a directory, not a file.** `--db <dir>` creates `<dir>` if missing and scopes both the
-  database and the attachment cache inside it (default remains `data/`, i.e. `data/gmail.db` +
-  `data/attachments/`, when `--db` is omitted). This directly fixes a latent gap in the current code:
-  `config.py`'s `ATTACHMENTS_DIR` is a single fixed global path today with **no** `--db`-style override, so
-  two different databases already selected via `--db` silently share one attachment cache; scoping
-  attachments inside the same directory as the database they belong to closes that. The on-disk filename
-  used for the database itself inside that directory is not yet pinned down — keeping it `gmail.db` (i.e.
-  `<dir>/gmail.db` + `<dir>/attachments/`) is the default assumption here since it's the least churn, but
-  flag this for a final look before implementing since the user's own example used a different name.
+  database and the attachment cache inside it: `<dir>/mails.db` + `<dir>/attachments/` (default remains
+  `data/`, i.e. `data/mails.db` + `data/attachments/`, when `--db` is omitted). Renamed from `gmail.db` to
+  `mails.db` — the database isn't Gmail-specific (PST/Thunderbird imports land in it too), and `mails.db`
+  reads better as the generic per-directory filename now that `--db` addresses a directory rather than one
+  file. This directly fixes a latent gap in the current code: `config.py`'s `ATTACHMENTS_DIR` is a single
+  fixed global path today with **no** `--db`-style override, so two different databases already selected
+  via `--db` silently share one attachment cache; scoping attachments inside the same directory as the
+  database they belong to closes that.
 
 **Docs to update once implemented:**
 
@@ -106,29 +106,28 @@ None. Builds on the isolation groundwork and safety-net conventions established 
 
 ## Approach
 
-1. Confirm the database filename inside a `--db` directory (still open — see Scope) before implementing.
-2. Rename `config.py`'s `CREDENTIALS_PATH`/constant and underlying file to
+1. Rename `config.py`'s `CREDENTIALS_PATH`/constant and underlying file to
    `data/google-cloud-mail-utils-app-credentials.json`. Add account-file resolution (bare name vs.
    path-like value, `default-account.json` fallback) and directory-based `--db` resolution (database +
    `attachments/` both scoped inside it), with unit tests.
-3. Refactor `auth.py::get_credentials` to accept explicit `account_path`/`app_credentials_path` arguments
+2. Refactor `auth.py::get_credentials` to accept explicit `account_path`/`app_credentials_path` arguments
    instead of importing the flat module-level constants directly — the core change that makes per-account
    token files possible.
-4. Implement `prepare-gmail-account <name>` (account-path resolution, requires the app credential file,
+3. Implement `prepare-gmail-account <name>` (account-path resolution, requires the app credential file,
    runs consent, `--with-write` flag, prints the authenticated address), with tests.
-5. Thread `--account` through `import`, `import-gmail`, `store-in-gmail`, and `schedule`/`unschedule`;
+4. Thread `--account` through `import`, `import-gmail`, `store-in-gmail`, and `schedule`/`unschedule`;
    convert every command's existing `--db` handling to the new directory semantics
    (`import`, `import-gmail`, `import-pst`, `import-thunderbird`, `search`, `stats`, `export`,
    `store-in-gmail`).
-6. Parameterize `scripts/gmail-roundtrip-test.py`'s hardcoded `katsan.pellicciotta@gmail.com` `To:` address
+5. Parameterize `scripts/gmail-roundtrip-test.py`'s hardcoded `katsan.pellicciotta@gmail.com` `To:` address
    into a flag/argument.
-7. Update `README.md`, `docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md` per the Scope list above.
-8. Present findings/implementation to the user for review (solo, AI agent tier) before marking complete.
+6. Update `README.md`, `docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md` per the Scope list above.
+7. Present findings/implementation to the user for review (solo, AI agent tier) before marking complete.
 
 ## Implementation Checklist
 
-- [ ] Database filename inside a `--db` directory confirmed
-- [ ] App credential file renamed; account-file and directory-`--db` resolution implemented in `config.py`,
+- [ ] App credential file renamed; account-file and directory-`--db` (`mails.db` + `attachments/`)
+  resolution implemented in `config.py`,
   with tests
 - [ ] `get_credentials` takes explicit account/app-credential paths, with tests
 - [ ] `prepare-gmail-account <name>` implemented (default scope + `--with-write`), with tests
