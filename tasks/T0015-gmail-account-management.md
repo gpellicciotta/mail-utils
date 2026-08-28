@@ -1,4 +1,4 @@
-# T0015: Named Gmail account directories and a `prepare-gmail-account` command
+# T0015: Named Gmail account files and a `prepare-gmail-account` command
 
 - **Status:** available
 - **Owner:** none
@@ -11,10 +11,10 @@
 Give mail-utils a first-class, repeatable way to set up and switch between multiple named Gmail accounts
 (disposable test accounts, and eventually production), replacing today's ad hoc, worktree-only isolation
 mechanism (see `docs/devops.md`'s "Testing against a disposable account, isolated from production",
-written during **T0013**). Concretely: a dedicated CLI action that walks through getting a `credentials.json`
-+ `token.json` pair in place for one named account, and a storage layout that lets other commands
-(`import`, `import-gmail`, `store-in-gmail`, `schedule`, ...) point at a specific account by name instead of
-relying on which physical checkout/worktree they happen to run from.
+written during **T0013**). Concretely: a dedicated CLI action that produces one self-contained,
+per-account credential file, a `--account` flag other commands use to select which one to authenticate
+as, and a `--db` flag that scopes a run's database *and* attachment cache together — with account
+selection and data-storage location kept fully independent of each other.
 
 Also triggered by, and in scope for, a rename: the disposable test account used throughout T0013
 (`katsan.pellicciotta@gmail.com`) should become `tester.pellicciotta@gmail.com` going forward. How that
@@ -23,64 +23,74 @@ folded in here rather than done as a quick standalone edit.
 
 ## Scope
 
-**Decisions confirmed with the user (2026-08-28):**
+**Design (confirmed with the user on 2026-08-28):**
 
-- `tester.pellicciotta@gmail.com` is a brand-new, separate disposable account — not a rename/alias of
-  `katsan.pellicciotta@gmail.com`. It needs its own from-scratch setup (Cloud Console Test-user
-  whitelisting, fresh OAuth consent), same as `katsan.pellicciotta@gmail.com` originally did in T0013.
-  `katsan.pellicciotta@gmail.com` references already committed stay as an accurate historical record:
-  `tasks/T0013-gmail-e2e-safety-and-rollout.md` is a **completed** task's Progress Log / Validation
+- **Account rename:** `tester.pellicciotta@gmail.com` is a brand-new, separate disposable account — not a
+  rename/alias of `katsan.pellicciotta@gmail.com`. It needs its own from-scratch setup (Cloud Console
+  Test-user whitelisting, fresh OAuth consent), same as `katsan.pellicciotta@gmail.com` originally did in
+  T0013. `katsan.pellicciotta@gmail.com` references already committed stay as an accurate historical
+  record: `tasks/T0013-gmail-e2e-safety-and-rollout.md` is a **completed** task's Progress Log / Validation
   Record / Completion Record documenting what was actually run — left untouched. Only the live,
   forward-looking `scripts/gmail-roundtrip-test.py` (hardcodes `katsan.pellicciotta@gmail.com` as the
   seeded messages' `To:` address) gets updated — parameterized to accept the target account's address
   rather than hardcoding either one, so this doesn't recur next time an account changes.
-- Command shape: a flat `prepare-gmail-account <name>`, matching the existing flat command style
+- **Command shape:** a flat `prepare-gmail-account <name>`, matching the existing flat command style
   (`import`, `stats`, ...) rather than introducing a new `account` subcommand namespace.
-- Backward compatibility with today's flat, unnamed `data/credentials.json`/`data/token.json`/
+- **Backward compatibility** with today's flat, unnamed `data/credentials.json`/`data/token.json`/
   `data/gmail.db` layout is explicitly not a concern for this task — free to land the cleanest layout
   without a migration path or dual-mode fallback.
+- **Accounts and data storage are decoupled.** An account file identifies *who mail-utils authenticates
+  as*; `--db` identifies *where a run's data lives*. Neither implies the other — any account can be used
+  with any `--db` location, and switching database doesn't require switching account.
+- **App credential file** (the OAuth client secret identifying the *application*, not any one Google
+  account) is renamed from `data/credentials.json` to the more self-explanatory
+  `data/google-cloud-mail-utils-app-credentials.json`. It stays a single shared file — the same client
+  already consents multiple accounts today (T0013 reused it as-is for
+  `katsan.pellicciotta@gmail.com` alongside the production account) — obtained once via the Google Cloud
+  Console walkthrough already documented in `README.md`'s Setup section, which gets updated to reference
+  the new filename.
+- **Account file:** one self-contained JSON file per authorized Gmail account (structurally what
+  `token.json` holds today — the OAuth refresh/access token), named `<name>-account.json`. Default
+  location `data/<name>-account.json`; a value containing a path separator or explicit `.json` extension
+  is used verbatim as the file path instead (`--account a/b/c-account.json`). No directory nesting, no
+  bundled database/attachments — just the one file.
+- **`--account` flag**, added to every Gmail-API-touching command (`import`, `import-gmail`,
+  `store-in-gmail`, and whatever `schedule`/`unschedule` wrap that includes those):
+  - `--account xxx` -> `data/xxx-account.json`.
+  - `--account a/b/c-account.json` -> that exact path.
+  - Omitted -> falls back to `data/default-account.json` if it exists (no magic: "default" is just an
+    account name someone can choose to set up via `prepare-gmail-account default`, picked up
+    automatically only because it's the conventional fallback name); otherwise the command errors clearly,
+    asking for `--account` to be specified.
+- **`prepare-gmail-account <name>`:** resolves its target path the same way `--account` does, requires
+  `data/google-cloud-mail-utils-app-credentials.json` to already exist (clear error pointing at the docs
+  otherwise), runs the interactive consent flow, writes the resulting token to that account file, and
+  prints the authenticated address (via the existing `get_profile` call) so the user can eyeball-confirm
+  they signed into the intended account. Requests read-only `SCOPES` by default; a `--with-write` flag
+  requests `STORE_IN_GMAIL_SCOPES` instead, for accounts being set up specifically to test
+  `store-in-gmail` — otherwise the first real `store-in-gmail` run against that account upgrades scope on
+  its own via `auth.py::get_credentials`'s existing re-consent behavior, unchanged.
+- **`--db` becomes a directory, not a file.** `--db <dir>` creates `<dir>` if missing and scopes both the
+  database and the attachment cache inside it (default remains `data/`, i.e. `data/gmail.db` +
+  `data/attachments/`, when `--db` is omitted). This directly fixes a latent gap in the current code:
+  `config.py`'s `ATTACHMENTS_DIR` is a single fixed global path today with **no** `--db`-style override, so
+  two different databases already selected via `--db` silently share one attachment cache; scoping
+  attachments inside the same directory as the database they belong to closes that. The on-disk filename
+  used for the database itself inside that directory is not yet pinned down — keeping it `gmail.db` (i.e.
+  `<dir>/gmail.db` + `<dir>/attachments/`) is the default assumption here since it's the least churn, but
+  flag this for a final look before implementing since the user's own example used a different name.
 
-**Directory layout (recommended design, not yet confirmed):**
+**Docs to update once implemented:**
 
-```
-data/
-  credentials.json          # shared OAuth client secret (app-level, one Cloud project/client; unchanged)
-  accounts/
-    <name>/
-      token.json              # this account's OAuth token
-      gmail.db                # this account's default database (still overridable via --db)
-      attachments/             # this account's attachment cache
-  logs/
-    mail-utils.log            # stays global/shared - "Target account: ..." lines already disambiguate
-```
-
-Rationale: `credentials.json` is the OAuth *client* secret, not tied to any one Google account — the same
-client already consents multiple accounts today (T0013 reused it as-is for `katsan.pellicciotta@gmail.com`
-alongside the production account), so it stays a single shared file rather than being duplicated into every
-account directory. `token.json` + `gmail.db` + `attachments/` are the actually account-specific state, so
-each gets its own subdirectory under `data/accounts/<name>/` — this also fixes a latent gap in
-`config.py`'s current `ATTACHMENTS_DIR`: it's a fixed global constant today with no `--db`-style override,
-so two databases selected via `--db` already silently share one attachment cache; giving each account (and
-implicitly each `--db`) its own `attachments/` closes that. `--account <name>` becomes a new flag,
-resolved in `config.py` next to `--db`: when given, it sets the default `token.json`/`gmail.db`/
-`attachments/` paths to that account's subdirectory; an explicit `--db` on top still wins, same precedence
-`--db` already has today. Omitting `--account` keeps using the flat `data/token.json`/`data/gmail.db`/
-`data/attachments/` paths unchanged — useful for the single-account/production case that doesn't need this
-machinery, and free since back-compat isn't otherwise a constraint here.
-
-**Still open, needs a decision before/during implementation:**
-
-- **Scope requested at setup time:** `prepare-gmail-account <name>` always requests read-only `SCOPES` by
-  default (matching this project's "read-only is the default" principle), with a `--with-write` flag to
-  request `STORE_IN_GMAIL_SCOPES` directly for accounts destined for `store-in-gmail` testing — otherwise
-  the first `store-in-gmail` run against that account upgrades scope on its own via `auth.py::
-  get_credentials`'s existing re-consent behavior. Recommended default; not yet explicitly confirmed.
-- Threading `--account` through `schedule`/`unschedule` (a scheduled job needs to keep targeting the same
-  named account run after run) — mechanically straightforward once the flag exists elsewhere, but worth
-  calling out since scheduled jobs build and store a full command line.
-- **Docs to update once implemented:** `docs/devops.md`'s "Gmail Testing, Isolation, and Recovery" section
-  (the manual worktree-copy procedure gets replaced by pointing at `prepare-gmail-account`), `docs/
-  cli-spec.md` (new command/flag), `CLAUDE.md`, `README.md`.
+- `README.md`'s Setup walkthrough — the app-credential file's new name, and a pointer to
+  `prepare-gmail-account` for producing an account file (replacing/supplementing the one-time OAuth-consent
+  description currently there).
+- `docs/devops.md`'s "Gmail Testing, Isolation, and Recovery" section — the manual worktree-copy procedure
+  gets replaced by `prepare-gmail-account` + `--account`/`--db`; needs its own subsection explaining what an
+  account file is, how to obtain one, and why it's needed (the account-level authorization, distinct from
+  the app-level credential file), per the user's explicit ask for this to be documented clearly.
+- `docs/cli-spec.md` — new command, new `--account` flag, `--db`'s changed (directory) semantics.
+- `CLAUDE.md` — architecture notes for `config.py`/`auth.py`/`cli.py` once the refactor lands.
 
 ## Out of Scope
 
@@ -96,29 +106,36 @@ None. Builds on the isolation groundwork and safety-net conventions established 
 
 ## Approach
 
-1. Confirm the recommended directory layout and the still-open setup-scope default with the user.
-2. Implement `--account` resolution in `config.py` (default `token.json`/`gmail.db`/`attachments/` paths
-   under `data/accounts/<name>/` when given; `--db` still overrides on top), with unit tests. Refactor
-   `auth.py::get_credentials` to accept explicit `token_path`/`credentials_path` instead of importing the
-   flat module-level constants directly — the core change that makes per-account tokens possible.
-3. Implement `prepare-gmail-account <name>` (creates the account directory, requires the shared
-   `data/credentials.json` to already exist, runs consent scoped to that account's `token.json`, prints the
-   resulting email via `get_profile` for eyeball confirmation), with tests.
-4. Thread `--account` through `import`, `import-gmail`, `import-pst`, `import-thunderbird`, `search`,
-   `stats`, `export`, `store-in-gmail`, and `schedule`/`unschedule`.
-5. Parameterize `scripts/gmail-roundtrip-test.py`'s hardcoded `katsan.pellicciotta@gmail.com` `To:` address
+1. Confirm the database filename inside a `--db` directory (still open — see Scope) before implementing.
+2. Rename `config.py`'s `CREDENTIALS_PATH`/constant and underlying file to
+   `data/google-cloud-mail-utils-app-credentials.json`. Add account-file resolution (bare name vs.
+   path-like value, `default-account.json` fallback) and directory-based `--db` resolution (database +
+   `attachments/` both scoped inside it), with unit tests.
+3. Refactor `auth.py::get_credentials` to accept explicit `account_path`/`app_credentials_path` arguments
+   instead of importing the flat module-level constants directly — the core change that makes per-account
+   token files possible.
+4. Implement `prepare-gmail-account <name>` (account-path resolution, requires the app credential file,
+   runs consent, `--with-write` flag, prints the authenticated address), with tests.
+5. Thread `--account` through `import`, `import-gmail`, `store-in-gmail`, and `schedule`/`unschedule`;
+   convert every command's existing `--db` handling to the new directory semantics
+   (`import`, `import-gmail`, `import-pst`, `import-thunderbird`, `search`, `stats`, `export`,
+   `store-in-gmail`).
+6. Parameterize `scripts/gmail-roundtrip-test.py`'s hardcoded `katsan.pellicciotta@gmail.com` `To:` address
    into a flag/argument.
-6. Update `docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md`, `README.md` to reflect the new setup flow.
-7. Present findings/implementation to the user for review (solo, AI agent tier) before marking complete.
+7. Update `README.md`, `docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md` per the Scope list above.
+8. Present findings/implementation to the user for review (solo, AI agent tier) before marking complete.
 
 ## Implementation Checklist
 
-- [ ] Directory layout and setup-scope default confirmed with the user
-- [ ] `--account` resolution implemented in `config.py`; `get_credentials` takes explicit paths, with tests
-- [ ] `prepare-gmail-account <name>` implemented, with tests
-- [ ] `--account` threaded through the relevant existing commands
+- [ ] Database filename inside a `--db` directory confirmed
+- [ ] App credential file renamed; account-file and directory-`--db` resolution implemented in `config.py`,
+  with tests
+- [ ] `get_credentials` takes explicit account/app-credential paths, with tests
+- [ ] `prepare-gmail-account <name>` implemented (default scope + `--with-write`), with tests
+- [ ] `--account` threaded through Gmail-API commands; every command's `--db` converted to directory
+  semantics
 - [ ] `scripts/gmail-roundtrip-test.py`'s target address parameterized
-- [ ] Docs updated (`docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md`, `README.md`)
+- [ ] Docs updated (`README.md`, `docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md`)
 
 ## Test Strategy
 
@@ -128,9 +145,9 @@ end-to-end verification against a live disposable account is manual, same as T00
 
 ## Completion Criteria
 
-Design decisions are made and recorded here; the account directory layout and `prepare-gmail-account` (or
-decided equivalent) are implemented and tested; the rename is applied per the agreed approach; docs reflect
-the new setup flow; the user has reviewed and approved before integration.
+The account-file/app-credential-file split, `--account` resolution, and directory-based `--db` are
+implemented and tested; `prepare-gmail-account` works end-to-end; the rename is applied per the agreed
+approach; docs reflect the new setup flow; the user has reviewed and approved before integration.
 
 ## Progress Log
 
