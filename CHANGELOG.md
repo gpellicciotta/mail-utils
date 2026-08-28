@@ -12,7 +12,9 @@ A summarized overview of all changes, per version of this project.
 
 ---
 
-## vNext
+### vNext
+
+## v3.0.0 [2026-08-28]
 - BackEnd: Add `prepare-gmail-account` and `--account` to authorize and select between multiple named Gmail accounts.
 - BackEnd: [breaking] Rename the default database file to `mails.db` and change `--db` to a directory holding it plus the attachment cache.
 - BackEnd: [breaking] Rename the shared OAuth client credential file to `google-cloud-mail-utils-app-credentials.json`.
