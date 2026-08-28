@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS attachments (
     attachment_id  TEXT,
     filename       TEXT NOT NULL,
     mime_type      TEXT,
-    size           INTEGER
+    size           INTEGER,
+    content_sha256 TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_attachments_message_id
@@ -112,6 +113,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     _ensure_column(conn, "messages", "bcc", "TEXT")
     _ensure_column(conn, "messages", "internal_date_ms", "INTEGER")
     _ensure_column(conn, "messages", "body_mime_type", "TEXT")
+    _ensure_column(conn, "attachments", "content_sha256", "TEXT")
     _ensure_fts(conn)
     return conn
 
@@ -170,14 +172,27 @@ def upsert_addresses(conn: sqlite3.Connection, message_id: str, addresses: list)
 def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: list) -> None:
     """Replace message_id's rows in attachments with `attachments`.
 
-    Same delete-then-insert rationale as upsert_addresses.
+    Same delete-then-insert rationale as upsert_addresses. `content_sha256` is read via `.get()`
+    (defaulting to `None`) since only a caller that opted into `--with-attachments` sets it - every
+    other caller keeps passing plain metadata-only dicts unchanged.
     """
     conn.execute("DELETE FROM attachments WHERE message_id = ?", (message_id,))
     if attachments:
+        rows = [
+            {
+                "message_id": att["message_id"],
+                "attachment_id": att.get("attachment_id"),
+                "filename": att["filename"],
+                "mime_type": att.get("mime_type"),
+                "size": att.get("size"),
+                "content_sha256": att.get("content_sha256"),
+            }
+            for att in attachments
+        ]
         conn.executemany(
-            "INSERT INTO attachments (message_id, attachment_id, filename, mime_type, size) "
-            "VALUES (:message_id, :attachment_id, :filename, :mime_type, :size)",
-            attachments,
+            "INSERT INTO attachments (message_id, attachment_id, filename, mime_type, size, content_sha256) "
+            "VALUES (:message_id, :attachment_id, :filename, :mime_type, :size, :content_sha256)",
+            rows,
         )
     conn.commit()
 

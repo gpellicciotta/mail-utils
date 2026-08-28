@@ -3,6 +3,7 @@ import base64
 from mail_utils.gmail_client import (
     _extract_body_text,
     create_label,
+    fetch_attachment_content,
     import_message,
     parse_addresses,
     parse_attachments,
@@ -18,15 +19,28 @@ class _FakeExec:
         return self._result
 
 
+class _FakeAttachmentsResource:
+    def __init__(self):
+        self.get_calls = []
+
+    def get(self, userId, messageId, id):
+        self.get_calls.append({"userId": userId, "messageId": messageId, "id": id})
+        return _FakeExec({"size": 11, "data": _b64("attachment content")})
+
+
 class _FakeMessagesResource:
     def __init__(self):
         self.import_calls = []
+        self.attachments_resource = _FakeAttachmentsResource()
 
     def import_(self, userId, body, internalDateSource, neverMarkSpam):
         self.import_calls.append(
             {"userId": userId, "body": body, "internalDateSource": internalDateSource, "neverMarkSpam": neverMarkSpam}
         )
         return _FakeExec({"id": "new_gmail_id"})
+
+    def attachments(self):
+        return self.attachments_resource
 
 
 class _FakeLabelsResource:
@@ -243,6 +257,14 @@ def test_import_message_omits_label_ids_when_none_given():
     import_message(service, b"raw", label_ids=None)
     (call,) = service.users_resource.messages_resource.import_calls
     assert "labelIds" not in call["body"]
+
+
+def test_fetch_attachment_content_decodes_base64url_data():
+    service = _FakeService()
+    content = fetch_attachment_content(service, "msg1", "att1")
+    assert content == b"attachment content"
+    (call,) = service.users_resource.messages_resource.attachments_resource.get_calls
+    assert call == {"userId": "me", "messageId": "msg1", "id": "att1"}
 
 
 def test_create_label_calls_labels_create_with_name():

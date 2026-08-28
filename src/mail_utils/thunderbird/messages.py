@@ -165,8 +165,11 @@ def parse_addresses(raw_msg: email.message.Message) -> list[dict]:
     return rows
 
 
-def parse_attachments(raw_msg: email.message.Message) -> list[dict]:
-    """Extract metadata for every attachment into `attachments` table rows."""
+def parse_attachments(raw_msg: email.message.Message, with_content: bool = False) -> list[dict]:
+    """Extract metadata for every attachment into `attachments` table rows. When `with_content` is
+    set, also include the decoded bytes under "content" - `get_payload(decode=True)` already decodes
+    them to compute `size`, so this adds no extra I/O over the metadata-only pass, just keeps what
+    would otherwise be discarded."""
     msg_id = make_message_id(raw_msg)
     rows = []
     if raw_msg.is_multipart():
@@ -183,6 +186,7 @@ def parse_attachments(raw_msg: email.message.Message) -> list[dict]:
                         "filename": decoded_fn,
                         "mime_type": part.get_content_type(),
                         "size": size,
+                        "content": payload if with_content else None,
                     }
                 )
     return rows

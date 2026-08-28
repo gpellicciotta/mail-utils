@@ -1,4 +1,5 @@
 import argparse
+import base64
 import email
 import logging
 from datetime import datetime
@@ -10,7 +11,7 @@ import pytest
 import yaml
 from googleapiclient.errors import HttpError
 
-from mail_utils import cli
+from mail_utils import attachment_store, cli
 from mail_utils.cli import (
     _eml_tree_candidates,
     _gmail_call_with_backoff,
@@ -482,6 +483,51 @@ def test_run_store_in_gmail_filter_restricts_database_source(tmp_path, monkeypat
     assert "Filter matched 1 messages" in out
 
 
+def test_run_store_in_gmail_from_database_includes_real_attachment_content(tmp_path, monkeypatch, capsys):
+    """store-in-gmail's DB-sourced path builds its candidate via the same _build_eml_message() export
+    uses, so a captured attachment (--with-attachments at import time) must ride along as a real MIME
+    part, not just the metadata-only X-Mail-Utils-Attachment header."""
+    _no_sleep(monkeypatch)
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+
+    digest = attachment_store.save(b"PDF bytes")
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message())
+    upsert_attachments(
+        conn,
+        "msg1",
+        [
+            {
+                "message_id": "msg1",
+                "attachment_id": "a1",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+                "size": 9,
+                "content_sha256": digest,
+            }
+        ],
+    )
+    conn.close()
+
+    fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
+    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, filter=None, max_messages=None))
+
+    (import_call,) = fake_service.users_resource.messages_resource.import_calls
+    stored_msg = email.message_from_bytes(base64.urlsafe_b64decode(import_call["body"]["raw"]), policy=email_policy_default)
+
+    assert "X-Mail-Utils-Attachment" not in stored_msg
+    attachment_parts = list(stored_msg.iter_attachments())
+    assert len(attachment_parts) == 1
+    assert attachment_parts[0].get_filename() == "report.pdf"
+    assert attachment_parts[0].get_content() == b"PDF bytes"
+
+
 def test_import_pst_subcommand_routes_to_run_import_pst():
     args = build_parser().parse_args(["import-pst", "archive.pst"])
     assert args.command == "import-pst"
@@ -758,6 +804,83 @@ def test_export_writes_eml_format_with_headers_and_body(tmp_path, monkeypatch):
     assert msg["X-Mail-Utils-Attachment"] == "report.pdf (type=application/pdf; size=2048)"
     assert msg.get_content_type() == "text/plain"
     assert msg.get_content().strip() == "Body text"
+
+
+def test_export_eml_attaches_real_content_when_present(tmp_path, monkeypatch):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+
+    digest = attachment_store.save(b"PDF bytes")
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message())
+    upsert_attachments(
+        conn,
+        "msg1",
+        [
+            {
+                "message_id": "msg1",
+                "attachment_id": "a1",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+                "size": 9,
+                "content_sha256": digest,
+            }
+        ],
+    )
+    conn.close()
+
+    output_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+
+    written = output_dir / "2019" / "08" / "msg1.eml"
+    msg = email.message_from_bytes(written.read_bytes(), policy=email_policy_default)
+
+    assert "X-Mail-Utils-Attachment" not in msg
+    attachment_parts = list(msg.iter_attachments())
+    assert len(attachment_parts) == 1
+    assert attachment_parts[0].get_filename() == "report.pdf"
+    assert attachment_parts[0].get_content() == b"PDF bytes"
+    assert msg.get_body(preferencelist=("plain",)).get_content().strip() == "Body text"
+
+
+def test_export_md_writes_sidecar_attachments_directory_when_content_present(tmp_path, monkeypatch):
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+
+    digest = attachment_store.save(b"PDF bytes")
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message())
+    upsert_attachments(
+        conn,
+        "msg1",
+        [
+            {
+                "message_id": "msg1",
+                "attachment_id": "a1",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+                "size": 9,
+                "content_sha256": digest,
+            }
+        ],
+    )
+    conn.close()
+
+    output_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter=None))
+
+    sidecar_file = output_dir / "2019" / "08" / "msg1.attachments" / "report.pdf"
+    assert sidecar_file.read_bytes() == b"PDF bytes"
+
+    raw = (output_dir / "2019" / "08" / "msg1.md").read_text(encoding="utf-8")
+    front = raw.split("---\n", 2)[1]
+    frontmatter = yaml.safe_load(front)
+    assert frontmatter["attachments"] == [{"filename": "report.pdf", "mime_type": "application/pdf", "size": 9}]
+    assert "content_sha256" not in str(frontmatter)
 
 
 def test_export_writes_eml_format_html_body(tmp_path, monkeypatch):

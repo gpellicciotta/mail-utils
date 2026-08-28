@@ -50,6 +50,10 @@ You can also use the explicit format subcommands:
 
 Add `--recursive` (or `-r`) to unpack and index nested email attachments.
 
+Add `--with-attachments` to also fetch and store each attachment's actual content (not just its
+filename/type/size), content-addressed under `data/attachments/`. Off by default - it adds an extra
+API call/read per attachment plus disk space (see `docs/cli-spec.md` and README's "Database contents").
+
 ---
 
 ## Search Emails with FTS5
@@ -92,6 +96,9 @@ Scope stats with local filters:
 ```
 
 Messages are organized chronologically into `<output_dir>\<YYYY>\<MM>\<msg_id>.(md|eml)`.
+
+If a message's attachments were imported with `--with-attachments`, their content comes back out too:
+a real MIME part in the `.eml` file, or a `<msg_id>.attachments\` sidecar folder next to the `.md` file.
 
 ---
 

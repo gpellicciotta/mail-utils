@@ -6,6 +6,7 @@ DATA_DIR = BASE_DIR / "data"
 CREDENTIALS_PATH = DATA_DIR / "credentials.json"
 TOKEN_PATH = DATA_DIR / "token.json"
 DB_PATH = DATA_DIR / "gmail.db"
+ATTACHMENTS_DIR = DATA_DIR / "attachments"
 LOG_DIR = BASE_DIR / "logs"
 LOG_PATH = LOG_DIR / "mail-utils.log"
 

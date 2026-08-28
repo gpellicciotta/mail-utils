@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 from googleapiclient.errors import HttpError
 
+from . import attachment_store
 from .auth import get_credentials
 from .config import BASE_DIR, CREDENTIALS_PATH, DB_PATH, LOG_DIR, LOG_PATH, STORE_IN_GMAIL_SCOPES, TOKEN_PATH
 from .db import (
@@ -41,6 +42,7 @@ from .gmail_client import (
     HistoryExpiredError,
     build_gmail_service,
     create_label,
+    fetch_attachment_content,
     fetch_message,
     get_current_history_id,
     get_profile,
@@ -135,24 +137,56 @@ def _setup_logging() -> None:
     logger.addHandler(console_handler)
 
 
-def _process_gmail_msg(service, conn, msg_id: str, recursive: bool) -> int:
+def _attach_content_to_store(attachments: list) -> None:
+    """For any attachment row carrying decoded bytes under "content" (PST/Thunderbird's
+    --with-attachments opt-in), persist those bytes to the content-addressed attachment store and
+    replace them with the resulting content_sha256 - the database itself never sees raw bytes, only
+    the hash. A no-op for rows with no "content" key or a `None` value (the --with-attachments-off
+    default, or an attachment whose bytes couldn't be resolved)."""
+    for att in attachments:
+        content = att.pop("content", None)
+        if content is not None:
+            att["content_sha256"] = attachment_store.save(content)
+
+
+def _fetch_and_store_gmail_attachment_content(service, gmail_message_id: str, attachments: list) -> None:
+    """Fetch and persist each attachment's bytes via the Gmail API, setting content_sha256 on each
+    row in place. `gmail_message_id` must be the real (unprefixed) Gmail id the attachmentId values
+    are scoped to - for messages extracted from a message/rfc822 attachment (--recursive), that's
+    still the *parent* message's id, not the synthesized sub-message id."""
+    for att in attachments:
+        attachment_id = att.get("attachment_id")
+        if not attachment_id:
+            continue
+        content = fetch_attachment_content(service, gmail_message_id, attachment_id)
+        att["content_sha256"] = attachment_store.save(content)
+
+
+def _process_gmail_msg(service, conn, msg_id: str, recursive: bool, with_attachments: bool = False) -> int:
     raw = fetch_message(service, msg_id)
     parsed = parse_message(raw)
     upsert_message(conn, parsed)
     upsert_addresses(conn, parsed["id"], parse_addresses(raw))
-    upsert_attachments(conn, parsed["id"], parse_attachments(raw))
+    attachments = parse_attachments(raw)
+    if with_attachments:
+        _fetch_and_store_gmail_attachment_content(service, msg_id, attachments)
+    upsert_attachments(conn, parsed["id"], attachments)
     count = 1
     if recursive:
         for sub in gmail_extract_attached_messages(raw):
             sub_parsed = parse_message(sub)
             upsert_message(conn, sub_parsed)
             upsert_addresses(conn, sub_parsed["id"], parse_addresses(sub))
-            upsert_attachments(conn, sub_parsed["id"], parse_attachments(sub))
+            sub_attachments = parse_attachments(sub)
+            if with_attachments:
+                # attachmentId is scoped to the real parent message (msg_id), not sub's synthetic id.
+                _fetch_and_store_gmail_attachment_content(service, msg_id, sub_attachments)
+            upsert_attachments(conn, sub_parsed["id"], sub_attachments)
             count += 1
     return count
 
 
-def _full_sync(service, conn, start_time: float, recursive: bool = False) -> int:
+def _full_sync(service, conn, start_time: float, recursive: bool = False, with_attachments: bool = False) -> int:
     logger.info("Running full sync (no prior sync state found)")
     profile = get_profile(service)
     history_id = profile["historyId"]
@@ -166,7 +200,7 @@ def _full_sync(service, conn, start_time: float, recursive: bool = False) -> int
         )
     count = 0
     for msg_id in list_all_message_ids(service):
-        count += _process_gmail_msg(service, conn, msg_id, recursive)
+        count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
         if count % PROGRESS_LOG_INTERVAL == 0:
             elapsed = time.time() - start_time
             if total:
@@ -184,12 +218,14 @@ def _full_sync(service, conn, start_time: float, recursive: bool = False) -> int
     return count
 
 
-def _incremental_sync(service, conn, last_history_id: str, start_time: float, recursive: bool = False) -> int:
+def _incremental_sync(
+    service, conn, last_history_id: str, start_time: float, recursive: bool = False, with_attachments: bool = False
+) -> int:
     logger.info("Running incremental sync from history ID %s", last_history_id)
     try:
         count = 0
         for msg_id in list_changed_message_ids(service, last_history_id):
-            count += _process_gmail_msg(service, conn, msg_id, recursive)
+            count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
             if count % PROGRESS_LOG_INTERVAL == 0:
                 elapsed = time.time() - start_time
                 logger.info("Incremental sync progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
@@ -198,10 +234,10 @@ def _incremental_sync(service, conn, last_history_id: str, start_time: float, re
         return count
     except HistoryExpiredError:
         logger.warning("Stored historyId expired; falling back to full sync")
-        return _full_sync(service, conn, start_time, recursive)
+        return _full_sync(service, conn, start_time, recursive, with_attachments)
 
 
-def _filtered_import(service, conn, query: str, start_time: float, recursive: bool = False) -> int:
+def _filtered_import(service, conn, query: str, start_time: float, recursive: bool = False, with_attachments: bool = False) -> int:
     """Import only messages matching Gmail's native `q` search syntax.
 
     Passed straight through to Gmail (full grammar, zero parsing on our
@@ -212,7 +248,7 @@ def _filtered_import(service, conn, query: str, start_time: float, recursive: bo
     logger.info("Running filtered import (sync_state is not touched)")
     count = 0
     for msg_id in list_all_message_ids(service, query=query):
-        count += _process_gmail_msg(service, conn, msg_id, recursive)
+        count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
         if count % PROGRESS_LOG_INTERVAL == 0:
             elapsed = time.time() - start_time
             logger.info("Filtered import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
@@ -230,6 +266,7 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
     start_time = time.time()
     db_path = _resolve_db_path(args)
     recursive = getattr(args, "recursive", False)
+    with_attachments = getattr(args, "with_attachments", False)
 
     logger.info("Mail Utils %s operation started: Gmail sync", version)
     logger.info("Database:  %s", db_path)
@@ -237,6 +274,8 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
         logger.info("Filter:    %s", args.filter)
     if recursive:
         logger.info("Recursive: True")
+    if with_attachments:
+        logger.info("With attachments: True")
 
     creds = get_credentials()
     service = build_gmail_service(creds)
@@ -245,13 +284,13 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
     upsert_labels(conn, list_labels(service))
 
     if getattr(args, "filter", None):
-        count = _filtered_import(service, conn, args.filter, start_time, recursive)
+        count = _filtered_import(service, conn, args.filter, start_time, recursive, with_attachments)
     else:
         last_history_id = get_sync_state(conn, "last_history_id")
         if last_history_id is None:
-            count = _full_sync(service, conn, start_time, recursive)
+            count = _full_sync(service, conn, start_time, recursive, with_attachments)
         else:
-            count = _incremental_sync(service, conn, last_history_id, start_time, recursive)
+            count = _incremental_sync(service, conn, last_history_id, start_time, recursive, with_attachments)
 
     conn.close()
     elapsed = time.time() - start_time
@@ -335,10 +374,12 @@ def _db_candidates(conn: sqlite3.Connection) -> Iterator[tuple[str, Path | None,
     needing a prior export step. Ordered by id for deterministic, resumable processing."""
     label_names_by_id = dict(conn.execute("SELECT id, name FROM labels"))
     attachments_by_message: dict[str, list] = {}
-    for message_id, filename, mime_type, size in conn.execute(
-        "SELECT message_id, filename, mime_type, size FROM attachments ORDER BY message_id"
+    for message_id, filename, mime_type, size, content_sha256 in conn.execute(
+        "SELECT message_id, filename, mime_type, size, content_sha256 FROM attachments ORDER BY message_id"
     ):
-        attachments_by_message.setdefault(message_id, []).append({"filename": filename, "mime_type": mime_type, "size": size})
+        attachments_by_message.setdefault(message_id, []).append(
+            {"filename": filename, "mime_type": mime_type, "size": size, "content_sha256": content_sha256}
+        )
 
     rows = conn.execute(
         "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
@@ -638,12 +679,15 @@ def _run_import_pst(args: argparse.Namespace) -> None:
     start_time = time.time()
     db_path = _resolve_db_path(args)
     recursive = getattr(args, "recursive", False)
+    with_attachments = getattr(args, "with_attachments", False)
 
     logger.info("Mail Utils %s operation started: Outlook PST import", version)
     logger.info("Source:    %s", args.pst_path)
     logger.info("Database:  %s", db_path)
     if recursive:
         logger.info("Recursive: True")
+    if with_attachments:
+        logger.info("With attachments: True")
 
     conn = init_db(db_path)
 
@@ -660,7 +704,9 @@ def _run_import_pst(args: argparse.Namespace) -> None:
                 parsed = pst_parse_message(raw, label_id=label_id)
                 upsert_message(conn, parsed)
                 upsert_addresses(conn, parsed["id"], pst_parse_addresses(raw))
-                upsert_attachments(conn, parsed["id"], pst_parse_attachments(raw))
+                attachments = pst_parse_attachments(raw, pst=pst if with_attachments else None)
+                _attach_content_to_store(attachments)
+                upsert_attachments(conn, parsed["id"], attachments)
                 count += 1
                 if count % PROGRESS_LOG_INTERVAL == 0:
                     elapsed = time.time() - start_time
@@ -678,15 +724,17 @@ def _run_import_pst(args: argparse.Namespace) -> None:
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
 
 
-def _process_tb_message(conn, raw_msg, label_id, recursive: bool) -> int:
+def _process_tb_message(conn, raw_msg, label_id, recursive: bool, with_attachments: bool = False) -> int:
     parsed = tb_parse_message(raw_msg, label_id=label_id)
     upsert_message(conn, parsed)
     upsert_addresses(conn, parsed["id"], tb_parse_addresses(raw_msg))
-    upsert_attachments(conn, parsed["id"], tb_parse_attachments(raw_msg))
+    attachments = tb_parse_attachments(raw_msg, with_content=with_attachments)
+    _attach_content_to_store(attachments)
+    upsert_attachments(conn, parsed["id"], attachments)
     count = 1
     if recursive:
         for sub in tb_extract_attached_messages(raw_msg):
-            count += _process_tb_message(conn, sub, label_id, recursive=True)
+            count += _process_tb_message(conn, sub, label_id, recursive=True, with_attachments=with_attachments)
     return count
 
 
@@ -696,12 +744,15 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
     start_time = time.time()
     db_path = _resolve_db_path(args)
     recursive = getattr(args, "recursive", False)
+    with_attachments = getattr(args, "with_attachments", False)
 
     logger.info("Mail Utils %s operation started: Thunderbird archive import", version)
     logger.info("Source:    %s", args.archive_path)
     logger.info("Database:  %s", db_path)
     if recursive:
         logger.info("Recursive: True")
+    if with_attachments:
+        logger.info("With attachments: True")
 
     conn = init_db(db_path)
 
@@ -721,7 +772,7 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
             box = mailbox.mbox(temp_mbox)
             try:
                 for raw_msg in box:
-                    count += _process_tb_message(conn, raw_msg, label_id, recursive)
+                    count += _process_tb_message(conn, raw_msg, label_id, recursive, with_attachments)
                     if count % PROGRESS_LOG_INTERVAL == 0:
                         elapsed = time.time() - start_time
                         logger.info("Thunderbird import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
@@ -951,12 +1002,23 @@ def _export_message_md(
         "subject": subject,
         "labels": labels,
         "body_mime_type": body_mime_type,
-        "attachments": attachments,
+        "attachments": [
+            {"filename": a.get("filename"), "mime_type": a.get("mime_type"), "size": a.get("size")} for a in attachments
+        ]
+        or None,
     }
     frontmatter = {k: v for k, v in frontmatter.items() if v not in (None, [], "")}
     yaml_header = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
     content = f"---\n{yaml_header}---\n\n{body_text or ''}\n"
     target_file.write_text(content, encoding="utf-8")
+
+    content_attachments = [a for a in attachments if a.get("content_sha256")]
+    if content_attachments:
+        sidecar_dir = target_file.parent / f"{target_file.stem}.attachments"
+        sidecar_dir.mkdir(parents=True, exist_ok=True)
+        for att in content_attachments:
+            data = attachment_store.read(att["content_sha256"])
+            (sidecar_dir / (att.get("filename") or "attachment")).write_bytes(data)
 
 
 def _build_eml_message(
@@ -1000,24 +1062,42 @@ def _build_eml_message(
         msg["X-Mail-Utils-Thread-ID"] = thread_id
     if labels:
         msg["X-Mail-Utils-Labels"] = ", ".join(labels)
-    if attachments:
-        for att in attachments:
-            att_desc = att.get("filename", "")
-            mime = att.get("mime_type")
-            size = att.get("size")
-            meta = []
-            if mime:
-                meta.append(f"type={mime}")
-            if size is not None:
-                meta.append(f"size={size}")
-            if meta:
-                att_desc += f" ({'; '.join(meta)})"
-            msg["X-Mail-Utils-Attachment"] = att_desc
+
+    content_attachments = []
+    for att in attachments or []:
+        if att.get("content_sha256"):
+            # Attached as a real MIME part below, once the body exists - add_attachment() requires
+            # set_content() to have run first.
+            content_attachments.append(att)
+            continue
+        att_desc = att.get("filename", "")
+        mime = att.get("mime_type")
+        size = att.get("size")
+        meta = []
+        if mime:
+            meta.append(f"type={mime}")
+        if size is not None:
+            meta.append(f"size={size}")
+        if meta:
+            att_desc += f" ({'; '.join(meta)})"
+        msg["X-Mail-Utils-Attachment"] = att_desc
 
     if body_mime_type == "text/html":
         msg.set_content(body_text or "", subtype="html", charset="utf-8")
     else:
         msg.set_content(body_text or "", subtype="plain", charset="utf-8")
+
+    for att in content_attachments:
+        data = attachment_store.read(att["content_sha256"])
+        mime_type = att.get("mime_type") or "application/octet-stream"
+        maintype, _, subtype = mime_type.partition("/")
+        msg.add_attachment(
+            data,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=att.get("filename") or "attachment",
+        )
+
     return msg
 
 
@@ -1091,10 +1171,12 @@ def _run_export(args: argparse.Namespace) -> None:
     label_names = dict(cur.execute("SELECT id, name FROM labels"))
 
     attachments_by_message = {}
-    for message_id, filename, mime_type, size in cur.execute(
-        "SELECT message_id, filename, mime_type, size FROM attachments ORDER BY message_id"
+    for message_id, filename, mime_type, size, content_sha256 in cur.execute(
+        "SELECT message_id, filename, mime_type, size, content_sha256 FROM attachments ORDER BY message_id"
     ):
-        attachments_by_message.setdefault(message_id, []).append({"filename": filename, "mime_type": mime_type, "size": size})
+        attachments_by_message.setdefault(message_id, []).append(
+            {"filename": filename, "mime_type": mime_type, "size": size, "content_sha256": content_sha256}
+        )
 
     rows = cur.execute(
         "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
@@ -1423,6 +1505,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     db_help = "Path to the SQLite database (default: gmail_index.db in the project root)."
 
+    with_attachments_help = (
+        "Also fetch and store each attachment's actual content (not just filename/type/size) under "
+        "data/attachments/. Off by default: adds an extra API call/read per attachment and disk space."
+    )
+
     import_cmd = subparsers.add_parser(
         "import",
         help="Import mail from an archive file/directory, or from Gmail if no file is provided",
@@ -1440,6 +1527,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.add_argument(
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
+    import_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
     import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
@@ -1453,6 +1541,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_gmail_cmd.add_argument(
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
+    import_gmail_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
     import_gmail_cmd.add_argument("--db", help=db_help)
     import_gmail_cmd.set_defaults(func=_run_import_gmail)
     subcommand_parsers["import-gmail"] = import_gmail_cmd
@@ -1466,6 +1555,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_pst_cmd.add_argument(
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
+    import_pst_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
     import_pst_cmd.add_argument("--db", help=db_help)
     import_pst_cmd.set_defaults(func=_run_import_pst)
     subcommand_parsers["import-pst"] = import_pst_cmd
@@ -1480,6 +1570,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_tb_cmd.add_argument(
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
+    import_tb_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
     import_tb_cmd.add_argument("--db", help=db_help)
     import_tb_cmd.set_defaults(func=_run_import_thunderbird)
     subcommand_parsers["import-thunderbird"] = import_tb_cmd

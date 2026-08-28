@@ -3,7 +3,7 @@ import mailbox
 import zipfile
 from email.message import EmailMessage
 
-from mail_utils import cli
+from mail_utils import attachment_store, cli
 from mail_utils.cli import _run_import_thunderbird, build_parser
 from mail_utils.db import init_db
 from mail_utils.thunderbird.archive import is_mail_store_file, walk_folders
@@ -148,6 +148,10 @@ def test_parse_message_and_addresses_and_attachments():
     assert atts[0]["filename"] == "report.pdf"
     assert atts[0]["mime_type"] == "application/pdf"
     assert atts[0]["size"] == len(b"PDF content bytes")
+    assert atts[0]["content"] is None
+
+    atts_with_content = parse_attachments(msg, with_content=True)
+    assert atts_with_content[0]["content"] == b"PDF content bytes"
 
 
 def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path, monkeypatch):
@@ -205,3 +209,72 @@ def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path, monkeypatch):
     assert msg_count == 2
     assert label_count == 1
     assert addr_count == 4
+
+
+def test_import_thunderbird_with_attachments_flag_captures_content(tmp_path, monkeypatch):
+    db_path = tmp_path / "gmail.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+
+    raw_mbox = tmp_path / "raw.mbox"
+    mbox = mailbox.mbox(raw_mbox)
+    msg = EmailMessage()
+    msg["Message-ID"] = "<msg1@example.com>"
+    msg["Subject"] = "Has an attachment"
+    msg["From"] = "a@example.com"
+    msg["To"] = "b@example.com"
+    msg["Date"] = "Wed, 19 Aug 2026 10:00:00 +0000"
+    msg.set_content("Body text")
+    msg.add_attachment(b"PDF content bytes", maintype="application", subtype="pdf", filename="report.pdf")
+    mbox.add(msg)
+    mbox.close()
+
+    pcv_path = tmp_path / "backup.pcv"
+    with zipfile.ZipFile(pcv_path, "w") as z:
+        z.write(raw_mbox, "ImapMail/account.com/INBOX")
+        z.writestr("prefs.js", b"user_pref('mail', true);")
+
+    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_path), "--with-attachments"])
+    _run_import_thunderbird(args)
+
+    conn = init_db(db_path)
+    content_sha256, size = conn.execute("SELECT content_sha256, size FROM attachments").fetchone()
+    conn.close()
+
+    assert content_sha256 is not None
+    assert size == len(b"PDF content bytes")
+    assert attachment_store.read(content_sha256) == b"PDF content bytes"
+
+
+def test_import_thunderbird_without_with_attachments_flag_leaves_content_sha256_null(tmp_path, monkeypatch):
+    db_path = tmp_path / "gmail.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+
+    raw_mbox = tmp_path / "raw.mbox"
+    mbox = mailbox.mbox(raw_mbox)
+    msg = EmailMessage()
+    msg["Message-ID"] = "<msg1@example.com>"
+    msg["Subject"] = "Has an attachment"
+    msg["From"] = "a@example.com"
+    msg["To"] = "b@example.com"
+    msg["Date"] = "Wed, 19 Aug 2026 10:00:00 +0000"
+    msg.set_content("Body text")
+    msg.add_attachment(b"PDF content bytes", maintype="application", subtype="pdf", filename="report.pdf")
+    mbox.add(msg)
+    mbox.close()
+
+    pcv_path = tmp_path / "backup.pcv"
+    with zipfile.ZipFile(pcv_path, "w") as z:
+        z.write(raw_mbox, "ImapMail/account.com/INBOX")
+        z.writestr("prefs.js", b"user_pref('mail', true);")
+
+    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_path)])
+    _run_import_thunderbird(args)
+
+    conn = init_db(db_path)
+    (content_sha256,) = conn.execute("SELECT content_sha256 FROM attachments").fetchone()
+    conn.close()
+
+    assert content_sha256 is None
+    assert not (tmp_path / "attachments").exists()

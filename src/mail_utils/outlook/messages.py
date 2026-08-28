@@ -38,6 +38,8 @@ PROP_ATTACH_FILENAME = 0x3704
 PROP_ATTACH_LONG_FILENAME = 0x3707
 PROP_ATTACH_MIME_TAG = 0x370E
 PROP_ATTACH_SIZE = 0x0E20
+PROP_ATTACH_DATA_BINARY = 0x3701
+PROP_LTP_ROW_ID = 0x67F2  # an Attachment Table row's own attachment-object NID, [MS-PST] 2.4.6.1
 
 PTYPE_STRING = 0x001F  # UTF-16LE
 PTYPE_STRING8 = 0x001E  # codepage-dependent 8-bit text
@@ -53,6 +55,7 @@ class RawMessage:
     props: dict  # {prop_id: PSTProperty} from this message's own Property Context
     recipients: list = field(default_factory=list)  # Recipient Table rows, {prop_id: raw_bytes} each
     attachments: list = field(default_factory=list)  # Attachment Table rows, {prop_id: raw_bytes} each
+    bid_sub: int = 0  # the message's own subnode BTree bid - needed to fetch individual attachment content
 
 
 def fetch_message(pst: PSTFile, msg_nid: int) -> RawMessage:
@@ -73,7 +76,27 @@ def fetch_message(pst: PSTFile, msg_nid: int) -> RawMessage:
                 recipients = read_table_context(pst, sub_bid_data, sub_bid_sub)
             elif nid_type(nid) == NID_TYPE_ATTACHMENT_TABLE:
                 attachments = read_table_context(pst, sub_bid_data, sub_bid_sub)
-    return RawMessage(props=props, recipients=recipients, attachments=attachments)
+    return RawMessage(props=props, recipients=recipients, attachments=attachments, bid_sub=bid_sub)
+
+
+def fetch_attachment_content(pst: PSTFile, raw: RawMessage, attachment_row: dict) -> bytes | None:
+    """Fetch one attachment's actual bytes (PidTagAttachDataBinary) - a separate resolve + Property
+    Context read per attachment, since an Attachment Table row only carries summary properties.
+    `attachment_row` identifies which attachment via its own PidTagLtpRowId ([MS-PST] 2.4.6.1), the
+    same pattern tree.py uses to get a folder/message's own NID off its hierarchy/contents row -
+    except an attachment object is a subnode of its *message* (found via `pst.read_subnode`), not a
+    top-level NBT entry."""
+    row_id_bytes = attachment_row.get(PROP_LTP_ROW_ID)
+    if not row_id_bytes or not raw.bid_sub:
+        return None
+    attach_nid = struct.unpack_from("<I", row_id_bytes, 0)[0]
+    ref = pst.read_subnode(raw.bid_sub, attach_nid)
+    if ref is None:
+        return None
+    bid_data, bid_sub = ref
+    attach_props = read_property_context(pst, bid_data, bid_sub)
+    data_prop = attach_props.get(PROP_ATTACH_DATA_BINARY)
+    return data_prop.value if data_prop is not None else None
 
 
 # --- low-level property decoding ----------------------------------------------------------
@@ -286,7 +309,10 @@ def _recipient_table_summary(recipients: list) -> dict:
     return {role: ", ".join(values) or None for role, values in by_role.items()}
 
 
-def parse_attachments(raw: RawMessage) -> list:
+def parse_attachments(raw: RawMessage, pst: PSTFile | None = None) -> list:
+    """`pst`, when given, additionally fetches each attachment's actual bytes into a "content" key
+    via `fetch_attachment_content` - a separate resolve + read per attachment, so left out (`None`)
+    unless a caller actually wants content (see cli.py's `--with-attachments`)."""
     message_id = _make_id(raw.props)
     rows = []
     for row in raw.attachments:
@@ -302,6 +328,7 @@ def parse_attachments(raw: RawMessage) -> list:
                 "filename": filename_bytes.decode("utf-16-le", errors="replace"),
                 "mime_type": mime_bytes.decode("utf-16-le", errors="replace") if mime_bytes else None,
                 "size": struct.unpack_from("<i", size_bytes, 0)[0] if size_bytes else None,
+                "content": fetch_attachment_content(pst, raw, row) if pst is not None else None,
             }
         )
     return rows

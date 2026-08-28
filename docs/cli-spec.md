@@ -27,7 +27,7 @@ mail-utils [--version] [--verbose] [<command>] [<args>...]
 Unified, smart import command. Automatically identifies the source format if a path is provided, or synchronizes with Gmail if no path is given.
 
 ```powershell
-mail-utils import [<source_path>] [--filter <query>] [-r|--recursive] [--db <path>]
+mail-utils import [<source_path>] [--filter <query>] [-r|--recursive] [--with-attachments] [--db <path>]
 ```
 
 - `<source_path>`: Optional positional path to an Outlook `.pst` file, Thunderbird archive (`.pcv`, `.zip`), or Thunderbird profile folder.
@@ -37,6 +37,9 @@ mail-utils import [<source_path>] [--filter <query>] [-r|--recursive] [--db <pat
   - If an unsupported or single-message format (e.g. `.eml`, `.msg`, `.mbox`) is provided: reports a descriptive error explaining supported options.
 - `--filter <query>`: Server-side search filter when syncing from Gmail.
 - `-r`, `--recursive`: Recursively index attached email messages (`message/rfc822` / `.eml`).
+- `--with-attachments`: Also fetch and store each attachment's actual content (not just
+  filename/type/size) under `data/attachments/`, content-addressed by SHA-256. Off by default - adds
+  an extra API call/read per attachment plus disk space. See README's "Database contents" section.
 - `--db <path>`: Target SQLite database file (default: `data/gmail.db`).
 
 ---
@@ -45,11 +48,12 @@ mail-utils import [<source_path>] [--filter <query>] [-r|--recursive] [--db <pat
 Dedicated subcommand to ingest new messages from Gmail via the Gmail API.
 
 ```powershell
-mail-utils import-gmail [--filter <query>] [-r|--recursive] [--db <path>]
+mail-utils import-gmail [--filter <query>] [-r|--recursive] [--with-attachments] [--db <path>]
 ```
 
 - `--filter <query>`: Server-side search filter (Gmail `q` syntax). Forces a filtered listing without updating incremental sync state.
 - `-r`, `--recursive`: Recursively index attached email messages.
+- `--with-attachments`: Also fetch and store each attachment's actual content (see `import` above).
 - `--db <path>`: Target SQLite database file.
 
 ---
@@ -58,12 +62,13 @@ mail-utils import-gmail [--filter <query>] [-r|--recursive] [--db <path>]
 Ingests messages and folder hierarchies from a Microsoft Outlook `.pst` file.
 
 ```powershell
-mail-utils import-pst <pst_path> [-r|--recursive] [--db <path>]
-mail-utils import-outlook <pst_path> [-r|--recursive] [--db <path>]
+mail-utils import-pst <pst_path> [-r|--recursive] [--with-attachments] [--db <path>]
+mail-utils import-outlook <pst_path> [-r|--recursive] [--with-attachments] [--db <path>]
 ```
 
 - `<pst_path>`: Positional path to the Unicode `.pst` archive.
 - `-r`, `--recursive`: Recursively index attached email messages.
+- `--with-attachments`: Also fetch and store each attachment's actual content (see `import` above).
 - `--db <path>`: Target SQLite database file.
 
 ---
@@ -72,12 +77,13 @@ mail-utils import-outlook <pst_path> [-r|--recursive] [--db <path>]
 Ingests messages from a Mozilla Thunderbird backup (`.pcv`, `.zip`) or profile directory.
 
 ```powershell
-mail-utils import-thunderbird <archive_path> [-r|--recursive] [--db <path>]
-mail-utils import-pcv <archive_path> [-r|--recursive] [--db <path>]
+mail-utils import-thunderbird <archive_path> [-r|--recursive] [--with-attachments] [--db <path>]
+mail-utils import-pcv <archive_path> [-r|--recursive] [--with-attachments] [--db <path>]
 ```
 
 - `<archive_path>`: Positional path to `.pcv`/`.zip` file or Thunderbird profile folder.
 - `-r`, `--recursive`: Recursively index attached email messages.
+- `--with-attachments`: Also fetch and store each attachment's actual content (see `import` above).
 - `--db <path>`: Target SQLite database file.
 
 ---
@@ -118,6 +124,12 @@ mail-utils export <output_dir> [-f|--format {md,eml}] [--filter <filter>] [--db 
 - `-f`, `--format {md,eml}`: Export format (`md` default, or `eml`).
 - `--filter <filter>`: Local filter expression to restrict export scope.
 - `--db <path>`: Database to read from.
+
+If a message's attachment content was captured (via `--with-attachments` at import time), it's written back
+out too: `--format eml` attaches it as a real MIME part, `--format md` writes it into a
+`<message-file-stem>.attachments/` directory next to the `.md` file. An attachment with no captured
+content (an older sync, or one that ran without `--with-attachments`) falls back to metadata only, same as
+before this existed - see README's "Database contents" section.
 
 ---
 

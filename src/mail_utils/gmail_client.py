@@ -103,6 +103,15 @@ def fetch_message(service, msg_id: str) -> dict:
     return service.users().messages().get(userId="me", id=msg_id, format="full").execute()
 
 
+def fetch_attachment_content(service, message_id: str, attachment_id: str) -> bytes:
+    """Fetch one attachment's actual bytes via `users.messages.attachments.get` - a separate API
+    call per attachment (uses the `attachmentId` `parse_attachments` already captures), so a caller
+    only pays for it when it actually wants content (see cli.py's `--with-attachments`). `message_id`
+    must be the real (unprefixed) Gmail id the attachment belongs to."""
+    resp = service.users().messages().attachments().get(userId="me", messageId=message_id, id=attachment_id).execute()
+    return base64.urlsafe_b64decode(resp["data"])
+
+
 def import_message(service, raw_bytes: bytes, label_ids: list[str] | None = None) -> dict:
     """Write `raw_bytes` (a full RFC 5322 message) into the mailbox via
     `users.messages.import` - applies normal spam/classification scanning
