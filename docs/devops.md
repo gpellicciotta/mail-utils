@@ -47,13 +47,67 @@ mail-utils/
   tests/                    # Pytest test suite and fixtures
     fixtures/               # Anonymized sample files (PST, PCV)
   docs/                     # Technical specifications and design documents
-  data/                     # Gitignored - credentials, tokens, local SQLite databases
-    credentials.json        # Google Cloud OAuth client credentials
-    token.json              # Generated OAuth refresh/access token
-    gmail.db                # Local SQLite mail database
+  data/                     # Gitignored - credentials, account tokens, local SQLite databases
+    google-cloud-mail-utils-app-credentials.json  # Shared OAuth client secret (see below)
+    default-account.json    # An account's OAuth token - one file per account, see below
+    mails.db                # Local SQLite mail database (default location; see --db)
+    attachments/            # Attachment content cache (default location; see --db)
   logs/                     # Gitignored - runtime execution logs
     mail-utils.log          # Unified log file with UTC timestamps
 ```
+
+Account selection (`--account`) and data storage (`--db`) are independent of each other - see "Gmail
+Account Setup" below for what each file is and how to obtain it, and `docs/cli-spec.md` for the exact
+flag semantics.
+
+---
+
+## Gmail Account Setup
+
+Two different kinds of file are involved in authenticating against Gmail, and it's easy to conflate
+them - they're deliberately decoupled and serve different purposes:
+
+- **The app credential file** (`data/google-cloud-mail-utils-app-credentials.json`) identifies the
+  *mail-utils application itself* to Google. It's an OAuth 2.0 "Desktop app" client secret, created once
+  per installation in Google Cloud Console, and is **not tied to any specific Gmail account** - the same
+  file is reused every time you authorize a new account (test or production).
+- **An account file** (`data/<name>-account.json`, e.g. `data/default-account.json` or
+  `data/tester-account.json`) is the OAuth token proving mail-utils is authorized to act as *one specific
+  Gmail account*. Every account you want to use with mail-utils - a disposable test mailbox, your real
+  mailbox, or several of each - gets its own account file, produced by `mail-utils prepare-gmail-account`.
+
+### Obtaining the app credential file (one-time, per installation)
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a new project (or
+   select an existing one) - the exact name doesn't matter, e.g. "mail-utils".
+2. Under **APIs & Services → Library**, search for "Gmail API" and enable it for the project.
+3. Under **APIs & Services → OAuth consent screen**, configure the consent screen (User Type "External"
+   is fine for personal use). While the app is in **Testing** publishing status, only accounts explicitly
+   added under **Audience → Test users** can complete consent - add every Gmail account you intend to
+   authorize (test and production) to that list.
+4. Under **APIs & Services → Credentials**, click **Create Credentials → OAuth client ID**, choose
+   application type **Desktop app**, and create it.
+5. Download the resulting client secret JSON and save it as
+   `data/google-cloud-mail-utils-app-credentials.json` (create the `data/` directory if it doesn't exist
+   yet).
+
+This step only needs to be done once - every account file below reuses the same app credential file.
+
+### Obtaining an account file (once per Gmail account)
+
+```powershell
+# Read-only account (default) - suitable for import/search/stats/export
+.venv\Scripts\mail-utils prepare-gmail-account tester
+
+# Also request write-capable scopes up front, for an account meant to be used with store-in-gmail
+.venv\Scripts\mail-utils prepare-gmail-account tester --with-write
+```
+
+This opens a browser consent screen (sign in as the account you want to authorize), then saves the
+resulting token to `data/tester-account.json` and prints the authenticated address back, so you can
+confirm you signed into the account you meant to. Commands that talk to the Gmail API accept `--account
+<name>` to select which account file to use; omitting it falls back to `data/default-account.json` if
+that file exists.
 
 ---
 
@@ -133,20 +187,17 @@ any mailbox, including a real production one, with no special precautions.
 
 ### Testing against a disposable account, isolated from production
 
-`config.py`'s `BASE_DIR` is computed relative to `config.py`'s own file location, so any second checkout or
-git worktree of this repository automatically gets its own independent `data/` directory — separate
-`credentials.json`, `token.json`, and `gmail.db` from the main checkout, with no code changes or CLI flags
-needed. This is the isolation mechanism: **run test-account commands from a separate checkout/worktree,
-never from the one pointed at production.**
+Accounts are named and independent (see "Gmail Account Setup" above), so isolation from production no
+longer depends on which checkout/worktree a command happens to run from — it's just a matter of which
+`--account` you pass:
 
-To set one up:
-
-1. Create a worktree (or a second full checkout) and its own `.venv`, per the Bootstrap Setup above.
-2. Copy only `data/credentials.json` from the main checkout into the new one — this is the OAuth *client
-   secret*, which identifies the application, not any particular Google account, so it's safe to reuse.
-   Never copy `data/token.json` — that file is the authorization for one specific account.
-3. Run commands from inside the isolated checkout. The first `import-gmail` or `store-in-gmail` call
-   there will prompt a fresh browser consent screen — sign in as the **test** account, not production.
+1. Set up a disposable test account's account file once: `mail-utils prepare-gmail-account tester
+   --with-write` (drop `--with-write` if you don't need to test `store-in-gmail` against it). Sign in as
+   the **test** account, not production, at the browser consent screen.
+2. Pass `--account tester` on every command you run against it (`import-gmail --account tester`,
+   `store-in-gmail --account tester`, ...) - the production account's own `default-account.json` (or
+   whatever you've named it) is never touched. Pair it with `--db` pointed at a scratch directory too, if
+   you don't want test data mixed into your real database.
 
 The OAuth client itself may still be in Google Cloud Console's **Testing** publishing status, which
 restricts consent to accounts explicitly added under **APIs & Services → OAuth consent screen → Audience

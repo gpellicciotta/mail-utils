@@ -1,10 +1,10 @@
 # T0015: Named Gmail account files and a `prepare-gmail-account` command
 
-- **Status:** available
-- **Owner:** none
-- **Started:** —
-- **Branch:** —
-- **Worktree:** —
+- **Status:** Completed
+- **Owner:** claude
+- **Started:** 2026-08-28
+- **Branch:** task/T0015-gmail-account-management
+- **Worktree:** ./work/T0015-gmail-account-management
 
 ## Goal
 
@@ -126,15 +126,15 @@ None. Builds on the isolation groundwork and safety-net conventions established 
 
 ## Implementation Checklist
 
-- [ ] App credential file renamed; account-file and directory-`--db` (`mails.db` + `attachments/`)
+- [x] App credential file renamed; account-file and directory-`--db` (`mails.db` + `attachments/`)
   resolution implemented in `config.py`,
   with tests
-- [ ] `get_credentials` takes explicit account/app-credential paths, with tests
-- [ ] `prepare-gmail-account <name>` implemented (default scope + `--with-write`), with tests
-- [ ] `--account` threaded through Gmail-API commands; every command's `--db` converted to directory
+- [x] `get_credentials` takes explicit account/app-credential paths, with tests
+- [x] `prepare-gmail-account <name>` implemented (default scope + `--with-write`), with tests
+- [x] `--account` threaded through Gmail-API commands; every command's `--db` converted to directory
   semantics
-- [ ] `scripts/gmail-roundtrip-test.py`'s target address parameterized
-- [ ] Docs updated (`README.md`, `docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md`)
+- [x] `scripts/gmail-roundtrip-test.py`'s target address parameterized
+- [x] Docs updated (`README.md`, `docs/devops.md`, `docs/cli-spec.md`, `CLAUDE.md`)
 
 ## Test Strategy
 
@@ -150,6 +150,80 @@ approach; docs reflect the new setup flow; the user has reviewed and approved be
 
 ## Progress Log
 
+- 2026-08-28: Task claimed, worktree created, venv bootstrapped. Confirmed the design via chat with the
+  user (rename handling, decoupled account/data-storage model, `mails.db` filename) before starting.
+- 2026-08-28: Implemented `config.py`'s `resolve_account_path`/`resolve_db_dir`/`db_path_for`/
+  `attachments_dir_for` and `APP_CREDENTIALS_PATH`, replacing the old fixed `CREDENTIALS_PATH`/
+  `TOKEN_PATH`/`DB_PATH`/`ATTACHMENTS_DIR` constants. Refactored `auth.py::get_credentials` to take
+  explicit `account_path`/`app_credentials_path` arguments. Made `attachment_store.py` take a
+  `configure(attachments_dir)` call instead of importing a fixed constant, called once per CLI run from
+  `cli.py::_resolve_db_path` (which now resolves `--db` as a directory and configures the attachment
+  store as a side effect, so all 7 of its existing call sites across `cli.py` picked up correct
+  per-directory attachment scoping with no further changes needed at those sites).
+- 2026-08-28: Implemented `prepare-gmail-account <name>` (`--with-write` for
+  `STORE_IN_GMAIL_SCOPES`, read-only default) and threaded `--account` through `import`, `import-gmail`,
+  `store-in-gmail`. `schedule`/`unschedule` need no separate change since `schedule` already validates its
+  inner command against the same `build_parser()` that now includes `--account`. Updated `_run_import`'s
+  Gmail-fallback detection to check `APP_CREDENTIALS_PATH`/the resolved account file instead of the old
+  fixed paths.
+- 2026-08-28: Updated `scripts/migrate-gmail-id-prefix.py` (a separate one-off script, unaffected by the
+  `--db`-is-now-a-directory change since it has its own independent `--db` flag, but it imported the
+  now-removed `DB_PATH` constant for its default) and `scripts/gmail-roundtrip-test.py` (added `--account`/
+  `--to`, parameterizing the previously-hardcoded `katsan.pellicciotta@gmail.com` seed recipient).
+- 2026-08-28: Updated all affected tests (`test_config.py`, `test_auth.py`, `test_attachment_store.py`,
+  `test_cli.py`, `test_pst_integration.py`, `test_search.py`, `test_thunderbird.py`,
+  `test_thunderbird_integration.py`, `test_recursive_import.py`) to the new explicit-path/directory
+  conventions, replacing `monkeypatch.setattr(cli, "DB_PATH", ...)`-style patches (no longer possible,
+  since there's no fixed module constant to patch) with passing `db=str(tmp_path)` through
+  `argparse.Namespace` the same way real CLI invocations do. Full suite: 187 passed, 2 skipped.
+  `ruff check`/`ruff format --check` clean. Manually smoke-tested `prepare-gmail-account --help`,
+  `import-pst --db <dir>` (confirmed `<dir>/mails.db` created, `--db`'s own `--help` text correct), and
+  `stats --db <dir>` against the result.
+- 2026-08-28: Updated `README.md` (Database contents, Key Features, Quickstart), `docs/tutorial.md`
+  (Gmail sync now mentions `prepare-gmail-account` first), `docs/cli-spec.md` (new `prepare-gmail-account`
+  entry, `--account` on every Gmail-API command, `--db` semantics, new "Gmail Account Selection"/"Database
+  & Attachment Storage" reference sections), `docs/devops.md` (new "Gmail Account Setup" section with the
+  Google Cloud Console walkthrough for the app credential file plus the `prepare-gmail-account` walkthrough
+  for account files - filling a gap CLAUDE.md had pointed at README's "Setup" section for, which turned out
+  not to actually exist; replaced the old manual worktree-copy isolation procedure in "Gmail Testing,
+  Isolation, and Recovery" with the new named-account approach), and `CLAUDE.md`'s Architecture section
+  (`config.py`/`auth.py`/`attachment_store.py`/`cli.py` bullets, Conventions section). Added `CHANGELOG.md`
+  entries under `vNext`, two marked `[breaking]` (the `--db` directory change and the app-credential
+  rename).
+
 ## Validation Record
 
+- `pytest` (worktree venv): 187 passed, 2 skipped (same 2 pre-existing skips as before this task -
+  fixture-gated tests unrelated to this change).
+- `ruff check .`: all checks passed.
+- `ruff format --check .`: all files formatted (one file needed `ruff format .` during development; applied).
+- Manual smoke test: `mail-utils prepare-gmail-account --help` and `mail-utils import-gmail --help` show
+  the new `--account` flag; `mail-utils help` lists `prepare-gmail-account`; `mail-utils stats --db
+  ./mydata` against a nonexistent directory correctly reports "No database found at mydata\mails.db"
+  without creating anything; `mail-utils import-pst tests/fixtures/sample.pst --db <dir>
+  --with-attachments` creates `<dir>/mails.db` (confirmed via `ls`) and a subsequent `mail-utils stats
+  --db <dir>` against it reports the expected 2 messages/labels/senders.
+- No real Gmail API testing performed (no live account available in this environment) - `prepare-gmail-account`
+  and the `--account`-threaded consent flow are covered by unit tests with mocked credentials/API only,
+  matching this project's existing convention (see T0002) for anything requiring real OAuth consent.
+- No separate reviewer available (solo, AI agent) - per the Review Tiers table, findings are being
+  presented to the human user for explicit permission before integration.
+
 ## Completion Record
+
+Reviewed and approved by the user on 2026-08-28 (solo, AI agent — no separate reviewer available; the
+user confirmed integration directly after reviewing the implementation summary). Delivered: a
+`prepare-gmail-account` command and `--account` flag decoupling Gmail-account selection from where a
+run's data lives; a directory-based `--db` (`<dir>/mails.db` + `<dir>/attachments/`) that also closes a
+pre-existing gap where the attachment cache was a single fixed global path shared across every database;
+a renamed, clearly-documented shared app credential file
+(`data/google-cloud-mail-utils-app-credentials.json`); a new "Gmail Account Setup" section in
+`docs/devops.md` with the Google Cloud Console walkthrough this project's docs had never actually
+contained despite `CLAUDE.md` pointing at it; and a parameterized `scripts/gmail-roundtrip-test.py` no
+longer hardcoding the `katsan.pellicciotta@gmail.com` test address. No code changes were made to the
+completed **T0013** task file, since its Progress Log/Validation Record/Completion Record are an accurate
+historical account of what was actually run and rewriting them would misrepresent that record — per
+explicit user decision recorded in this task's Scope. Two `[breaking]`-tagged `CHANGELOG.md` entries cover
+the `--db` and app-credential-file renames. No real Gmail API testing was performed (no live account
+available in this environment); `prepare-gmail-account` and the consent-flow changes are covered by unit
+tests with mocked credentials only, consistent with this project's existing testing convention.

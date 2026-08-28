@@ -25,7 +25,18 @@ from googleapiclient.errors import HttpError
 
 from . import attachment_store
 from .auth import get_credentials
-from .config import BASE_DIR, CREDENTIALS_PATH, DB_PATH, LOG_DIR, LOG_PATH, STORE_IN_GMAIL_SCOPES, TOKEN_PATH
+from .config import (
+    APP_CREDENTIALS_PATH,
+    BASE_DIR,
+    LOG_DIR,
+    LOG_PATH,
+    SCOPES,
+    STORE_IN_GMAIL_SCOPES,
+    attachments_dir_for,
+    db_path_for,
+    resolve_account_path,
+    resolve_db_dir,
+)
 from .db import (
     get_sync_state,
     init_db,
@@ -268,8 +279,17 @@ def _filtered_import(service, conn, query: str, start_time: float, recursive: bo
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
-    db = getattr(args, "db", None)
-    return Path(db) if db else DB_PATH
+    """Resolve `--db` (a directory - see config.resolve_db_dir) to this run's database file, and
+    configure attachment_store to use that same directory's attachment cache as a side effect, so
+    every caller that touches attachment content is covered without threading the directory through
+    separately."""
+    db_dir = resolve_db_dir(getattr(args, "db", None))
+    attachment_store.configure(attachments_dir_for(db_dir))
+    return db_path_for(db_dir)
+
+
+def _resolve_account_path(args: argparse.Namespace) -> Path:
+    return resolve_account_path(getattr(args, "account", None))
 
 
 def _run_import_gmail(args: argparse.Namespace) -> None:
@@ -277,10 +297,12 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
+    account_path = _resolve_account_path(args)
     recursive = getattr(args, "recursive", False)
     with_attachments = getattr(args, "with_attachments", False)
 
     logger.info("Mail Utils %s operation started: Gmail sync", version)
+    logger.info("Account:   %s", account_path)
     logger.info("Database:  %s", db_path)
     if getattr(args, "filter", None):
         logger.info("Filter:    %s", args.filter)
@@ -289,7 +311,7 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
     if with_attachments:
         logger.info("With attachments: True")
 
-    creds = get_credentials()
+    creds = get_credentials(account_path)
     service = build_gmail_service(creds)
     conn = init_db(db_path)
 
@@ -307,6 +329,35 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
     conn.close()
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
+
+
+def _run_prepare_gmail_account(args: argparse.Namespace) -> None:
+    """Interactively authorize one Gmail account and save its resulting token to its account file
+    (see config.resolve_account_path), so other commands can select it later via --account. Requests
+    read-only SCOPES by default; --with-write additionally requests STORE_IN_GMAIL_SCOPES up front,
+    for accounts being set up specifically to test/use store-in-gmail."""
+    _setup_logging()
+    version = _get_version()
+    account_path = resolve_account_path(args.name)
+    with_write = getattr(args, "with_write", False)
+    scopes = STORE_IN_GMAIL_SCOPES if with_write else SCOPES
+
+    logger.info("Mail Utils %s operation started: Prepare Gmail account", version)
+    logger.info("Account:   %s", account_path)
+    logger.info("Scopes:    %s", ", ".join(scopes))
+
+    if not APP_CREDENTIALS_PATH.exists():
+        logger.info(
+            "Error: Missing %s. Download an OAuth 'Desktop app' client secret from Google Cloud "
+            "Console and save it there first - see docs/devops.md.",
+            APP_CREDENTIALS_PATH,
+        )
+        return
+
+    creds = get_credentials(account_path, scopes=scopes)
+    service = build_gmail_service(creds)
+    email = get_profile(service).get("emailAddress")
+    logger.info("Mail Utils %s operation ended: account %s authorized as %s", version, account_path, email)
 
 
 def _resolve_label_ids(service, label_names: list[str], cache: dict[str, str]) -> list[str]:
@@ -459,6 +510,7 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
+    account_path = _resolve_account_path(args)
     source_dir = Path(args.source_dir) if getattr(args, "source_dir", None) else None
     dry_run = getattr(args, "dry_run", False)
     filter_str = getattr(args, "filter", None)
@@ -466,6 +518,7 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
 
     logger.info("Mail Utils %s operation started: Store in Gmail", version)
     logger.info("Source:    %s", f"{source_dir} (EML export directory)" if source_dir else f"{db_path} (local database)")
+    logger.info("Account:   %s", account_path)
     logger.info("Database:  %s", db_path)
     if filter_str:
         logger.info("Filter:    %s", filter_str)
@@ -507,7 +560,7 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
     label_cache: dict[str, str] = {}
     run_label_id = None
     if not dry_run:
-        creds = get_credentials(STORE_IN_GMAIL_SCOPES)
+        creds = get_credentials(account_path, scopes=STORE_IN_GMAIL_SCOPES)
         service = build_gmail_service(creds)
         logger.info("Target account: %s", get_profile(service).get("emailAddress"))
         label_cache = {lbl["name"]: lbl["id"] for lbl in list_labels(service)}
@@ -630,15 +683,17 @@ def _run_import(args: argparse.Namespace) -> None:
 
     # When no source path is specified, try Gmail import if credentials exist
     if not source_path:
-        if CREDENTIALS_PATH.exists() or TOKEN_PATH.exists():
+        account_path = _resolve_account_path(args)
+        if APP_CREDENTIALS_PATH.exists() or account_path.exists():
             _run_import_gmail(args)
             return
 
         _setup_logging()
         logger.info(
             "Error: No import file specified and Gmail credentials not found at %s.\n"
-            "Provide an archive path (e.g. 'mail-utils import archive.pst') or set up Gmail credentials for 'mail-utils import-gmail'.",
-            CREDENTIALS_PATH,
+            "Provide an archive path (e.g. 'mail-utils import archive.pst') or run "
+            "'mail-utils prepare-gmail-account' to set up Gmail credentials for 'mail-utils import-gmail'.",
+            APP_CREDENTIALS_PATH,
         )
         return
 
@@ -1516,11 +1571,18 @@ def build_parser() -> argparse.ArgumentParser:
         'has:attachment, and bare words/"quoted phrases" (subject+body substring).'
     )
 
-    db_help = "Path to the SQLite database (default: gmail_index.db in the project root)."
+    db_help = "Directory to store this run's database (mails.db) and attachment cache (attachments/) in (default: data/)."
+
+    account_help = (
+        "Gmail account to authenticate as. A bare name resolves to <name>-account.json under data/; "
+        "a path (containing a separator or an explicit .json extension) is used as-is. Defaults to "
+        "data/default-account.json if it exists. See 'mail-utils prepare-gmail-account'."
+    )
 
     with_attachments_help = (
         "Also fetch and store each attachment's actual content (not just filename/type/size) under "
-        "data/attachments/. Off by default: adds an extra API call/read per attachment and disk space."
+        "the attachment cache inside --db's directory. Off by default: adds an extra API call/read "
+        "per attachment and disk space."
     )
 
     import_cmd = subparsers.add_parser(
@@ -1541,6 +1603,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
     import_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
+    import_cmd.add_argument("--account", help=account_help)
     import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
@@ -1555,9 +1618,26 @@ def build_parser() -> argparse.ArgumentParser:
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
     import_gmail_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
+    import_gmail_cmd.add_argument("--account", help=account_help)
     import_gmail_cmd.add_argument("--db", help=db_help)
     import_gmail_cmd.set_defaults(func=_run_import_gmail)
     subcommand_parsers["import-gmail"] = import_gmail_cmd
+
+    prepare_gmail_account_cmd = subparsers.add_parser(
+        "prepare-gmail-account",
+        help="Interactively authorize a Gmail account and save its credentials for later use with --account",
+    )
+    prepare_gmail_account_cmd.add_argument(
+        "name", help="Account name (saved as <name>-account.json under data/) or an explicit file path"
+    )
+    prepare_gmail_account_cmd.add_argument(
+        "--with-write",
+        action="store_true",
+        help="Also request write-capable scopes (gmail.insert, gmail.labels) up front, for an account "
+        "meant to be used with store-in-gmail. Default is read-only.",
+    )
+    prepare_gmail_account_cmd.set_defaults(func=_run_prepare_gmail_account)
+    subcommand_parsers["prepare-gmail-account"] = prepare_gmail_account_cmd
 
     import_pst_cmd = subparsers.add_parser(
         "import-pst",
@@ -1607,6 +1687,7 @@ def build_parser() -> argparse.ArgumentParser:
     store_in_gmail_cmd.add_argument(
         "--dry-run", action="store_true", help="Report what would be stored without contacting Gmail or requesting credentials"
     )
+    store_in_gmail_cmd.add_argument("--account", help=account_help)
     store_in_gmail_cmd.add_argument("--db", help=db_help)
     store_in_gmail_cmd.set_defaults(func=_run_store_in_gmail)
     subcommand_parsers["store-in-gmail"] = store_in_gmail_cmd

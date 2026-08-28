@@ -182,7 +182,7 @@ def test_gmail_recursive_import_with_attachments_uses_real_parent_message_id(tmp
 
     db_path = tmp_path / "test_gmail_rec_attachments.db"
     conn = init_db(db_path)
-    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+    attachment_store.configure(tmp_path / "attachments")
     monkeypatch.setattr("mail_utils.cli.fetch_message", lambda service, msg_id: raw_parent)
 
     fetch_calls = []

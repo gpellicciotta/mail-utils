@@ -315,28 +315,26 @@ def test_throttle_gmail_store_does_not_sleep_when_enough_time_passed(monkeypatch
     assert sleeps == []
 
 
-def test_run_store_in_gmail_reports_missing_source_dir(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "DB_PATH", tmp_path / "gmail_index.db")
-    _run_store_in_gmail(argparse.Namespace(source_dir=str(tmp_path / "missing"), dry_run=False))
+def test_run_store_in_gmail_reports_missing_source_dir(tmp_path, capsys):
+    _run_store_in_gmail(argparse.Namespace(source_dir=str(tmp_path / "missing"), dry_run=False, db=str(tmp_path)))
     assert "not found" in capsys.readouterr().out
 
 
-def test_run_store_in_gmail_reports_missing_database_when_source_omitted(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "DB_PATH", tmp_path / "gmail_index.db")
-    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False))
+def test_run_store_in_gmail_reports_missing_database_when_source_omitted(tmp_path, capsys):
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, db=str(tmp_path)))
     assert "No database found" in capsys.readouterr().out
 
 
 def test_run_store_in_gmail_dry_run_from_eml_tree_reports_without_touching_credentials(tmp_path, monkeypatch, capsys):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
     monkeypatch.setattr(cli, "get_credentials", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")))
 
     source_dir = tmp_path / "export"
     source_dir.mkdir()
     _write_eml_export(source_dir / "msg1.eml")
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=True, filter=None, max_messages=None))
+    _run_store_in_gmail(
+        argparse.Namespace(source_dir=str(source_dir), dry_run=True, filter=None, max_messages=None, db=str(tmp_path))
+    )
 
     out = capsys.readouterr().out
     assert "Would store" in out
@@ -344,15 +342,14 @@ def test_run_store_in_gmail_dry_run_from_eml_tree_reports_without_touching_crede
 
 
 def test_run_store_in_gmail_dry_run_from_database_reports_without_touching_credentials(tmp_path, monkeypatch, capsys):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
     monkeypatch.setattr(cli, "get_credentials", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")))
 
+    db_path = tmp_path / "mails.db"
     conn = init_db(db_path)
     upsert_message(conn, _sample_message())
     conn.close()
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=True, filter=None, max_messages=None))
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=True, filter=None, max_messages=None, db=str(tmp_path)))
 
     out = capsys.readouterr().out
     assert "Would store" in out
@@ -362,11 +359,10 @@ def test_run_store_in_gmail_dry_run_from_database_reports_without_touching_crede
 
 def test_run_store_in_gmail_end_to_end_stores_applies_tracking_label_and_skips_foreign(tmp_path, monkeypatch, capsys):
     _no_sleep(monkeypatch)
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    db_path = tmp_path / "mails.db"
 
     fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
-    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "get_credentials", lambda account_path, scopes=None: "fake-creds")
     monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
 
     source_dir = tmp_path / "export"
@@ -374,7 +370,9 @@ def test_run_store_in_gmail_end_to_end_stores_applies_tracking_label_and_skips_f
     _write_eml_export(source_dir / "msg1.eml", msg_id="msg1")
     (source_dir / "foreign.eml").write_bytes(b"From: a@example.com\r\nSubject: Not ours\r\n\r\nBody\r\n")
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+    _run_store_in_gmail(
+        argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None, db=str(tmp_path))
+    )
 
     conn = init_db(db_path)
     assert is_stored_in_gmail(conn, "msg1") is True
@@ -394,11 +392,10 @@ def test_run_store_in_gmail_end_to_end_stores_applies_tracking_label_and_skips_f
 
 def test_run_store_in_gmail_max_messages_stops_early_and_is_resumable(tmp_path, monkeypatch, capsys):
     _no_sleep(monkeypatch)
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    db_path = tmp_path / "mails.db"
 
     fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
-    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "get_credentials", lambda account_path, scopes=None: "fake-creds")
     monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
 
     source_dir = tmp_path / "export"
@@ -406,7 +403,9 @@ def test_run_store_in_gmail_max_messages_stops_early_and_is_resumable(tmp_path, 
     _write_eml_export(source_dir / "a-msg1.eml", msg_id="msg1")
     _write_eml_export(source_dir / "b-msg2.eml", msg_id="msg2")
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=1))
+    _run_store_in_gmail(
+        argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=1, db=str(tmp_path))
+    )
     first_out = capsys.readouterr().out
     assert "1 messages stored, 0 skipped" in first_out
     assert "Stopped after reaching --max-messages 1" in first_out
@@ -415,7 +414,9 @@ def test_run_store_in_gmail_max_messages_stops_early_and_is_resumable(tmp_path, 
     assert is_stored_in_gmail(conn, "msg1") is True
     assert is_stored_in_gmail(conn, "msg2") is False
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+    _run_store_in_gmail(
+        argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None, db=str(tmp_path))
+    )
     second_out = capsys.readouterr().out
     assert "1 messages stored, 1 skipped" in second_out
     assert "last message stored: msg2" in second_out
@@ -437,22 +438,24 @@ def test_run_store_in_gmail_max_messages_stops_early_and_is_resumable(tmp_path, 
 def test_run_store_in_gmail_starts_a_new_tracking_label_after_a_run_completes(tmp_path, monkeypatch, capsys):
     _no_sleep(monkeypatch)
     monkeypatch.setattr(cli, "datetime", _IncrementingClock())
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
 
     fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
-    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "get_credentials", lambda account_path, scopes=None: "fake-creds")
     monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
 
     source_dir = tmp_path / "export"
     source_dir.mkdir()
     _write_eml_export(source_dir / "msg1.eml", msg_id="msg1")
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+    _run_store_in_gmail(
+        argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None, db=str(tmp_path))
+    )
     capsys.readouterr()
 
     _write_eml_export(source_dir / "msg2.eml", msg_id="msg2")
-    _run_store_in_gmail(argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None))
+    _run_store_in_gmail(
+        argparse.Namespace(source_dir=str(source_dir), dry_run=False, filter=None, max_messages=None, db=str(tmp_path))
+    )
     capsys.readouterr()
 
     tracking_labels = {
@@ -465,8 +468,7 @@ def test_run_store_in_gmail_starts_a_new_tracking_label_after_a_run_completes(tm
 
 def test_run_store_in_gmail_filter_restricts_database_source(tmp_path, monkeypatch, capsys):
     _no_sleep(monkeypatch)
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message(id="msg1", subject="Work update"))
@@ -475,10 +477,12 @@ def test_run_store_in_gmail_filter_restricts_database_source(tmp_path, monkeypat
     conn.close()
 
     fake_service = _FakeService()
-    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "get_credentials", lambda account_path, scopes=None: "fake-creds")
     monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, filter="subject:Work", max_messages=None))
+    _run_store_in_gmail(
+        argparse.Namespace(source_dir=None, dry_run=False, filter="subject:Work", max_messages=None, db=str(tmp_path))
+    )
 
     conn = init_db(db_path)
     assert is_stored_in_gmail(conn, "msg1") is True
@@ -492,9 +496,8 @@ def test_run_store_in_gmail_from_database_includes_real_attachment_content(tmp_p
     uses, so a captured attachment (--with-attachments at import time) must ride along as a real MIME
     part, not just the metadata-only X-Mail-Utils-Attachment header."""
     _no_sleep(monkeypatch)
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
-    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+    db_path = tmp_path / "mails.db"
+    attachment_store.configure(tmp_path / "attachments")
 
     digest = attachment_store.save(b"PDF bytes")
 
@@ -517,10 +520,10 @@ def test_run_store_in_gmail_from_database_includes_real_attachment_content(tmp_p
     conn.close()
 
     fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}])
-    monkeypatch.setattr(cli, "get_credentials", lambda scopes: "fake-creds")
+    monkeypatch.setattr(cli, "get_credentials", lambda account_path, scopes=None: "fake-creds")
     monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
 
-    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, filter=None, max_messages=None))
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, filter=None, max_messages=None, db=str(tmp_path)))
 
     (import_call,) = fake_service.users_resource.messages_resource.import_calls
     stored_msg = email.message_from_bytes(base64.urlsafe_b64decode(import_call["body"]["raw"]), policy=email_policy_default)
@@ -745,9 +748,8 @@ def _sample_message(**overrides) -> dict:
     return msg
 
 
-def test_export_writes_year_month_bucketed_file_with_frontmatter(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_export_writes_year_month_bucketed_file_with_frontmatter(tmp_path):
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message())
@@ -760,7 +762,7 @@ def test_export_writes_year_month_bucketed_file_with_frontmatter(tmp_path, monke
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter=None, db=str(tmp_path)))
 
     written = output_dir / "2019" / "08" / "msg1.md"
     assert written.exists()
@@ -775,9 +777,8 @@ def test_export_writes_year_month_bucketed_file_with_frontmatter(tmp_path, monke
     assert body.strip() == "Body text"
 
 
-def test_export_writes_eml_format_with_headers_and_body(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_export_writes_eml_format_with_headers_and_body(tmp_path):
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message(cc="boss@example.com", bcc="audit@example.com"))
@@ -790,7 +791,7 @@ def test_export_writes_eml_format_with_headers_and_body(tmp_path, monkeypatch):
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None, db=str(tmp_path)))
 
     written = output_dir / "2019" / "08" / "msg1.eml"
     assert written.exists()
@@ -810,14 +811,13 @@ def test_export_writes_eml_format_with_headers_and_body(tmp_path, monkeypatch):
     assert msg.get_content().strip() == "Body text"
 
 
-def test_export_eml_subject_with_unicode_survives_repeated_export_round_trips(tmp_path, monkeypatch):
+def test_export_eml_subject_with_unicode_survives_repeated_export_round_trips(tmp_path):
     # Regression test: found via T0013's real Gmail round-trip testing. A Subject needing RFC 2047
     # encoding right after existing whitespace (e.g. "topic: 日本語") used to gain one extra space
     # every time it was exported/re-imported, because email.policy.default's header folding
     # duplicates the whitespace it folds on. Fixed by generating with utf8=True (raw UTF-8 headers,
     # no encoded-word folding needed) - this locks that in without requiring a real Gmail account.
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    db_path = tmp_path / "mails.db"
     # Long enough (with the "Subject: " prefix) to cross email.policy.default's ~78-char fold
     # threshold right at the space before the encoded word - that's specifically what triggers
     # the whitespace-duplication bug this test guards against; a shorter subject wouldn't fold at all.
@@ -828,7 +828,7 @@ def test_export_eml_subject_with_unicode_survives_repeated_export_round_trips(tm
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None, db=str(tmp_path)))
     written = output_dir / "2019" / "08" / "msg1.eml"
     msg = email.message_from_bytes(written.read_bytes(), policy=email_policy_default)
     assert str(msg["Subject"]) == subject
@@ -839,16 +839,15 @@ def test_export_eml_subject_with_unicode_survives_repeated_export_round_trips(tm
     upsert_message(conn, _sample_message(subject=str(msg["Subject"])))
     conn.close()
     output_dir_2 = tmp_path / "export2"
-    _run_export(argparse.Namespace(output_dir=str(output_dir_2), format="eml", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir_2), format="eml", filter=None, db=str(tmp_path)))
     written_2 = output_dir_2 / "2019" / "08" / "msg1.eml"
     msg_2 = email.message_from_bytes(written_2.read_bytes(), policy=email_policy_default)
     assert str(msg_2["Subject"]) == subject
 
 
-def test_export_eml_attaches_real_content_when_present(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
-    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+def test_export_eml_attaches_real_content_when_present(tmp_path):
+    db_path = tmp_path / "mails.db"
+    attachment_store.configure(tmp_path / "attachments")
 
     digest = attachment_store.save(b"PDF bytes")
 
@@ -871,7 +870,7 @@ def test_export_eml_attaches_real_content_when_present(tmp_path, monkeypatch):
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None, db=str(tmp_path)))
 
     written = output_dir / "2019" / "08" / "msg1.eml"
     msg = email.message_from_bytes(written.read_bytes(), policy=email_policy_default)
@@ -884,10 +883,9 @@ def test_export_eml_attaches_real_content_when_present(tmp_path, monkeypatch):
     assert msg.get_body(preferencelist=("plain",)).get_content().strip() == "Body text"
 
 
-def test_export_md_writes_sidecar_attachments_directory_when_content_present(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
-    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+def test_export_md_writes_sidecar_attachments_directory_when_content_present(tmp_path):
+    db_path = tmp_path / "mails.db"
+    attachment_store.configure(tmp_path / "attachments")
 
     digest = attachment_store.save(b"PDF bytes")
 
@@ -910,7 +908,7 @@ def test_export_md_writes_sidecar_attachments_directory_when_content_present(tmp
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter=None, db=str(tmp_path)))
 
     sidecar_file = output_dir / "2019" / "08" / "msg1.attachments" / "report.pdf"
     assert sidecar_file.read_bytes() == b"PDF bytes"
@@ -922,9 +920,8 @@ def test_export_md_writes_sidecar_attachments_directory_when_content_present(tmp
     assert "content_sha256" not in str(frontmatter)
 
 
-def test_export_writes_eml_format_html_body(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_export_writes_eml_format_html_body(tmp_path):
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(
@@ -940,7 +937,7 @@ def test_export_writes_eml_format_html_body(tmp_path, monkeypatch):
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None, db=str(tmp_path)))
 
     written = output_dir / "2019" / "08" / "msg_html.eml"
     assert written.exists()
@@ -952,37 +949,34 @@ def test_export_writes_eml_format_html_body(tmp_path, monkeypatch):
     assert msg["Date"] == "Mon, 19 Aug 2019 16:00:00 +0000"
 
 
-def test_export_eml_buckets_missing_internal_date_as_unknown(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_export_eml_buckets_missing_internal_date_as_unknown(tmp_path):
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message(internal_date_ms=None))
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None, db=str(tmp_path)))
 
     assert (output_dir / "unknown" / "msg1.eml").exists()
 
 
-def test_export_buckets_missing_internal_date_as_unknown(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_export_buckets_missing_internal_date_as_unknown(tmp_path):
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message(internal_date_ms=None))
     conn.close()
 
     output_dir = tmp_path / "export"
-    _run_export(argparse.Namespace(output_dir=str(output_dir), filter=None))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), filter=None, db=str(tmp_path)))
 
     assert (output_dir / "unknown" / "msg1.md").exists()
 
 
-def _two_message_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def _two_message_db(tmp_path) -> Path:
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message(id="msg1", subject="Work update"))
@@ -999,51 +993,50 @@ def _two_message_db(tmp_path, monkeypatch):
     return db_path
 
 
-def test_export_filter_only_writes_matching_messages(tmp_path, monkeypatch):
-    _two_message_db(tmp_path, monkeypatch)
+def test_export_filter_only_writes_matching_messages(tmp_path):
+    _two_message_db(tmp_path)
     output_dir = tmp_path / "export"
 
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter="has:attachment"))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter="has:attachment", db=str(tmp_path)))
 
     written = list(output_dir.rglob("*.md"))
     assert len(written) == 1
     assert written[0].name == "msg1.md"
 
 
-def test_export_eml_filter_only_writes_matching_messages(tmp_path, monkeypatch):
-    _two_message_db(tmp_path, monkeypatch)
+def test_export_eml_filter_only_writes_matching_messages(tmp_path):
+    _two_message_db(tmp_path)
     output_dir = tmp_path / "export"
 
-    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter="has:attachment"))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter="has:attachment", db=str(tmp_path)))
 
     written = list(output_dir.rglob("*.eml"))
     assert len(written) == 1
     assert written[0].name == "msg1.eml"
 
 
-def test_export_invalid_filter_does_not_crash(tmp_path, monkeypatch, capsys):
-    _two_message_db(tmp_path, monkeypatch)
+def test_export_invalid_filter_does_not_crash(tmp_path, capsys):
+    _two_message_db(tmp_path)
     output_dir = tmp_path / "export"
 
-    _run_export(argparse.Namespace(output_dir=str(output_dir), filter="is:unread"))
+    _run_export(argparse.Namespace(output_dir=str(output_dir), filter="is:unread", db=str(tmp_path)))
 
     assert "Invalid --filter" in capsys.readouterr().out
     assert not output_dir.exists()
 
 
-def test_stats_filter_restricts_total_count(tmp_path, monkeypatch, capsys):
-    _two_message_db(tmp_path, monkeypatch)
+def test_stats_filter_restricts_total_count(tmp_path, capsys):
+    _two_message_db(tmp_path)
 
-    _run_stats(argparse.Namespace(filter="from:jane"))
+    _run_stats(argparse.Namespace(filter="from:jane", db=str(tmp_path)))
 
     out = capsys.readouterr().out
     assert "Total messages:" in out
     assert out.split("Total messages:", 1)[1].split("\n", 1)[0].strip() == "1"
 
 
-def test_stats_aligns_value_columns_across_all_top_lists(tmp_path, monkeypatch, capsys):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_stats_aligns_value_columns_across_all_top_lists(tmp_path, capsys):
+    db_path = tmp_path / "mails.db"
 
     conn = init_db(db_path)
     upsert_message(conn, _sample_message(id="msg1", label_ids="Label_1"))
@@ -1055,7 +1048,7 @@ def test_stats_aligns_value_columns_across_all_top_lists(tmp_path, monkeypatch, 
     )
     conn.close()
 
-    _run_stats(argparse.Namespace(filter=None))
+    _run_stats(argparse.Namespace(filter=None, db=str(tmp_path)))
     out = capsys.readouterr().out
 
     # "Top labels" has a short name ("A"), "Top senders" has a much longer one - both value columns
@@ -1066,10 +1059,9 @@ def test_stats_aligns_value_columns_across_all_top_lists(tmp_path, monkeypatch, 
 
 
 def test_logging_console_has_no_timestamps_while_logfile_has_timestamps(tmp_path, monkeypatch, capsys):
-    db_path = tmp_path / "gmail_index.db"
+    db_path = tmp_path / "mails.db"
     log_dir = tmp_path / "logs"
     log_path = log_dir / "mail-utils.log"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
     monkeypatch.setattr(cli, "LOG_DIR", log_dir)
     monkeypatch.setattr(cli, "LOG_PATH", log_path)
 
@@ -1077,7 +1069,7 @@ def test_logging_console_has_no_timestamps_while_logfile_has_timestamps(tmp_path
     upsert_message(conn, _sample_message(id="msg1"))
     conn.close()
 
-    _run_stats(argparse.Namespace(filter=None))
+    _run_stats(argparse.Namespace(filter=None, db=str(tmp_path)))
 
     console_out = capsys.readouterr().out
     assert "operation started: Database stats" in console_out
@@ -1146,8 +1138,8 @@ def test_run_import_auto_detects_pst(tmp_path, capsys):
     sample_pst = Path("tests/fixtures/sample.pst")
     if not sample_pst.exists():
         pytest.skip("sample.pst fixture not found")
-    db_path = tmp_path / "auto_pst.db"
-    _run_import(argparse.Namespace(source_path=str(sample_pst), db=str(db_path), recursive=False, filter=None))
+    db_dir = tmp_path / "auto_pst"
+    _run_import(argparse.Namespace(source_path=str(sample_pst), db=str(db_dir), recursive=False, filter=None))
     out = capsys.readouterr().out
     assert "Outlook PST import" in out
     assert "2 messages indexed" in out
@@ -1157,8 +1149,8 @@ def test_run_import_auto_detects_thunderbird_pcv(tmp_path, capsys):
     sample_pcv = Path("tests/fixtures/sample.pcv")
     if not sample_pcv.exists():
         pytest.skip("sample.pcv fixture not found")
-    db_path = tmp_path / "auto_tb.db"
-    _run_import(argparse.Namespace(source_path=str(sample_pcv), db=str(db_path), recursive=False, filter=None))
+    db_dir = tmp_path / "auto_tb"
+    _run_import(argparse.Namespace(source_path=str(sample_pcv), db=str(db_dir), recursive=False, filter=None))
     out = capsys.readouterr().out
     assert "Thunderbird archive import" in out
     assert "3 messages indexed" in out
@@ -1179,8 +1171,11 @@ def test_run_import_rejects_unsupported_formats(tmp_path, capsys):
 
 
 def test_run_import_no_args_without_credentials_reports_error(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "CREDENTIALS_PATH", tmp_path / "nonexistent_credentials.json")
-    monkeypatch.setattr(cli, "TOKEN_PATH", tmp_path / "nonexistent_token.json")
-    _run_import(argparse.Namespace(source_path=None, db=None, recursive=False, filter=None))
+    monkeypatch.setattr(cli, "APP_CREDENTIALS_PATH", tmp_path / "nonexistent-app-credentials.json")
+    _run_import(
+        argparse.Namespace(
+            source_path=None, db=None, account=str(tmp_path / "nonexistent-account.json"), recursive=False, filter=None
+        )
+    )
     out = capsys.readouterr().out
     assert "No import file specified and Gmail credentials not found" in out

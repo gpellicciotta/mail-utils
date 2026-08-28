@@ -1,6 +1,5 @@
 import argparse
 
-from mail_utils import cli
 from mail_utils.cli import _run_search, _sanitize_fts_query
 from mail_utils.db import init_db, upsert_message
 
@@ -84,11 +83,10 @@ def test_sanitize_fts_query():
     assert _sanitize_fts_query('special "quotes"') == '"special" """quotes"""'
 
 
-def test_run_search_outputs_matching_messages(tmp_path, monkeypatch, capsys):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_run_search_outputs_matching_messages(tmp_path, capsys):
+    db_dir = tmp_path / "index"
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     upsert_message(
         conn,
         _sample_msg(
@@ -101,7 +99,7 @@ def test_run_search_outputs_matching_messages(tmp_path, monkeypatch, capsys):
     )
     conn.close()
 
-    _run_search(argparse.Namespace(query="invoice", limit=10, db=str(db_path)))
+    _run_search(argparse.Namespace(query="invoice", limit=10, db=str(db_dir)))
 
     out = capsys.readouterr().out
     assert "Mail Utils" in out
@@ -112,15 +110,14 @@ def test_run_search_outputs_matching_messages(tmp_path, monkeypatch, capsys):
     assert "operation ended in" in out
 
 
-def test_run_search_no_matches(tmp_path, monkeypatch, capsys):
-    db_path = tmp_path / "gmail_index.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_run_search_no_matches(tmp_path, capsys):
+    db_dir = tmp_path / "index"
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     upsert_message(conn, _sample_msg(id="gmail:101", subject="Meeting notes"))
     conn.close()
 
-    _run_search(argparse.Namespace(query="nonexistent_word_xyz", limit=10, db=str(db_path)))
+    _run_search(argparse.Namespace(query="nonexistent_word_xyz", limit=10, db=str(db_dir)))
 
     out = capsys.readouterr().out
     assert "No matching messages found." in out

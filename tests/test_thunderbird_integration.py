@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from mail_utils import cli
 from mail_utils.cli import _run_import_thunderbird
 from mail_utils.db import init_db
 from mail_utils.thunderbird.archive import extract_mbox_to_file, walk_folders
@@ -64,14 +63,12 @@ def test_sample_pcv_all_messages_parse_cleanly():
     assert len(all_ids) == 3
 
 
-def test_sample_pcv_cli_import(tmp_path, monkeypatch):
-    db_path = tmp_path / "test_tb.db"
-    init_db(db_path).close()
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_sample_pcv_cli_import(tmp_path):
+    db_dir = tmp_path / "test_tb"
 
-    _run_import_thunderbird(argparse.Namespace(archive_path=str(SAMPLE_PCV), db=str(db_path), recursive=False))
+    _run_import_thunderbird(argparse.Namespace(archive_path=str(SAMPLE_PCV), db=str(db_dir), recursive=False))
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     (msg_count,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
     assert msg_count == 3
 

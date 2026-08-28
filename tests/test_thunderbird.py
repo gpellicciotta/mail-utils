@@ -3,7 +3,7 @@ import mailbox
 import zipfile
 from email.message import EmailMessage
 
-from mail_utils import attachment_store, cli
+from mail_utils import attachment_store
 from mail_utils.cli import _run_import_thunderbird, build_parser
 from mail_utils.db import init_db
 from mail_utils.thunderbird.archive import is_mail_store_file, walk_folders
@@ -154,9 +154,8 @@ def test_parse_message_and_addresses_and_attachments():
     assert atts_with_content[0]["content"] == b"PDF content bytes"
 
 
-def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path):
+    db_dir = tmp_path / "index"
 
     # Create a synthetic .pcv archive
     raw_mbox = tmp_path / "raw.mbox"
@@ -191,7 +190,7 @@ def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path, monkeypatch):
     assert folders[0].path == "account.com/INBOX"
 
     # Test CLI execution
-    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_path)])
+    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_dir)])
     assert args.command == "import-thunderbird"
     assert args.archive_path == str(pcv_path)
 
@@ -200,7 +199,7 @@ def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path, monkeypatch):
 
     _run_import_thunderbird(args)
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     (msg_count,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
     (label_count,) = conn.execute("SELECT COUNT(*) FROM labels").fetchone()
     (addr_count,) = conn.execute("SELECT COUNT(*) FROM message_addresses").fetchone()
@@ -211,10 +210,8 @@ def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path, monkeypatch):
     assert addr_count == 4
 
 
-def test_import_thunderbird_with_attachments_flag_captures_content(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
-    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+def test_import_thunderbird_with_attachments_flag_captures_content(tmp_path):
+    db_dir = tmp_path / "index"
 
     raw_mbox = tmp_path / "raw.mbox"
     mbox = mailbox.mbox(raw_mbox)
@@ -234,10 +231,10 @@ def test_import_thunderbird_with_attachments_flag_captures_content(tmp_path, mon
         z.write(raw_mbox, "ImapMail/account.com/INBOX")
         z.writestr("prefs.js", b"user_pref('mail', true);")
 
-    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_path), "--with-attachments"])
+    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_dir), "--with-attachments"])
     _run_import_thunderbird(args)
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     content_sha256, size = conn.execute("SELECT content_sha256, size FROM attachments").fetchone()
     conn.close()
 
@@ -246,10 +243,8 @@ def test_import_thunderbird_with_attachments_flag_captures_content(tmp_path, mon
     assert attachment_store.read(content_sha256) == b"PDF content bytes"
 
 
-def test_import_thunderbird_without_with_attachments_flag_leaves_content_sha256_null(tmp_path, monkeypatch):
-    db_path = tmp_path / "gmail.db"
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
-    monkeypatch.setattr(attachment_store, "ATTACHMENTS_DIR", tmp_path / "attachments")
+def test_import_thunderbird_without_with_attachments_flag_leaves_content_sha256_null(tmp_path):
+    db_dir = tmp_path / "index"
 
     raw_mbox = tmp_path / "raw.mbox"
     mbox = mailbox.mbox(raw_mbox)
@@ -269,12 +264,12 @@ def test_import_thunderbird_without_with_attachments_flag_leaves_content_sha256_
         z.write(raw_mbox, "ImapMail/account.com/INBOX")
         z.writestr("prefs.js", b"user_pref('mail', true);")
 
-    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_path)])
+    args = build_parser().parse_args(["import-thunderbird", str(pcv_path), "--db", str(db_dir)])
     _run_import_thunderbird(args)
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     (content_sha256,) = conn.execute("SELECT content_sha256 FROM attachments").fetchone()
     conn.close()
 
     assert content_sha256 is None
-    assert not (tmp_path / "attachments").exists()
+    assert not (db_dir / "attachments").exists()

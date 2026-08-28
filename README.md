@@ -14,7 +14,7 @@ A lightweight, privacy-preserving, local email archive indexing and extraction u
   - **Thunderbird PCV / Profile**: Pure Python Mbox and `.sbd` directory parser.
   - **Recursive Ingestion**: Extracts nested attached messages (`-r` / `--recursive`).
   - **Attachment Content Capture** (opt-in): Store each attachment's actual bytes, not just its
-    filename/type/size, content-addressed under `data/attachments/` (`--with-attachments`).
+    filename/type/size, content-addressed under `--db`'s attachment cache (`--with-attachments`).
 - **SQLite FTS5 Full-Text Search**: Fast BM25 keyword searches with match highlighting and boolean queries (`mail-utils search "<query>"`).
 - **Offline Analytics**: Instant statistics on total messages, threads, labels, senders, and recipients (`mail-utils stats`).
 - **Flexible Export**: Export messages organized by year/month into **Markdown** (`.md` with YAML frontmatter) or standard **MIME** (`.eml`).
@@ -34,21 +34,24 @@ python -m venv .venv
 # 2. Check version
 .venv\Scripts\mail-utils --version
 
-# 3. Import from a local archive or Gmail
+# 3. (Gmail only) Authorize an account once - see docs/devops.md's "Gmail Account Setup"
+.venv\Scripts\mail-utils prepare-gmail-account default
+
+# 4. Import from a local archive or Gmail
 .venv\Scripts\mail-utils import path\to\archive.pst
 .venv\Scripts\mail-utils import path\to\backup.pcv
 .venv\Scripts\mail-utils import-gmail
 
-# 4. Search indexed messages
+# 5. Search indexed messages
 .venv\Scripts\mail-utils search "project alpha"
 
-# 5. View database statistics
+# 6. View database statistics
 .venv\Scripts\mail-utils stats
 
-# 6. Export messages to Markdown or EML
+# 7. Export messages to Markdown or EML
 .venv\Scripts\mail-utils export .\exported-mails --format md
 
-# 7. (Opt-in) Store an EML export back into Gmail - requests additional write scopes
+# 8. (Opt-in) Store an EML export back into Gmail - requests additional write scopes
 .venv\Scripts\mail-utils store-in-gmail .\exported-mails --dry-run
 ```
 
@@ -56,7 +59,8 @@ python -m venv .venv
 
 ## Database contents
 
-Everything lives in a single SQLite file (`data/gmail.db` by default, `--db <path>` elsewhere). Row ids are
+Everything lives in a single SQLite file (`data/mails.db` by default, or `<dir>/mails.db` when `--db <dir>`
+is given - see `docs/cli-spec.md`). Row ids are
 source-prefixed (`gmail:...`, `outlook:...`, `thunderbird:...`) so the same database can hold messages
 imported from more than one source without collisions.
 
@@ -72,7 +76,7 @@ imported from more than one source without collisions.
   fetch that attachment's content; always `NULL` for PST/Thunderbird sources, which have no equivalent),
   `filename`, `mime_type`, `size`, `content_sha256`. Filename/type/size are always captured; `content_sha256`
   stays `NULL` unless the import ran with `--with-attachments` (see `docs/cli-spec.md`), in which case it's
-  the SHA-256 of the attachment's actual bytes, stored content-addressed at `data/attachments/<content_sha256>`
+  the SHA-256 of the attachment's actual bytes, stored content-addressed at `<db-dir>/attachments/<content_sha256>`
   (identical attachments across messages share one file). `export` writes that content back out - a real
   MIME part for `--format eml`, a `<message-file-stem>.attachments/` sidecar directory for `--format md` -
   falling back to metadata-only when `content_sha256` is `NULL`. An existing database isn't retroactively

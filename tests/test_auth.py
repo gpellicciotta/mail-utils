@@ -19,12 +19,11 @@ def _write_token(path, scopes, expiry=None):
     )
 
 
-def test_get_credentials_reuses_a_token_that_already_covers_the_requested_scopes(monkeypatch, tmp_path):
-    token_path = tmp_path / "token.json"
-    _write_token(token_path, ["https://www.googleapis.com/auth/gmail.readonly"])
-    monkeypatch.setattr(auth, "TOKEN_PATH", token_path)
+def test_get_credentials_reuses_a_token_that_already_covers_the_requested_scopes(tmp_path):
+    account_path = tmp_path / "tester-account.json"
+    _write_token(account_path, ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    creds = auth.get_credentials(["https://www.googleapis.com/auth/gmail.readonly"])
+    creds = auth.get_credentials(account_path, ["https://www.googleapis.com/auth/gmail.readonly"])
 
     assert creds.scopes == ["https://www.googleapis.com/auth/gmail.readonly"]
 
@@ -37,9 +36,8 @@ def test_get_credentials_does_not_silently_reuse_a_token_with_narrower_scopes(mo
     # scope. Caught via real end-to-end testing of store-in-gmail (T0013), where this let a
     # readonly-only token slip past the check and fail against the live Gmail API with a 403
     # ("Request had insufficient authentication scopes.") instead of prompting for re-consent.
-    token_path = tmp_path / "token.json"
-    _write_token(token_path, ["https://www.googleapis.com/auth/gmail.readonly"])
-    monkeypatch.setattr(auth, "TOKEN_PATH", token_path)
+    account_path = tmp_path / "tester-account.json"
+    _write_token(account_path, ["https://www.googleapis.com/auth/gmail.readonly"])
 
     broader_scopes = [
         "https://www.googleapis.com/auth/gmail.readonly",
@@ -63,12 +61,22 @@ def test_get_credentials_does_not_silently_reuse_a_token_with_narrower_scopes(mo
                 scopes=broader_scopes,
             )
 
-    credentials_path = tmp_path / "credentials.json"
-    credentials_path.write_text("{}")
-    monkeypatch.setattr(auth, "CREDENTIALS_PATH", credentials_path)
+    app_credentials_path = tmp_path / "google-cloud-mail-utils-app-credentials.json"
+    app_credentials_path.write_text("{}")
     monkeypatch.setattr(auth.InstalledAppFlow, "from_client_secrets_file", staticmethod(lambda *a, **k: _FakeFlow()))
 
-    creds = auth.get_credentials(broader_scopes)
+    creds = auth.get_credentials(account_path, broader_scopes, app_credentials_path=app_credentials_path)
 
     assert reached_consent_flow, "a narrower cached token must trigger a fresh consent flow, not be reused"
     assert set(broader_scopes) <= set(creds.scopes)
+
+
+def test_get_credentials_raises_a_clear_error_when_app_credentials_are_missing(tmp_path):
+    account_path = tmp_path / "tester-account.json"
+    app_credentials_path = tmp_path / "google-cloud-mail-utils-app-credentials.json"
+
+    try:
+        auth.get_credentials(account_path, app_credentials_path=app_credentials_path)
+        assert False, "expected FileNotFoundError"
+    except FileNotFoundError as e:
+        assert str(app_credentials_path) in str(e)

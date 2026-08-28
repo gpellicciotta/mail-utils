@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from mail_utils import cli
 from mail_utils.cli import _run_import_pst
 from mail_utils.db import init_db
 from mail_utils.outlook.ltp import PSTProperty
@@ -71,14 +70,12 @@ def test_sample_pst_all_messages_parse_cleanly():
     assert len(parsed_messages) == 2
 
 
-def test_sample_pst_cli_import(tmp_path, monkeypatch):
-    db_path = tmp_path / "test_pst.db"
-    init_db(db_path).close()
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+def test_sample_pst_cli_import(tmp_path):
+    db_dir = tmp_path / "test_pst"
 
-    _run_import_pst(argparse.Namespace(pst_path=str(SAMPLE_PST), db=str(db_path), recursive=False))
+    _run_import_pst(argparse.Namespace(pst_path=str(SAMPLE_PST), db=str(db_dir), recursive=False))
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     (msg_count,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
     assert msg_count == 2
 
@@ -87,18 +84,16 @@ def test_sample_pst_cli_import(tmp_path, monkeypatch):
     conn.close()
 
 
-def test_sample_pst_cli_import_with_attachments_flag_does_not_crash(tmp_path, monkeypatch):
+def test_sample_pst_cli_import_with_attachments_flag_does_not_crash(tmp_path):
     # sample.pst has no attachments to actually capture content for - this guards the CLI wiring
     # itself (the --with-attachments plumbing into pst_parse_attachments(raw, pst=pst)) rather than
     # real content capture, which needs a PST fixture with an actual attachment (see
     # test_fetch_attachment_content_reads_binary_property above for that logic in isolation).
-    db_path = tmp_path / "test_pst_with_attachments.db"
-    init_db(db_path).close()
-    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    db_dir = tmp_path / "test_pst_with_attachments"
 
-    _run_import_pst(argparse.Namespace(pst_path=str(SAMPLE_PST), db=str(db_path), recursive=False, with_attachments=True))
+    _run_import_pst(argparse.Namespace(pst_path=str(SAMPLE_PST), db=str(db_dir), recursive=False, with_attachments=True))
 
-    conn = init_db(db_path)
+    conn = init_db(db_dir / "mails.db")
     (msg_count,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
     assert msg_count == 2
     conn.close()

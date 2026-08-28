@@ -4,17 +4,18 @@ code (`cli.py::_build_eml_message`) wherever it matters for the test's validity 
 auth/transport plumbing (`auth.get_credentials`, `gmail_client.build_gmail_service`) is reused.
 
 Workflow this script supports (the actual import-gmail/store-in-gmail/export calls are run directly
-via `mail-utils`, not by this script - it only seeds, compares, and cleans up):
+via `mail-utils`, not by this script - it only seeds, compares, and cleans up). Set up the test
+account once via `mail-utils prepare-gmail-account <name> --with-write`, then:
 
-    python scripts/gmail-roundtrip-test.py seed
-    mail-utils import-gmail --with-attachments --db data/origin.db --filter "label:mail-utils-roundtrip-test-source"
-    mail-utils export data/origin-export --format eml --db data/origin.db
-    mail-utils store-in-gmail --db data/origin.db
-    mail-utils import-gmail --with-attachments --db data/result.db --filter "label:<the new store-in-gmail tracking label>"
-    mail-utils export data/result-export --format eml --db data/result.db
-    python scripts/gmail-roundtrip-test.py compare --origin-db data/origin.db --origin-export data/origin-export --result-db data/result.db --result-export data/result-export
-    python scripts/gmail-roundtrip-test.py cleanup --label mail-utils-roundtrip-test-source --apply
-    python scripts/gmail-roundtrip-test.py cleanup --label <the tracking label> --apply
+    python scripts/gmail-roundtrip-test.py seed --account <name> --to <name>@example-domain.com
+    mail-utils import-gmail --with-attachments --account <name> --db data/origin --filter "label:mail-utils-roundtrip-test-source"
+    mail-utils export data/origin-export --format eml --db data/origin
+    mail-utils store-in-gmail --account <name> --db data/origin
+    mail-utils import-gmail --with-attachments --account <name> --db data/result --filter "label:<the new store-in-gmail tracking label>"
+    mail-utils export data/result-export --format eml --db data/result
+    python scripts/gmail-roundtrip-test.py compare --origin-db data/origin/mails.db --origin-export data/origin-export --result-db data/result/mails.db --result-export data/result-export
+    python scripts/gmail-roundtrip-test.py cleanup --account <name> --label mail-utils-roundtrip-test-source --apply
+    python scripts/gmail-roundtrip-test.py cleanup --account <name> --label <the tracking label> --apply
 
 `compare` deliberately does not diff exported .eml files as raw bytes: Python's email library embeds
 a randomly generated MIME boundary every time a multipart message is serialized, so two semantically
@@ -34,7 +35,7 @@ from pathlib import Path
 from _cli_common import build_action_parser, get_mail_utils_version, print_help, print_version
 
 from mail_utils.auth import get_credentials
-from mail_utils.config import STORE_IN_GMAIL_SCOPES
+from mail_utils.config import STORE_IN_GMAIL_SCOPES, resolve_account_path
 from mail_utils.gmail_client import build_gmail_service, create_label, get_profile, import_message, list_labels
 
 PROG = "gmail-roundtrip-test"
@@ -56,21 +57,22 @@ SUBJECT_PREFIX = "[mail-utils roundtrip test] "
 CLEANUP_SCOPES = [*STORE_IN_GMAIL_SCOPES, "https://www.googleapis.com/auth/gmail.modify"]
 
 
-def _service(scopes=STORE_IN_GMAIL_SCOPES):
-    creds = get_credentials(scopes)
+def _service(account: str | None, scopes=STORE_IN_GMAIL_SCOPES):
+    account_path = resolve_account_path(account)
+    creds = get_credentials(account_path, scopes=scopes)
     service = build_gmail_service(creds)
     print(f"Target account: {get_profile(service).get('emailAddress')}")
     return service
 
 
-def _seed_messages() -> list[EmailMessage]:
+def _seed_messages(to_address: str) -> list[EmailMessage]:
     base = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
     messages = []
 
     m1 = EmailMessage()
     m1["Subject"] = f"{SUBJECT_PREFIX}plain text, no attachment"
     m1["From"] = "roundtrip-sender@example.com"
-    m1["To"] = "katsan.pellicciotta@gmail.com"
+    m1["To"] = to_address
     m1["Date"] = format_datetime(base)
     m1.set_content("Just a plain text body, nothing fancy.\n")
     messages.append(m1)
@@ -78,7 +80,7 @@ def _seed_messages() -> list[EmailMessage]:
     m2 = EmailMessage()
     m2["Subject"] = f"{SUBJECT_PREFIX}plain text with one PNG attachment"
     m2["From"] = "roundtrip-sender@example.com"
-    m2["To"] = "katsan.pellicciotta@gmail.com"
+    m2["To"] = to_address
     m2["Date"] = format_datetime(base + timedelta(hours=1))
     m2.set_content("See the attached tiny PNG.\n")
     smallest_png = bytes.fromhex(
@@ -91,7 +93,7 @@ def _seed_messages() -> list[EmailMessage]:
     m3 = EmailMessage()
     m3["Subject"] = f"{SUBJECT_PREFIX}HTML body, unicode: Café ☕ 日本語"
     m3["From"] = "roundtrip-sender@example.com"
-    m3["To"] = "katsan.pellicciotta@gmail.com"
+    m3["To"] = to_address
     m3["Date"] = format_datetime(base + timedelta(hours=2))
     m3.set_content(
         "<html><body><p>HTML body with unicode: café, ☕, 日本語.</p></body></html>\n",
@@ -102,7 +104,7 @@ def _seed_messages() -> list[EmailMessage]:
     m4 = EmailMessage()
     m4["Subject"] = f"{SUBJECT_PREFIX}two attachments, unicode subject: 日本語のテスト"
     m4["From"] = "roundtrip-sender@example.com"
-    m4["To"] = "katsan.pellicciotta@gmail.com"
+    m4["To"] = to_address
     m4["Date"] = format_datetime(base + timedelta(hours=3))
     m4.set_content("Two attachments below: a text file and a binary file.\n")
     m4.add_attachment(
@@ -117,7 +119,7 @@ def _seed_messages() -> list[EmailMessage]:
     m5 = EmailMessage()
     m5["Subject"] = f"{SUBJECT_PREFIX}one larger binary attachment"
     m5["From"] = "roundtrip-sender@example.com"
-    m5["To"] = "katsan.pellicciotta@gmail.com"
+    m5["To"] = to_address
     m5["Date"] = format_datetime(base + timedelta(hours=4))
     m5.set_content("One larger (~256KB) attachment below, to exercise more than a trivial payload size.\n")
     large_payload = (bytes(range(256)) * 1024)[:262144]
@@ -128,11 +130,11 @@ def _seed_messages() -> list[EmailMessage]:
 
 
 def _run_seed(args) -> int:
-    service = _service()
+    service = _service(args.account)
     label_names = {lbl["name"]: lbl["id"] for lbl in list_labels(service)}
     label_id = label_names.get(SEED_LABEL) or create_label(service, SEED_LABEL)["id"]
 
-    for msg in _seed_messages():
+    for msg in _seed_messages(args.to):
         result = import_message(service, msg.as_bytes(), label_ids=[label_id])
         print(f"Seeded: {msg['Subject']!r} -> {result.get('id')}")
 
@@ -141,7 +143,7 @@ def _run_seed(args) -> int:
 
 
 def _run_cleanup(args) -> int:
-    service = _service(CLEANUP_SCOPES)
+    service = _service(args.account, CLEANUP_SCOPES)
     label_names = {lbl["name"]: lbl["id"] for lbl in list_labels(service)}
     label_id = label_names.get(args.label)
     if label_id is None:
@@ -348,6 +350,10 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     version = get_mail_utils_version()
     parser = build_action_parser(PROG, DESCRIPTION, ["seed", "compare", "cleanup", "version", "help"], "help")
+    parser.add_argument(
+        "--account", help="Gmail account to authenticate as (see 'mail-utils prepare-gmail-account') (seed, cleanup)"
+    )
+    parser.add_argument("--to", help="Recipient address to stamp on every seeded message (seed)")
     parser.add_argument("--origin-db", help="Origin database path (compare)")
     parser.add_argument("--origin-export", help="Origin export directory path (compare)")
     parser.add_argument("--result-db", help="Result database path (compare)")
@@ -364,6 +370,9 @@ def main() -> int:
         return 0
 
     if args.action == "seed":
+        if not args.to:
+            print("seed requires --to", file=sys.stderr)
+            return 2
         return _run_seed(args)
     if args.action == "cleanup":
         if not args.label:

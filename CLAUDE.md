@@ -5,8 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `mail-utils` polls a single personal Gmail account on a schedule and indexes new messages into a local SQLite
-database (`data/gmail.db`), using the Gmail API and OAuth 2.0. It's a personal, single-user tool — not a
-package/library, no server, no multi-tenant concerns.
+database (`data/mails.db` by default), using the Gmail API and OAuth 2.0. It's a personal, single-user tool —
+not a package/library, no server, no multi-tenant concerns, though it does support authorizing and switching
+between more than one named Gmail account (see `prepare-gmail-account`/`--account` below) for testing
+against a disposable mailbox before ever pointing a command at production.
 
 **Read-only is the default, not an absolute rule — but any exception is a deliberate, narrowly-scoped
 decision, never an oversight.** Every command except one only ever requests the `gmail.readonly` scope
@@ -33,7 +35,9 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   (drop `[dev]` if you only need to run the app, not the tests/linter)
 - `mail-utils <command>` once installed (equivalent to `.venv\Scripts\python -m mail_utils.cli <command>`):
   `import [<source_path>]` (smart unified import with auto-detection for Outlook PST, Thunderbird backup/profile, or Gmail fallback),
-  `import-gmail` (Gmail API sync), `import-pst <path>` (Outlook .pst import, alias `import-outlook`),
+  `import-gmail` (Gmail API sync), `prepare-gmail-account <name>` (interactively authorizes a Gmail account
+  and saves its token as `<name>-account.json`, for later selection via `--account` — see Architecture below),
+  `import-pst <path>` (Outlook .pst import, alias `import-outlook`),
   `import-thunderbird <path>` (Thunderbird .pcv/profile import, alias `import-pcv`),
   `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary),
   `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
@@ -43,12 +47,15 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or cron, dispatched by `platform.system()`;
   `mail-utils schedule --job-name <name> --interval-minutes N -- import|import-gmail|export [flags...]`, see docs/cli-spec.md for
   scheduling details), `version` / `--version` (reads live package metadata), `help` / `-h` / `--help` (usage and exit codes).
-- `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export`/`store-in-gmail` accept `--db <path>` to point at a
-  database other than the default `data/gmail.db`. `import`/`import-gmail`/`import-pst`/`import-thunderbird` accept `-r`/`--recursive`
-  to import nested email attachments. `import`/`import-gmail`/`stats`/`export`/`store-in-gmail` also accept `--filter "..."`
-  (see docs/cli-spec.md). `store-in-gmail` additionally accepts `--dry-run` (preview without contacting Gmail or requesting
-  credentials) and `--max-messages N` (cap this run's writes — pairs with the persistent `gmail_store_state` table to make an
-  interrupted or capped run resumable by simply rerunning the same command).
+- `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export`/`store-in-gmail` accept `--db <dir>` to point at a
+  directory other than the default `data/` — the database (`<dir>/mails.db`) and attachment cache (`<dir>/attachments/`) both live inside
+  it, scoped together. `import`/`import-gmail`/`store-in-gmail` also accept `--account <name>` to select which authorized Gmail account
+  to use (a bare name resolves to `data/<name>-account.json`, a path is used verbatim; omitted falls back to `data/default-account.json`
+  if present) — decoupled from `--db`, so any account can pair with any data directory. `import`/`import-gmail`/`import-pst`/
+  `import-thunderbird` accept `-r`/`--recursive` to import nested email attachments. `import`/`import-gmail`/`stats`/`export`/
+  `store-in-gmail` also accept `--filter "..."` (see docs/cli-spec.md). `store-in-gmail` additionally accepts `--dry-run` (preview
+  without contacting Gmail or requesting credentials) and `--max-messages N` (cap this run's writes — pairs with the persistent
+  `gmail_store_state` table to make an interrupted or capped run resumable by simply rerunning the same command).
 - Run the test suite: `.venv\Scripts\python -m pytest`; lint/format: `.venv\Scripts\ruff check .` /
   `.venv\Scripts\ruff format .` (line-length 132, `[tool.ruff]` in `pyproject.toml`; CI runs both plus
   `pytest` plus `python -m build`).
@@ -63,17 +70,34 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
 - **`thunderbird/`** — read-only Thunderbird archive (`*.pcv`, `*.zip`, profile folders) parser: `archive.py`
   (Mbox store discovery and extraction), `tree.py` (`.sbd` hierarchy walk and label id derivation), and
   `messages.py` (Mbox parsing, MIME extraction, fallback date handling).
-- **`config.py`** — `DATA_DIR` (`BASE_DIR / "data"`, gitignored in full) holding the secrets/database
-  (`data/credentials.json`, `data/token.json`, `data/gmail.db`), plus a separate top-level, also gitignored,
-  `LOG_DIR` (`BASE_DIR / "logs"`, `logs/mail-utils.log`) and the OAuth `SCOPES` list (read-only, used by
-  every command but one). `STORE_IN_GMAIL_SCOPES` extends `SCOPES` with `gmail.insert`/`gmail.labels`,
-  requested only by `store-in-gmail`. Single source of truth for both; nothing else in the codebase
-  hardcodes a path.
-- **`auth.py`** — `get_credentials(scopes=None)`: loads/refreshes `data/token.json` silently when possible,
-  otherwise runs the one-time interactive `InstalledAppFlow` browser consent using `data/credentials.json`.
-  Defaults to `SCOPES`; `store-in-gmail` passes `STORE_IN_GMAIL_SCOPES` instead, which re-triggers consent if
-  the cached token doesn't already cover the broader set (checked via `creds.scopes`) — every other caller is
-  unaffected since it never asks for more than the cached read-only token already grants.
+- **`config.py`** — `DATA_DIR` (`BASE_DIR / "data"`, gitignored in full) holding the shared app credential
+  file (`APP_CREDENTIALS_PATH`, `data/google-cloud-mail-utils-app-credentials.json` — the OAuth client
+  secret identifying the mail-utils application itself, not any one Google account) plus a separate
+  top-level, also gitignored, `LOG_DIR` (`BASE_DIR / "logs"`, `logs/mail-utils.log`) and the OAuth `SCOPES`
+  list (read-only, used by every command but one). `STORE_IN_GMAIL_SCOPES` extends `SCOPES` with
+  `gmail.insert`/`gmail.labels`, requested only by `store-in-gmail`. Accounts and data storage are
+  deliberately decoupled and resolved by two independent pure functions rather than fixed constants:
+  `resolve_account_path(account)` (a bare name → `data/<name>-account.json`; a value with a path separator
+  or `.json` extension → used verbatim; `None` → `data/default-account.json`) and `resolve_db_dir(db)` (the
+  `--db` directory, defaulting to `DATA_DIR`), paired with `db_path_for`/`attachments_dir_for` which append
+  the fixed `DB_FILENAME`/`ATTACHMENTS_DIRNAME` (`mails.db`/`attachments`) onto whatever directory
+  `resolve_db_dir` returned. Single source of truth for all of this; nothing else in the codebase hardcodes
+  a path.
+- **`auth.py`** — `get_credentials(account_path, scopes=None, app_credentials_path=APP_CREDENTIALS_PATH)`:
+  loads/refreshes the given account's token file silently when possible, otherwise runs the one-time
+  interactive `InstalledAppFlow` browser consent using the shared app credential file, then writes the
+  result back to `account_path` (creating its parent directory if needed). Every caller must say which
+  account it means (`config.resolve_account_path`'s result) — there is no implicit default inside `auth.py`
+  itself. `scopes` defaults to `SCOPES`; `store-in-gmail` and `prepare-gmail-account --with-write` pass
+  `STORE_IN_GMAIL_SCOPES` instead, which re-triggers consent if the cached token doesn't already cover the
+  broader set (checked via `creds.scopes`) — every other caller is unaffected since it never asks for more
+  than the cached read-only token already grants.
+- **`attachment_store.py`** — content-addressed attachment byte storage. `configure(attachments_dir)` sets
+  a module-level directory (called once per CLI run, from `cli.py::_resolve_db_path`, right after `--db` is
+  resolved — see below); `save`/`read`/`path_for` operate under whatever directory was last configured,
+  raising `RuntimeError` if used before `configure()` is ever called. Deliberately module-level state rather
+  than a parameter threaded through every call site, since a single CLI invocation only ever needs one
+  attachments directory.
 - **`gmail_client.py`** — thin wrapper over the Gmail API: paginated full-mailbox listing
   (`list_all_message_ids`), paginated History API diffing (`list_changed_message_ids`, raises
   `HistoryExpiredError` on a 404 so the caller can fall back to a full resync), label listing
@@ -126,7 +150,11 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   installed). `argparse`-based subcommands: `import` (sets up logging, refreshes the `labels` table,
   decides full vs. incremental sync from whether `sync_state` has a `last_history_id` yet, drives the
   fetch/parse/upsert loop with progress logging every `PROGRESS_LOG_INTERVAL` (50) messages; `--filter`
-  switches to a filtered full listing that skips `sync_state` entirely, see `filters.py` above), `stats`
+  switches to a filtered full listing that skips `sync_state` entirely, see `filters.py` above),
+  `prepare-gmail-account <name>` (resolves the target account path the same way `--account` does, requires
+  the app credential file to already exist, runs `get_credentials` directly to drive consent, defaults to
+  read-only `SCOPES` with `--with-write` requesting `STORE_IN_GMAIL_SCOPES` instead, and prints the
+  authenticated address via `get_profile` for confirmation), `stats`
   (read-only reporting straight off the local SQLite file; no Gmail API calls, so it works offline and needs
   no credentials), `export <output_dir>` (also offline/local-DB-only — writes one YAML-frontmatter `.md` file or standard RFC 5322 `.eml` file via
   `--format md|eml` per message, bucketed into `<YYYY>/<MM>/` subdirectories by `internal_date_ms`, `unknown/`
@@ -163,7 +191,12 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   `gmail_store_state`, only previews what a real run would do — and every stored message, plus the run's
   final summary, is logged explicitly (`Stored <id> as Gmail message <new-id>` per message; the end-of-run
   line always states the last message successfully stored). `import`/`stats`/`export`/`store-in-gmail`
-  all take `--db <path>` (via `_resolve_db_path`) to override the default `data/gmail.db`. `stats --filter`/
+  all take `--db <dir>` (via `_resolve_db_path`, which resolves `<dir>/mails.db` via `config.resolve_db_dir`/
+  `db_path_for` and, as a side effect, calls `attachment_store.configure` on `<dir>/attachments` — every one
+  of its 7 call sites across `cli.py` gets a correctly-scoped attachment store for free without threading the
+  directory through separately) to override the default `data/`. `import`/`import-gmail`/`store-in-gmail`
+  also take `--account <name>` (via `_resolve_account_path`/`config.resolve_account_path`) to select which
+  authorized account's token file `get_credentials` uses. `stats --filter`/
   `export --filter` compute a matching-id set once via `_compute_matching_ids` and either build a
   `filtered_ids` temp table (`stats`, so its existing aggregate SQL queries stay aggregate queries) or just
   filter the already-fetched row list in Python (`export`, simpler since it's not doing SQL aggregation
@@ -178,7 +211,7 @@ schema reference, not this file — update it whenever `parse_message` or the sc
 
 Schema changes to `messages` (like adding `cc`/`bcc`) need a migration, not just an edit to `SCHEMA` in `db.py` —
 `CREATE TABLE IF NOT EXISTS` only applies to a database that doesn't exist yet, so an existing
-`data/gmail.db` needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for the
+`data/mails.db` needs an explicit `ALTER TABLE`. See `_ensure_column`/`init_db` in `db.py` for the
 pattern to extend.
 
 `config.py`'s `BASE_DIR = Path(__file__).resolve().parent.parent.parent` is relative to `config.py`'s own
@@ -186,18 +219,19 @@ location (`src/mail_utils/config.py` → up three levels → project root); `DAT
 every other path in `config.py` are derived from it. Any future move of `config.py` itself, or another change
 to the directory depth between it and the project root, needs that `.parent` chain recounted to match — it
 broke silently in exactly this way during the `v0.10.0` src-layout migration (fixed in `v0.13.0`), because the
-test suite always monkeypatches `DB_PATH` directly rather than exercising the real computation, so nothing
-caught it until a real run would have. `tests/test_config.py` now guards against a repeat.
+test suite at the time always monkeypatched a fixed `DB_PATH` constant directly rather than exercising the
+real computation, so nothing caught it until a real run would have. `tests/test_config.py` guards against a
+repeat by exercising `resolve_db_dir`/`db_path_for`/`resolve_account_path` against the real `DATA_DIR`.
 
 ## Conventions
 
-- Everything under `data/` (`credentials.json`, `token.json`, `gmail.db`, `logs/`) is gitignored in full
-  as secrets/generated data — never commit any of it, and never add code that logs its contents at INFO level
-  or above.
-- Keep `README.md`'s "Setup", "Project layout", and "Database contents" sections in sync with the code — they're
-  written to be detailed enough that a first-time setup doesn't need external guidance (see the Google Cloud
-  Console walkthrough in "Setup" step 1, which was expanded specifically because the console's own UI/naming
-  drifted from what the original short version assumed).
+- Everything under `data/` (the app credential file, account files, `mails.db`, `attachments/`) plus the
+  top-level `logs/` is gitignored in full as secrets/generated data — never commit any of it, and never add
+  code that logs its contents at INFO level or above.
+- Keep `README.md`'s "Database contents" section and `docs/devops.md`'s "Gmail Account Setup" section in
+  sync with the code — the latter is written to be detailed enough that a first-time setup doesn't need
+  external guidance (see its Google Cloud Console walkthrough, expanded specifically because the console's
+  own UI/naming tends to drift from whatever the last short version assumed).
 - `pyproject.toml`'s `version` field drives what actually gets installed; keep `CHANGELOG.md`'s newest
   heading matching it exactly, same as `hinolugi-support`'s `gradle.properties` convention. This is the
   *only* place the version is written — `mail-utils --version` reads it back dynamically via
@@ -220,6 +254,6 @@ caught it until a real run would have. `tests/test_config.py` now guards against
 - This project complies with the [cross-project development guidelines](https://github.com/gpellicciotta/dev-guidelines) (task coordination, coding guidelines, CLI standards).
 - Any change that alters what's stored (new/changed/removed column, changed parsing behavior) must update both
   `README.md`'s "Database contents" tables and, if it's a behavior change to already-synced data, note whether
-  existing rows in someone's `data/gmail.db` need a resync to pick it up (they generally won't be
+  existing rows in someone's `mails.db` need a resync to pick it up (they generally won't be
   auto-migrated — there's no schema migration mechanism here, only `CREATE TABLE IF NOT EXISTS`).
 

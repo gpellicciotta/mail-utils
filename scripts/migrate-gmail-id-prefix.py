@@ -3,7 +3,7 @@
 uses (see docs/pst-support-plan.md, Phase 4) so a future Outlook `.pst` import into the same
 database - whose rows are prefixed `outlook:` - can never collide with an existing Gmail row.
 
-Every row in an existing `data/gmail.db` predates this scheme and is Gmail-sourced, so every
+Every row in an existing `data/mails.db` predates this scheme and is Gmail-sourced, so every
 still-unprefixed id gets the "gmail:" prefix; anything already prefixed `gmail:` or `outlook:` is
 left untouched, so this is safe to run more than once.
 
@@ -22,7 +22,9 @@ from pathlib import Path
 
 from _cli_common import build_action_parser, get_mail_utils_version, print_help, print_version
 
-from mail_utils.config import DB_PATH
+from mail_utils.config import DATA_DIR, db_path_for
+
+DEFAULT_DB_PATH = db_path_for(DATA_DIR)
 
 PROG = "migrate-gmail-id-prefix"
 DESCRIPTION = "One-off migration that prefixes existing messages.id rows with 'gmail:' to match the current id scheme."
@@ -32,7 +34,7 @@ UNPREFIXED_WHERE = "id NOT LIKE 'gmail:%' AND id NOT LIKE 'outlook:%'"
 
 
 def _run_migrate(args) -> int:
-    db_path = Path(args.db) if args.db else DB_PATH
+    db_path = Path(args.db) if args.db else DEFAULT_DB_PATH
     if not db_path.exists():
         print(f"Database not found: {db_path}", file=sys.stderr)
         return 1
@@ -86,7 +88,7 @@ def _run_migrate(args) -> int:
 def main() -> int:
     version = get_mail_utils_version()
     parser = build_action_parser(PROG, DESCRIPTION, ["migrate", "version", "help"], "migrate")
-    parser.add_argument("--db", help=f"Database to migrate (default: {DB_PATH})")
+    parser.add_argument("--db", help=f"Database to migrate (default: {DEFAULT_DB_PATH})")
     parser.add_argument("--apply", action="store_true", help="Actually write the change (default: dry run)")
     args = parser.parse_args()
 

@@ -28,10 +28,20 @@ A complete walkthrough for a first-time user, demonstrating setup, ingestion, se
 # Auto-detects and imports Thunderbird backup (.pcv, .zip, or profile folder)
 .venv\Scripts\mail-utils import path\to\backup.pcv
 
-# When no file is given, syncs with Gmail (if credentials exist)
+# When no file is given, syncs with Gmail (if an account has been set up - see below)
 .venv\Scripts\mail-utils import
 ```
-The first run prompts for OAuth browser consent, then performs a full sync into `data/gmail.db`. Subsequent runs are fast incremental syncs.
+
+Before the first Gmail sync, authorize an account once (see `docs/devops.md`'s "Gmail Account Setup" for
+the one-time app credential setup this needs):
+
+```powershell
+.venv\Scripts\mail-utils prepare-gmail-account default
+```
+
+This opens a browser consent screen and saves the resulting token to `data/default-account.json` -
+picked up automatically by any command that doesn't specify `--account`. The first sync afterwards
+performs a full sync into `data/mails.db`. Subsequent runs are fast incremental syncs.
 
 ### B. Dedicated Importers
 You can also use the explicit format subcommands:
@@ -51,7 +61,7 @@ You can also use the explicit format subcommands:
 Add `--recursive` (or `-r`) to unpack and index nested email attachments.
 
 Add `--with-attachments` to also fetch and store each attachment's actual content (not just its
-filename/type/size), content-addressed under `data/attachments/`. Off by default - it adds an extra
+filename/type/size), content-addressed under `--db`'s attachment cache. Off by default - it adds an extra
 API call/read per attachment plus disk space (see `docs/cli-spec.md` and README's "Database contents").
 
 ---

@@ -13,6 +13,9 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ## vNext
+- BackEnd: Add `prepare-gmail-account` and `--account` to authorize and select between multiple named Gmail accounts.
+- BackEnd: [breaking] Rename the default database file to `mails.db` and change `--db` to a directory holding it plus the attachment cache.
+- BackEnd: [breaking] Rename the shared OAuth client credential file to `google-cloud-mail-utils-app-credentials.json`.
 - Docs: Add a feasibility study for restoring exported mail back into Gmail, Outlook, and Thunderbird.
 - BackEnd: Add opt-in `store-in-gmail` command to write exported or indexed mail into a live Gmail mailbox.
 - DevEx: Rename `scripts/generate_sample_pst.py` to `scripts/generate-sample-pst.py` for naming-convention compliance.

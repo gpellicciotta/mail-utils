@@ -1,14 +1,22 @@
-"""Content-addressed storage for attachment bytes, under `config.ATTACHMENTS_DIR` - one file per
-distinct content hash, so identical attachments (e.g. a repeated forwarded logo) are only ever
-written once. Deliberately a flat directory (no hash-prefix fan-out): personal-mailbox attachment
-counts don't need one, and it keeps `path_for` trivial. Attachment bytes never pass through
+"""Content-addressed storage for attachment bytes, under whichever directory `configure()` was last
+called with (see `config.attachments_dir_for` - one per `--db` directory, resolved once per CLI
+run) - one file per distinct content hash, so identical attachments (e.g. a repeated forwarded logo)
+are only ever written once. Deliberately a flat directory (no hash-prefix fan-out): personal-mailbox
+attachment counts don't need one, and it keeps `path_for` trivial. Attachment bytes never pass through
 SQLite - only the resulting hash is stored in the `attachments` table's `content_sha256` column.
 """
 
 import hashlib
 from pathlib import Path
 
-from .config import ATTACHMENTS_DIR
+_attachments_dir: Path | None = None
+
+
+def configure(attachments_dir: Path) -> None:
+    """Set the directory `save`/`read`/`path_for` operate under for the rest of this process. Called
+    once per CLI run (see `cli.py::_resolve_db_path`), before anything touches attachment content."""
+    global _attachments_dir
+    _attachments_dir = attachments_dir
 
 
 def save(content: bytes) -> str:
@@ -22,7 +30,9 @@ def save(content: bytes) -> str:
 
 
 def path_for(sha256: str) -> Path:
-    return ATTACHMENTS_DIR / sha256
+    if _attachments_dir is None:
+        raise RuntimeError("attachment_store.configure() must be called before use")
+    return _attachments_dir / sha256
 
 
 def read(sha256: str) -> bytes:
