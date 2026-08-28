@@ -18,4 +18,4 @@ An overview of all tasks and their planning.
 ### Backlog
 
 - [ ] T0014 preserve-html-body-and-inline-images
-- [ ] T0015 gmail-account-management
+- [~] T0015 gmail-account-management  @claude
