@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [ ] T0013 gmail-e2e-safety-and-rollout
+- [~] T0013 gmail-e2e-safety-and-rollout  @claude
 
 ### Backlog
 
