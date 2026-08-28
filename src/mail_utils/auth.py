@@ -21,7 +21,11 @@ def get_credentials(scopes: list[str] | None = None) -> Credentials:
     scopes = scopes if scopes is not None else SCOPES
     creds = None
     if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), scopes)
+        # Deliberately omit `scopes` here: from_authorized_user_file() treats a passed-in
+        # scopes list as an override, replacing whatever the token file actually recorded -
+        # which would make the coverage check below always pass regardless of what was
+        # really granted. Reading the file's real scopes is the whole point of the check.
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH))
 
     if creds and creds.valid and set(scopes) <= set(creds.scopes or []):
         return creds

@@ -23,6 +23,10 @@ A summarized overview of all changes, per version of this project.
 - Docs: Fix stale Python-version, CI-matrix, and third-party-dependency claims, and stray numbered/skipped headings across the doc set.
 - DevEx: Scope `pytest` to `tests/` so it no longer collides with test files in sibling task worktrees under `work/`.
 - BackEnd: Add opt-in `--with-attachments` to capture real attachment content, round-tripped by `export` and `store-in-gmail`.
+- BackEnd: Fix `store-in-gmail` silently reusing a cached read-only token instead of requesting its required write scopes.
+- BackEnd: Have `store-in-gmail` log the target account's address before writing, to catch a wrong-account mistake early.
+- BackEnd: Fix a Subject header round-trip bug that grew whitespace around encoded-word runs on repeated export/store.
+- DevEx: Add scripts/gmail-roundtrip-test.py, a reusable seed/compare/cleanup tool for verifying store-in-gmail fidelity against a real account.
 
 ## v2.3.0 [released: 2026-08-24]
 - Aligned project with latest development guidelines (https://github.com/gpellicciotta/dev-guidelines).

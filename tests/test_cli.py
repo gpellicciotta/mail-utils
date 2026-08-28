@@ -99,6 +99,9 @@ class _FakeUsers:
     def labels(self):
         return self.labels_resource
 
+    def getProfile(self, userId):
+        return _FakeExec({"emailAddress": "fake-target-account@example.com"})
+
 
 class _FakeService:
     def __init__(self, existing_labels=(), fail_first_n_imports=0):
@@ -376,6 +379,7 @@ def test_run_store_in_gmail_end_to_end_stores_applies_tracking_label_and_skips_f
     conn = init_db(db_path)
     assert is_stored_in_gmail(conn, "msg1") is True
     out = capsys.readouterr().out
+    assert "Target account: fake-target-account@example.com" in out
     assert "1 messages stored, 1 skipped" in out
     assert "last message stored: msg1" in out
 
@@ -804,6 +808,41 @@ def test_export_writes_eml_format_with_headers_and_body(tmp_path, monkeypatch):
     assert msg["X-Mail-Utils-Attachment"] == "report.pdf (type=application/pdf; size=2048)"
     assert msg.get_content_type() == "text/plain"
     assert msg.get_content().strip() == "Body text"
+
+
+def test_export_eml_subject_with_unicode_survives_repeated_export_round_trips(tmp_path, monkeypatch):
+    # Regression test: found via T0013's real Gmail round-trip testing. A Subject needing RFC 2047
+    # encoding right after existing whitespace (e.g. "topic: 日本語") used to gain one extra space
+    # every time it was exported/re-imported, because email.policy.default's header folding
+    # duplicates the whitespace it folds on. Fixed by generating with utf8=True (raw UTF-8 headers,
+    # no encoded-word folding needed) - this locks that in without requiring a real Gmail account.
+    db_path = tmp_path / "gmail_index.db"
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    # Long enough (with the "Subject: " prefix) to cross email.policy.default's ~78-char fold
+    # threshold right at the space before the encoded word - that's specifically what triggers
+    # the whitespace-duplication bug this test guards against; a shorter subject wouldn't fold at all.
+    subject = "[mail-utils roundtrip test] two attachments, unicode subject: 日本語のテスト"
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(subject=subject))
+    conn.close()
+
+    output_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None))
+    written = output_dir / "2019" / "08" / "msg1.eml"
+    msg = email.message_from_bytes(written.read_bytes(), policy=email_policy_default)
+    assert str(msg["Subject"]) == subject
+
+    # Simulate a second round-trip (as store-in-gmail would do, rebuilding from the re-synced value)
+    # by re-exporting using the already-once-round-tripped subject as the new source value.
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(subject=str(msg["Subject"])))
+    conn.close()
+    output_dir_2 = tmp_path / "export2"
+    _run_export(argparse.Namespace(output_dir=str(output_dir_2), format="eml", filter=None))
+    written_2 = output_dir_2 / "2019" / "08" / "msg1.eml"
+    msg_2 = email.message_from_bytes(written_2.read_bytes(), policy=email_policy_default)
+    assert str(msg_2["Subject"]) == subject
 
 
 def test_export_eml_attaches_real_content_when_present(tmp_path, monkeypatch):

@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 from email import message_from_bytes
 from email.message import EmailMessage
-from email.policy import default as _email_policy_default
+from email.policy import default as _email_policy_base
 from email.utils import format_datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
@@ -94,6 +94,18 @@ from .thunderbird.tree import labels_for_folders as tb_labels_for_folders
 logger = logging.getLogger("mail_utils")
 
 PROGRESS_LOG_INTERVAL = 50
+
+# max_line_length=None disables header line-folding. Without it, a header needing RFC 2047 encoding
+# right after existing whitespace (e.g. a Subject with a trailing "topic: 日本語" run) gets folded in
+# a way that duplicates that whitespace on every export/store round-trip, growing by one space each
+# time - found via T0013's real Gmail round-trip testing. Deliberately *not* switched to utf8=True
+# (raw UTF-8 headers instead of RFC 2047 encoded-words): that also fixes the local encode/decode
+# round-trip, but real testing against the Gmail API showed it corrupts non-ASCII header bytes in
+# transit (mojibake) - RFC 2047's ASCII-safe encoded-words are what actually survives the API.
+# Body/attachment content encoding is unaffected: it's already been encoded using the message's own
+# construction-time policy (plain `default`, 78-char wrap) by the time this policy is applied at
+# as_bytes() time, so only the not-yet-folded header lines are affected.
+_email_policy_default = _email_policy_base.clone(max_line_length=None)
 
 
 def _get_version() -> str:
@@ -497,6 +509,7 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
     if not dry_run:
         creds = get_credentials(STORE_IN_GMAIL_SCOPES)
         service = build_gmail_service(creds)
+        logger.info("Target account: %s", get_profile(service).get("emailAddress"))
         label_cache = {lbl["name"]: lbl["id"] for lbl in list_labels(service)}
 
     count = 0

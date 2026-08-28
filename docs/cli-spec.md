@@ -175,6 +175,10 @@ mail-utils store-in-gmail [<source_dir>] [--filter <filter>] [--max-messages <N>
   idempotent and an interrupted or `--max-messages`-capped run is trivially resumable) and, when
   `<source_dir>` is omitted, as the actual source of the messages to store.
 
+Before writing anything, logs the authenticated Gmail account's address (`Target account: ...`) as a
+safety check against accidentally being signed into the wrong Google account - worth checking by eye
+before a run against a real mailbox.
+
 Preserves the original `Date:` header as the message's arrival date and translates each message's labels
 back into Gmail labels, creating any that don't already exist. Every message stored during one run also
 gets an additional label unique to that run - `mail-utils-store-in-gmail-<UTC timestamp>` - so the whole

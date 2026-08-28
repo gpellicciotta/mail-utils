@@ -155,7 +155,9 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   rerun instead of scattering its messages across several differently-timestamped labels; only a run that
   actually finished starts a fresh label next time. `_throttle_gmail_store` paces `messages.import` calls
   under Gmail's per-user quota (25 units/call, ~10 calls/sec ceiling) and `_gmail_call_with_backoff` retries
-  with exponential backoff on a 429/rate-limited 403 so a transient burst doesn't abort the run. Labels are
+  with exponential backoff on a 429/rate-limited 403 so a transient burst doesn't abort the run. Before any
+  write, the authenticated account's own address is logged (`Target account: ...`, via `get_profile`) as a
+  guard against running against the wrong Google account by mistake. Labels are
   resolved to IDs via `_resolve_label_ids`, creating any that don't already exist. `--dry-run` runs the same
   candidate/skip/filter logic without requesting credentials or calling the API, so it never touches
   `gmail_store_state`, only previews what a real run would do — and every stored message, plus the run's
