@@ -17,6 +17,11 @@ account once via `mail-utils prepare-gmail-account <name> --with-write`, then:
     python scripts/gmail-roundtrip-test.py cleanup --account <name> --label mail-utils-roundtrip-test-source --apply
     python scripts/gmail-roundtrip-test.py cleanup --account <name> --label <the tracking label> --apply
 
+`cleanup --apply` trashes every message carrying the given label, then deletes the label itself - a
+disposable test run leaves nothing behind, not even an empty label in the sidebar. Safe to rerun even
+after messages are already trashed (which excludes them from the default listing) since deleting the
+label doesn't depend on finding any.
+
 `compare` deliberately does not diff exported .eml files as raw bytes: Python's email library embeds
 a randomly generated MIME boundary every time a multipart message is serialized, so two semantically
 identical messages produce different bytes on that basis alone. Instead it parses both files and
@@ -36,7 +41,7 @@ from _cli_common import build_action_parser, get_mail_utils_version, print_help,
 
 from mail_utils.auth import get_credentials
 from mail_utils.config import STORE_IN_GMAIL_SCOPES, resolve_account_path
-from mail_utils.gmail_client import build_gmail_service, create_label, get_profile, import_message, list_labels
+from mail_utils.gmail_client import build_gmail_service, create_label, delete_label, get_profile, import_message, list_labels
 
 PROG = "gmail-roundtrip-test"
 DESCRIPTION = (
@@ -171,6 +176,12 @@ def _run_seed(args) -> int:
 
 
 def _run_cleanup(args) -> int:
+    """Trash every message carrying `args.label`, then delete the label itself - deleting a Gmail
+    label only removes the label from whatever messages had it (trashed or not), it never touches the
+    messages, so this is safe to do unconditionally once trashing is done. Also runs when 0 messages
+    currently carry the label (e.g. a prior --apply already trashed them all, which excludes them from
+    this listing by default) - otherwise a rerun would report "nothing to do" and leave the now-empty
+    label sitting in the mailbox forever, which is exactly the gap this was written to close."""
     service = _service(args.account, CLEANUP_SCOPES)
     label_names = {lbl["name"]: lbl["id"] for lbl in list_labels(service)}
     label_id = label_names.get(args.label)
@@ -188,15 +199,17 @@ def _run_cleanup(args) -> int:
             break
 
     print(f"{len(msg_ids)} messages carry label '{args.label}'.")
-    if not msg_ids:
-        return 0
     if not args.apply:
-        print("Dry run only - re-run with --apply to actually move them to Trash.")
+        print("Dry run only - re-run with --apply to actually move them to Trash and delete the label.")
         return 0
 
-    for msg_id in msg_ids:
-        service.users().messages().trash(userId="me", id=msg_id).execute()
-    print(f"Trashed {len(msg_ids)} messages.")
+    if msg_ids:
+        for msg_id in msg_ids:
+            service.users().messages().trash(userId="me", id=msg_id).execute()
+        print(f"Trashed {len(msg_ids)} messages.")
+
+    delete_label(service, label_id)
+    print(f"Deleted label '{args.label}'.")
     return 0
 
 

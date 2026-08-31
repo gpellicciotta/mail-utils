@@ -4,6 +4,7 @@ from mail_utils.gmail_client import (
     _extract_body_html,
     _extract_body_text,
     create_label,
+    delete_label,
     fetch_attachment_content,
     import_message,
     parse_addresses,
@@ -47,10 +48,15 @@ class _FakeMessagesResource:
 class _FakeLabelsResource:
     def __init__(self):
         self.create_calls = []
+        self.delete_calls = []
 
     def create(self, userId, body):
         self.create_calls.append({"userId": userId, "body": body})
         return _FakeExec({"id": f"Label_{body['name']}", "name": body["name"]})
+
+    def delete(self, userId, id):
+        self.delete_calls.append({"userId": userId, "id": id})
+        return _FakeExec(None)
 
 
 class _FakeUsers:
@@ -340,3 +346,10 @@ def test_create_label_calls_labels_create_with_name():
     assert result == {"id": "Label_Work/Projects", "name": "Work/Projects"}
     (call,) = service.users_resource.labels_resource.create_calls
     assert call == {"userId": "me", "body": {"name": "Work/Projects"}}
+
+
+def test_delete_label_calls_labels_delete_with_id():
+    service = _FakeService()
+    delete_label(service, "Label_Work/Projects")
+    (call,) = service.users_resource.labels_resource.delete_calls
+    assert call == {"userId": "me", "id": "Label_Work/Projects"}

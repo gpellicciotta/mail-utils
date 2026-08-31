@@ -129,6 +129,13 @@ def create_label(service, name: str) -> dict:
     return service.users().labels().create(userId="me", body={"name": name}).execute()
 
 
+def delete_label(service, label_id: str) -> None:
+    """Delete a label outright (not just remove it from messages) - requires gmail.labels or
+    gmail.modify, same as create_label. Used by scripts/gmail-roundtrip-test.py's cleanup action so a
+    disposable test run doesn't leave an empty label sitting in the mailbox indefinitely."""
+    service.users().labels().delete(userId="me", id=label_id).execute()
+
+
 def _decode_part(data: str) -> str:
     return base64.urlsafe_b64decode(data.encode("UTF-8")).decode("UTF-8", errors="replace")
 
