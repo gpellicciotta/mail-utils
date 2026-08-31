@@ -66,18 +66,16 @@ just noting it.
 
 ## Approach
 
-1. **Open design question to confirm before writing code**: proving the round trip requires re-importing an
+1. Proving the round trip requires re-importing an
    EML export directory tree into a local SQLite database - a capability that doesn't exist today (`import
    <path>` explicitly rejects a single `.eml`; `store-in-gmail`'s directory-source mode reads `.eml` trees
-   but writes to a live Gmail mailbox, not a local database). Proposed: add a new `import-eml <directory>`
+   but writes to a live Gmail mailbox, not a local database). **Decided**: add a new `import-eml <directory>`
    subcommand - the mirror image of `export --format eml`, reusing `store-in-gmail`'s existing
    `_eml_tree_candidates` walk (finds every `.eml` carrying `X-Mail-Utils-ID`) but upserting parsed rows via
    `db.py`'s existing `upsert_message`/`upsert_addresses`/`upsert_attachments` instead of calling the Gmail
    API. Preserving the original `X-Mail-Utils-ID` as the row's `id` (rather than minting a new one, the way
    Gmail necessarily does) means the round-trip comparison can match rows by exact `id` equality instead of
    the fuzzy subject+date pairing `scripts/gmail-roundtrip-test.py` needs - a stronger, simpler check.
-   Confirm this shape with the user before implementing (command name, whether it belongs in `cli-spec.md`
-   as a real documented feature or stays a lighter-weight internal tool - see Out of Scope).
 2. Run each of the 4 imports (`import-pst`/`import-thunderbird`, `--with-attachments --recursive`) against
    `--db data/storage/work-mail`, in increasing size order (fail fast on the small files before committing
    to the ~26 GB one). Expect this to take a long time for the largest file; run it in a way that survives
