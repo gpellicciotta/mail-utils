@@ -18,5 +18,3 @@ An overview of all tasks and their planning.
 ### Backlog
 
 - [~] T0014 preserve-html-body-and-inline-images  @claude
-- [~] A0016 add check-gmail-account command reporting the account name, authenticated email,  @claude
-      and granted OAuth scopes for a given --account (no new scopes requested)

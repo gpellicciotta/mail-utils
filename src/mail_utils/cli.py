@@ -360,6 +360,38 @@ def _run_prepare_gmail_account(args: argparse.Namespace) -> None:
     logger.info("Mail Utils %s operation ended: account %s authorized as %s", version, account_path, email)
 
 
+def _run_check_gmail_account(args: argparse.Namespace) -> None:
+    """Report which Google account a --account name actually maps to, and what it's authorized to
+    do - a read-only sanity check, not a setup step. Reuses get_credentials as every other command
+    does (silently refreshing an expired token if possible), so it doesn't need its own separate,
+    special-cased authentication path; it just never requests broader scopes than what's already
+    cached, so it can't itself widen an account's permissions."""
+    _setup_logging()
+    version = _get_version()
+    account_path = resolve_account_path(args.name)
+
+    logger.info("Mail Utils %s operation started: Check Gmail account", version)
+    logger.info("Account:   %s", account_path)
+
+    if not account_path.exists():
+        logger.info(
+            "Error: No account file found at %s. Run 'mail-utils prepare-gmail-account %s' first.",
+            account_path,
+            args.name,
+        )
+        return
+
+    creds = get_credentials(account_path)
+    service = build_gmail_service(creds)
+    profile = get_profile(service)
+
+    logger.info("Email:     %s", profile.get("emailAddress"))
+    logger.info("Scopes:    %s", ", ".join(creds.scopes or []) or "(none)")
+    logger.info("Messages:  %s", profile.get("messagesTotal"))
+    logger.info("Threads:   %s", profile.get("threadsTotal"))
+    logger.info("Mail Utils %s operation ended: account %s checked", version, account_path)
+
+
 def _resolve_label_ids(service, label_names: list[str], cache: dict[str, str]) -> list[str]:
     """Translate label display names (as written to X-Mail-Utils-Labels)
     back to Gmail label IDs, creating any that don't already exist.
@@ -1638,6 +1670,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prepare_gmail_account_cmd.set_defaults(func=_run_prepare_gmail_account)
     subcommand_parsers["prepare-gmail-account"] = prepare_gmail_account_cmd
+
+    check_gmail_account_cmd = subparsers.add_parser(
+        "check-gmail-account",
+        help="Report the authenticated email, granted scopes, and mailbox size for an --account (read-only)",
+    )
+    check_gmail_account_cmd.add_argument("name", help="Account name (resolved the same way as --account) or an explicit file path")
+    check_gmail_account_cmd.set_defaults(func=_run_check_gmail_account)
+    subcommand_parsers["check-gmail-account"] = check_gmail_account_cmd
 
     import_pst_cmd = subparsers.add_parser(
         "import-pst",

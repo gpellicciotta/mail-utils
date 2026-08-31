@@ -84,6 +84,26 @@ you meant to.
 
 ---
 
+### `check-gmail-account`
+Read-only sanity check: reports which Google account an `--account` name actually maps to, and what
+it's authorized to do - useful after setting up several accounts, to confirm which is which before
+running a command against the wrong one.
+
+```powershell
+mail-utils check-gmail-account <name>
+```
+
+- `<name>`: Account name (resolved the same way as `--account`'s value - see `prepare-gmail-account`
+  above).
+
+Prints the authenticated email address, the OAuth scopes actually granted to the cached token (so you
+can tell a read-only account from a write-capable one), and the mailbox's message/thread counts (from
+Gmail's own profile). Silently refreshes an expired-but-still-valid token the same way any other command
+would; if the account file doesn't exist yet, reports a clear error pointing at `prepare-gmail-account`
+instead of failing obscurely.
+
+---
+
 ### `import-pst` (alias: `import-outlook`)
 Ingests messages and folder hierarchies from a Microsoft Outlook `.pst` file.
 

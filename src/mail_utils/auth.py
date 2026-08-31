@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -41,9 +42,19 @@ def get_credentials(
     if creds and creds.valid and set(scopes) <= set(creds.scopes or []):
         return creds
 
+    refreshed = False
     if creds and creds.expired and creds.refresh_token and set(scopes) <= set(creds.scopes or []):
-        creds.refresh(Request())
-    else:
+        try:
+            creds.refresh(Request())
+            refreshed = True
+        except RefreshError:
+            # The cached refresh token itself has been revoked or expired server-side (e.g. after
+            # 6 months of inactivity, or the user revoked access in their Google Account) - not
+            # something a retry can fix. Fall through to a fresh interactive consent instead of
+            # crashing, same as if account_path had never existed.
+            pass
+
+    if not refreshed:
         if not app_credentials_path.exists():
             raise FileNotFoundError(
                 f"Missing {app_credentials_path}. Download an OAuth 'Desktop app' "

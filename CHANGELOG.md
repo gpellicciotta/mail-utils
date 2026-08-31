@@ -13,6 +13,8 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ### vNext
+- BackEnd: Add `check-gmail-account`, reporting an account's authenticated email, granted scopes, and mailbox size.
+- BackEnd: Fix a crash when a cached Gmail token's refresh token has been revoked or expired; falls back to re-consent instead.
 
 ## v3.0.0 [2026-08-28]
 - BackEnd: Add `prepare-gmail-account` and `--account` to authorize and select between multiple named Gmail accounts.

@@ -16,11 +16,13 @@ from mail_utils.cli import (
     _eml_tree_candidates,
     _gmail_call_with_backoff,
     _resolve_label_ids,
+    _run_check_gmail_account,
     _run_export,
     _run_import,
     _run_import_gmail,
     _run_import_pst,
     _run_import_thunderbird,
+    _run_prepare_gmail_account,
     _run_schedule,
     _run_stats,
     _run_store_in_gmail,
@@ -100,7 +102,7 @@ class _FakeUsers:
         return self.labels_resource
 
     def getProfile(self, userId):
-        return _FakeExec({"emailAddress": "fake-target-account@example.com"})
+        return _FakeExec({"emailAddress": "fake-target-account@example.com", "messagesTotal": 42, "threadsTotal": 7})
 
 
 class _FakeService:
@@ -230,6 +232,26 @@ def test_import_gmail_subcommand_routes_to_run_import_gmail():
     assert args.func is _run_import_gmail
 
 
+def test_prepare_gmail_account_subcommand_routes_and_parses():
+    args = build_parser().parse_args(["prepare-gmail-account", "tester", "--with-write"])
+    assert args.command == "prepare-gmail-account"
+    assert args.name == "tester"
+    assert args.with_write is True
+    assert args.func is _run_prepare_gmail_account
+
+
+def test_prepare_gmail_account_with_write_defaults_false():
+    args = build_parser().parse_args(["prepare-gmail-account", "tester"])
+    assert args.with_write is False
+
+
+def test_check_gmail_account_subcommand_routes_and_parses():
+    args = build_parser().parse_args(["check-gmail-account", "tester"])
+    assert args.command == "check-gmail-account"
+    assert args.name == "tester"
+    assert args.func is _run_check_gmail_account
+
+
 def test_store_in_gmail_subcommand_parses_and_routes():
     args = build_parser().parse_args(["store-in-gmail", "some/dir", "--dry-run", "--filter", "label:Work", "--max-messages", "5"])
     assert args.command == "store-in-gmail"
@@ -313,6 +335,90 @@ def test_throttle_gmail_store_does_not_sleep_when_enough_time_passed(monkeypatch
     _throttle_gmail_store(last_call_time=0.0)
 
     assert sleeps == []
+
+
+def test_run_prepare_gmail_account_reports_missing_app_credentials(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "APP_CREDENTIALS_PATH", tmp_path / "nonexistent-app-credentials.json")
+    monkeypatch.setattr(cli, "get_credentials", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")))
+
+    _run_prepare_gmail_account(argparse.Namespace(name=str(tmp_path / "tester-account.json"), with_write=False))
+
+    out = capsys.readouterr().out
+    assert "Missing" in out
+    assert "nonexistent-app-credentials.json" in out
+
+
+def test_run_prepare_gmail_account_authorizes_and_reports_email(tmp_path, monkeypatch, capsys):
+    app_credentials_path = tmp_path / "app-credentials.json"
+    app_credentials_path.write_text("{}")
+    monkeypatch.setattr(cli, "APP_CREDENTIALS_PATH", app_credentials_path)
+
+    account_path = tmp_path / "tester-account.json"
+    fake_service = _FakeService()
+    captured_scopes = []
+
+    def fake_get_credentials(given_account_path, scopes=None):
+        assert given_account_path == account_path
+        captured_scopes.append(scopes)
+        return "fake-creds"
+
+    monkeypatch.setattr(cli, "get_credentials", fake_get_credentials)
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    _run_prepare_gmail_account(argparse.Namespace(name=str(account_path), with_write=False))
+
+    out = capsys.readouterr().out
+    assert "fake-target-account@example.com" in out
+    assert captured_scopes == [cli.SCOPES]
+
+
+def test_run_prepare_gmail_account_with_write_requests_broader_scopes(tmp_path, monkeypatch, capsys):
+    app_credentials_path = tmp_path / "app-credentials.json"
+    app_credentials_path.write_text("{}")
+    monkeypatch.setattr(cli, "APP_CREDENTIALS_PATH", app_credentials_path)
+
+    account_path = tmp_path / "tester-account.json"
+    captured_scopes = []
+
+    def fake_get_credentials(given_account_path, scopes=None):
+        captured_scopes.append(scopes)
+        return "fake-creds"
+
+    monkeypatch.setattr(cli, "get_credentials", fake_get_credentials)
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: _FakeService())
+
+    _run_prepare_gmail_account(argparse.Namespace(name=str(account_path), with_write=True))
+
+    assert captured_scopes == [cli.STORE_IN_GMAIL_SCOPES]
+
+
+def test_run_check_gmail_account_reports_missing_account_file(tmp_path, capsys):
+    _run_check_gmail_account(argparse.Namespace(name=str(tmp_path / "tester-account.json")))
+
+    out = capsys.readouterr().out
+    assert "No account file found" in out
+    assert "prepare-gmail-account" in out
+
+
+def test_run_check_gmail_account_reports_email_scopes_and_mailbox_size(tmp_path, monkeypatch, capsys):
+    account_path = tmp_path / "tester-account.json"
+    account_path.write_text("{}")
+
+    class _FakeCreds:
+        def __init__(self):
+            self.scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+    fake_service = _FakeService()
+    monkeypatch.setattr(cli, "get_credentials", lambda given_account_path: _FakeCreds())
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    _run_check_gmail_account(argparse.Namespace(name=str(account_path)))
+
+    out = capsys.readouterr().out
+    assert "fake-target-account@example.com" in out
+    assert "gmail.readonly" in out
+    assert "42" in out
+    assert "7" in out
 
 
 def test_run_store_in_gmail_reports_missing_source_dir(tmp_path, capsys):

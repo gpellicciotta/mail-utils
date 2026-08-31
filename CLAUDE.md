@@ -37,6 +37,9 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   `import [<source_path>]` (smart unified import with auto-detection for Outlook PST, Thunderbird backup/profile, or Gmail fallback),
   `import-gmail` (Gmail API sync), `prepare-gmail-account <name>` (interactively authorizes a Gmail account
   and saves its token as `<name>-account.json`, for later selection via `--account` — see Architecture below),
+  `check-gmail-account <name>` (read-only: reports the authenticated email, granted OAuth scopes, and
+  mailbox size for an account, without changing anything — useful for confirming which account a name
+  actually maps to after setting up several),
   `import-pst <path>` (Outlook .pst import, alias `import-outlook`),
   `import-thunderbird <path>` (Thunderbird .pcv/profile import, alias `import-pcv`),
   `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary),
@@ -91,7 +94,11 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   itself. `scopes` defaults to `SCOPES`; `store-in-gmail` and `prepare-gmail-account --with-write` pass
   `STORE_IN_GMAIL_SCOPES` instead, which re-triggers consent if the cached token doesn't already cover the
   broader set (checked via `creds.scopes`) — every other caller is unaffected since it never asks for more
-  than the cached read-only token already grants.
+  than the cached read-only token already grants. A refresh attempt that raises `RefreshError` (the cached
+  refresh token was revoked or expired server-side — Google expires unused ones after 6 months, or the
+  user can revoke access directly) is caught and treated the same as no cached token at all, falling
+  through to a fresh interactive consent rather than crashing — found while manually verifying
+  `check-gmail-account` against a real stale account; `tests/test_auth.py` has the regression test.
 - **`attachment_store.py`** — content-addressed attachment byte storage. `configure(attachments_dir)` sets
   a module-level directory (called once per CLI run, from `cli.py::_resolve_db_path`, right after `--db` is
   resolved — see below); `save`/`read`/`path_for` operate under whatever directory was last configured,
@@ -154,7 +161,13 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   `prepare-gmail-account <name>` (resolves the target account path the same way `--account` does, requires
   the app credential file to already exist, runs `get_credentials` directly to drive consent, defaults to
   read-only `SCOPES` with `--with-write` requesting `STORE_IN_GMAIL_SCOPES` instead, and prints the
-  authenticated address via `get_profile` for confirmation), `stats`
+  authenticated address via `get_profile` for confirmation), `check-gmail-account <name>` (a read-only
+  counterpart - resolves the account path the same way, reports "no account file found" instead of
+  attempting anything if it's missing, otherwise calls `get_credentials` with the default read-only
+  `scopes` - which can't itself widen an account's permissions, and silently refreshes an expired token
+  exactly like every other command - then prints the authenticated email, `creds.scopes` (the token's
+  actual granted permissions, not just what was requested), and `get_profile`'s `messagesTotal`/
+  `threadsTotal`), `stats`
   (read-only reporting straight off the local SQLite file; no Gmail API calls, so it works offline and needs
   no credentials), `export <output_dir>` (also offline/local-DB-only — writes one YAML-frontmatter `.md` file or standard RFC 5322 `.eml` file via
   `--format md|eml` per message, bucketed into `<YYYY>/<MM>/` subdirectories by `internal_date_ms`, `unknown/`

@@ -71,6 +71,55 @@ def test_get_credentials_does_not_silently_reuse_a_token_with_narrower_scopes(mo
     assert set(broader_scopes) <= set(creds.scopes)
 
 
+def test_get_credentials_falls_back_to_consent_when_refresh_token_was_revoked(monkeypatch, tmp_path):
+    # Regression test: a cached token whose refresh_token was revoked server-side (e.g. the user
+    # revoked mail-utils's access in their Google Account, or it expired after 6 months of
+    # inactivity) makes Credentials.refresh() raise RefreshError - previously uncaught, crashing
+    # every command with a raw traceback instead of prompting for a fresh consent like a missing
+    # or never-authorized token would. Found while manually verifying check-gmail-account against
+    # a real stale account.
+    account_path = tmp_path / "tester-account.json"
+    _write_token(
+        account_path,
+        ["https://www.googleapis.com/auth/gmail.readonly"],
+        expiry=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+
+    from google.auth.exceptions import RefreshError
+    from google.oauth2.credentials import Credentials
+
+    def _raise_refresh_error(self, request):
+        raise RefreshError("invalid_grant: Token has been expired or revoked.")
+
+    monkeypatch.setattr(Credentials, "refresh", _raise_refresh_error)
+
+    reached_consent_flow = False
+
+    class _FakeFlow:
+        def run_local_server(self, port):
+            nonlocal reached_consent_flow
+            reached_consent_flow = True
+            return Credentials(
+                token="new-access-token",
+                refresh_token="new-refresh-token",
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id="client-id",
+                client_secret="client-secret",
+                scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+            )
+
+    app_credentials_path = tmp_path / "google-cloud-mail-utils-app-credentials.json"
+    app_credentials_path.write_text("{}")
+    monkeypatch.setattr(auth.InstalledAppFlow, "from_client_secrets_file", staticmethod(lambda *a, **k: _FakeFlow()))
+
+    creds = auth.get_credentials(
+        account_path, ["https://www.googleapis.com/auth/gmail.readonly"], app_credentials_path=app_credentials_path
+    )
+
+    assert reached_consent_flow, "a revoked refresh token must trigger a fresh consent flow, not crash"
+    assert creds.token == "new-access-token"
+
+
 def test_get_credentials_raises_a_clear_error_when_app_credentials_are_missing(tmp_path):
     account_path = tmp_path / "tester-account.json"
     app_credentials_path = tmp_path / "google-cloud-mail-utils-app-credentials.json"

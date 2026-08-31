@@ -109,6 +109,11 @@ confirm you signed into the account you meant to. Commands that talk to the Gmai
 <name>` to select which account file to use; omitting it falls back to `data/default-account.json` if
 that file exists.
 
+To double-check which email and scopes an already-set-up account actually has - handy once you've got
+several named accounts and want to confirm which is which before running a command against the wrong
+one - use `mail-utils check-gmail-account <name>`. It's read-only: it never widens an account's
+permissions, only reports what's already there.
+
 ---
 
 ## Testing
