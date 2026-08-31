@@ -240,31 +240,32 @@ def _part_content_id(part: dict) -> str | None:
 
 
 def parse_attachments(raw: dict) -> list:
-    """Return one row per MIME part that carries a filename - name, mime
-    type, size, Gmail's attachmentId (needed for a future
-    attachments.get fetch; the bytes themselves are never fetched here),
-    and content_id (set only for an inline image referenced from the HTML
-    body via `cid:`, None for a conventional attachment).
+    """Return one row per MIME part that is an attachment or inline image - name (if present),
+    mime type, size, Gmail's attachmentId (needed for a future attachments.get fetch;
+    the bytes themselves are never fetched here), and content_id (set only for an inline
+    image referenced from the HTML body via `cid:`, None for a conventional attachment).
 
-    Includes inline images, not just conventional attachments - both show
-    up as a "filename" on their MIME part, and this only captures
+    Includes inline images, not just conventional attachments - this only captures
     metadata, not content, so there's no reason to exclude either.
     """
     message_id = ID_PREFIX + raw["id"]
     attachments = []
 
     def walk(part: dict) -> None:
-        filename = part.get("filename")
-        if filename:
-            body = part.get("body", {})
+        filename = part.get("filename") or None
+        body = part.get("body", {})
+        attachment_id = body.get("attachmentId")
+        content_id = _part_content_id(part)
+
+        if filename or content_id or attachment_id:
             attachments.append(
                 {
                     "message_id": message_id,
-                    "attachment_id": body.get("attachmentId"),
+                    "attachment_id": attachment_id,
                     "filename": filename,
                     "mime_type": part.get("mimeType"),
                     "size": body.get("size"),
-                    "content_id": _part_content_id(part),
+                    "content_id": content_id,
                 }
             )
         for sub_part in part.get("parts", []) or []:

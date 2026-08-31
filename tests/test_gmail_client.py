@@ -310,6 +310,34 @@ def test_parse_attachments_captures_content_id_for_inline_image():
     ]
 
 
+def test_parse_attachments_captures_filenameless_inline_image():
+    raw = {
+        "id": "msg1",
+        "payload": {
+            "mimeType": "multipart/related",
+            "parts": [
+                _text_part("text/html", "<p>See <img src='cid:image002@01D'></p>"),
+                {
+                    "mimeType": "image/png",
+                    "headers": [{"name": "Content-ID", "value": "<image002@01D>"}],
+                    "body": {"attachmentId": "att2", "size": 42},
+                },
+            ],
+        },
+    }
+    rows = parse_attachments(raw)
+    assert rows == [
+        {
+            "message_id": "gmail:msg1",
+            "attachment_id": "att2",
+            "filename": None,
+            "mime_type": "image/png",
+            "size": 42,
+            "content_id": "<image002@01D>",
+        }
+    ]
+
+
 def test_import_message_base64url_encodes_raw_bytes_and_sets_flags():
     service = _FakeService()
     raw_bytes = b"From: a@example.com\r\nSubject: Hi\r\n\r\nBody"

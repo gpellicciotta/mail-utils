@@ -343,15 +343,13 @@ def parse_attachments(raw: RawMessage, pst: PSTFile | None = None) -> list:
     rows = []
     for row in raw.attachments:
         filename_bytes = row.get(PROP_ATTACH_LONG_FILENAME) or row.get(PROP_ATTACH_FILENAME)
-        if not filename_bytes:
-            continue
         mime_bytes = row.get(PROP_ATTACH_MIME_TAG)
         size_bytes = row.get(PROP_ATTACH_SIZE)
         rows.append(
             {
                 "message_id": message_id,
                 "attachment_id": None,  # no Gmail-style attachmentId equivalent in a PST
-                "filename": filename_bytes.decode("utf-16-le", errors="replace"),
+                "filename": filename_bytes.decode("utf-16-le", errors="replace") if filename_bytes else None,
                 "mime_type": mime_bytes.decode("utf-16-le", errors="replace") if mime_bytes else None,
                 "size": struct.unpack_from("<i", size_bytes, 0)[0] if size_bytes else None,
                 "content_id": _decode_content_id(row.get(PROP_ATTACH_CONTENT_ID)),

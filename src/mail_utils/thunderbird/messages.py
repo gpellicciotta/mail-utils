@@ -196,8 +196,10 @@ def parse_attachments(raw_msg: email.message.Message, with_content: bool = False
     if raw_msg.is_multipart():
         for part in raw_msg.walk():
             fn = part.get_filename()
-            if fn:
-                decoded_fn = decode_header_str(fn).strip()
+            content_id = part.get("Content-ID")
+            disposition = part.get_content_disposition()
+            if fn or content_id or disposition == "attachment":
+                decoded_fn = decode_header_str(fn).strip() if fn else None
                 payload = part.get_payload(decode=True)
                 size = len(payload) if payload is not None else 0
                 rows.append(
@@ -207,7 +209,7 @@ def parse_attachments(raw_msg: email.message.Message, with_content: bool = False
                         "filename": decoded_fn,
                         "mime_type": part.get_content_type(),
                         "size": size,
-                        "content_id": part.get("Content-ID"),
+                        "content_id": content_id,
                         "content": payload if with_content else None,
                     }
                 )

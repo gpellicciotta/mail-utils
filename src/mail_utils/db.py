@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_message_addresses_role_address
 CREATE TABLE IF NOT EXISTS attachments (
     message_id     TEXT NOT NULL,
     attachment_id  TEXT,
-    filename       TEXT NOT NULL,
+    filename       TEXT,
     mime_type      TEXT,
     size           INTEGER,
     content_sha256 TEXT,
@@ -106,6 +106,26 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _ensure_attachments_filename_nullable(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("PRAGMA table_info(attachments)").fetchall()
+    for row in rows:
+        if row[1] == "filename" and row[3] == 1:
+            conn.execute("CREATE TABLE attachments_new ("
+                         "message_id TEXT NOT NULL, "
+                         "attachment_id TEXT, "
+                         "filename TEXT, "
+                         "mime_type TEXT, "
+                         "size INTEGER, "
+                         "content_sha256 TEXT, "
+                         "content_id TEXT)")
+            conn.execute("INSERT INTO attachments_new SELECT message_id, attachment_id, filename, mime_type, size, content_sha256, content_id FROM attachments")
+            conn.execute("DROP TABLE attachments")
+            conn.execute("ALTER TABLE attachments_new RENAME TO attachments")
+            conn.execute("CREATE INDEX idx_attachments_message_id ON attachments (message_id)")
+            conn.commit()
+            break
+
+
 def init_db(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -118,6 +138,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     _ensure_column(conn, "messages", "body_html", "TEXT")
     _ensure_column(conn, "attachments", "content_sha256", "TEXT")
     _ensure_column(conn, "attachments", "content_id", "TEXT")
+    _ensure_attachments_filename_nullable(conn)
     _ensure_fts(conn)
     return conn
 

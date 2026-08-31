@@ -154,6 +154,35 @@ def test_parse_message_and_addresses_and_attachments():
     assert atts_with_content[0]["content"] == b"PDF content bytes"
 
 
+def test_parse_attachments_captures_filenameless_parts():
+    msg = EmailMessage()
+    msg.set_content("Body")
+    
+    # Add a filenameless part with a Content-ID
+    inline_part = EmailMessage()
+    inline_part.set_payload(b"image bytes")
+    inline_part["Content-Type"] = "image/png"
+    inline_part["Content-ID"] = "<image123@example.com>"
+    # Not setting Content-Disposition or filename
+    # Let's manually construct to be sure it has no filename
+    from email.message import Message
+    raw_msg = Message()
+    raw_msg.set_payload([Message(), Message()])
+    raw_msg.get_payload()[0].set_payload("Body")
+    raw_msg.get_payload()[0].set_type("text/plain")
+    
+    raw_msg.get_payload()[1].set_payload("image bytes")
+    raw_msg.get_payload()[1].set_type("image/png")
+    raw_msg.get_payload()[1].add_header("Content-ID", "<image123@example.com>")
+    
+    atts = parse_attachments(raw_msg)
+    assert len(atts) == 1
+    assert atts[0]["filename"] is None
+    assert atts[0]["mime_type"] == "image/png"
+    assert atts[0]["content_id"] == "<image123@example.com>"
+    assert atts[0]["size"] == len("image bytes")
+
+
 def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path):
     db_dir = tmp_path / "index"
 
