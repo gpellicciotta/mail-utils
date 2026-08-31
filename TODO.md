@@ -9,7 +9,7 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0017
+**Next ID:** 0018
 
 ---
 
@@ -18,3 +18,4 @@ An overview of all tasks and their planning.
 ### Backlog
 
 - [~] T0014 preserve-html-body-and-inline-images  @claude
+- [ ] T0017 capture-filenameless-attachments
