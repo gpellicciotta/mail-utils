@@ -17,6 +17,4 @@ An overview of all tasks and their planning.
 
 ### Backlog
 
-- [~] A0019 Fix stale "attachments are never captured" claims in docs/cli-spec.md and CLAUDE.md, and a  @claude
-      dangling README "Project layout" cross-reference, found while checking a specific docs claim.
 - [ ] T0017 capture-filenameless-attachments

@@ -13,7 +13,7 @@ mail-utils [--version] [--verbose] [<command>] [<args>...]
 ### Global Flags
 - `--version`: Print package version and copyright notice:
   ```
-  mail-utils 2.2.1 - Copyright (c) Giovanni Pellicciotta
+  mail-utils v<version> - Copyright (c) Giovanni Pellicciotta
   ```
   With `--verbose`, also prints the matching release entry from `CHANGELOG.md`.
 - `help` (or no command): Print summary help for all subcommands. With `--verbose`, prints full `--help` for every subcommand.
@@ -171,8 +171,11 @@ mail-utils export <output_dir> [-f|--format {md,eml}] [--filter <filter>] [--db 
 - `--filter <filter>`: Local filter expression to restrict export scope.
 - `--db <dir>`: Directory holding the database to read from (see "Database & Attachment Storage" below).
 
-If a message's attachment content was captured (via `--with-attachments` at import time), it's written back
-out too: `--format eml` attaches it as a real MIME part, `--format md` writes it into a
+`--format eml` rebuilds a proper `multipart/alternative` body when a message has both a plain-text and an
+HTML representation, instead of keeping only one. If a message's attachment content was captured (via
+`--with-attachments` at import time), it's written back out too: `--format eml` attaches it as a real MIME
+part - an inline image (one that also carries a `Content-ID`) is embedded so `<img src="cid:...">`
+references in the HTML body keep resolving - and `--format md` writes it into a
 `<message-file-stem>.attachments/` directory next to the `.md` file. An attachment with no captured
 content (an older sync, or one that ran without `--with-attachments`) falls back to metadata only, same as
 before this existed - see README's "Database contents" section.
@@ -238,10 +241,15 @@ retried with backoff on a rate-limit response, so a large store-in-gmail run sho
 Every message stored is logged individually, and the run's final summary always states how many messages
 were stored/skipped and which message was stored last.
 
-Attachment *content* is never stored - `mail-utils` has never captured attachment bytes, only metadata
-(filename, MIME type, size) - so stored messages are attachment-less regardless of source. Stored messages
-get a new Gmail-assigned message ID; the original id survives only as the message's own `X-Mail-Utils-ID`
-header.
+Rebuilds each message the same way `export --format eml` does: a message with both a plain-text and an
+HTML body is restored as a proper `multipart/alternative` body, not just one representation; an attachment
+whose content was captured (via `--with-attachments` at import time) is restored as a real MIME part -
+an inline image (one that also carries a `Content-ID`) is re-embedded so `<img src="cid:...">` references
+in the HTML body keep resolving, rather than becoming a regular attachment. An attachment with no captured
+content (an older sync, or one that ran without `--with-attachments`) falls back to a metadata-only
+`X-Mail-Utils-Attachment` header stub, same as `export --format eml` does - see README's "Database contents"
+section. Stored messages get a new Gmail-assigned message ID; the original id survives only as the
+message's own `X-Mail-Utils-ID` header.
 
 ---
 

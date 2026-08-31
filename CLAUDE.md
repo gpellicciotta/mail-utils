@@ -67,7 +67,8 @@ Dependencies are declared once, in `pyproject.toml` — there is no separate `re
 
 ## Architecture
 
-Modules and packages under `src/mail_utils/` (src layout — see README's "Project layout" for the rationale):
+Modules and packages under `src/mail_utils/` (a standard `src/` layout, per `docs/devops.md`'s "Local
+Environment & Dependencies"):
 
 - **`outlook/`** — read-only Outlook `.pst` parser (NDB/LTP layers) with zero external dependencies.
 - **`thunderbird/`** — read-only Thunderbird archive (`*.pcv`, `*.zip`, profile folders) parser: `archive.py`
@@ -113,13 +114,20 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   `parse_addresses`, a sibling pure function that splits/normalizes the same message's From/To/Cc/Bcc headers
   into individual `message_addresses` rows (via `email.utils.getaddresses`, lowercased for dedup), and
   `parse_attachments`, which walks the MIME tree collecting every part with a filename (metadata only —
-  filename/mime type/size/`attachmentId` — never the bytes). `parse_message`'s body extraction also records
-  `body_mime_type` (`"text/plain"` or `"text/html"`) alongside `body_text`, so downstream consumers (like
-  `cli.py`'s `export`) can tell which case they're in without re-deriving it. `import_message` (writes a raw
-  RFC 5322 message via `users.messages.import`, base64url-encoding it, with `internalDateSource="dateHeader"`
-  and `neverMarkSpam=True`) and `create_label` (`users.labels.create`) are the write-side counterparts used
-  only by `store-in-gmail`. See `README.md`'s "Database contents" section for the exact, currently-documented
-  behavior (and known gaps — `TODO.md` tracks fixing them).
+  filename/mime type/size/`attachmentId`/`content_id` — never the bytes; `content_id` is the part's
+  `Content-ID` header when present, set only for an inline image referenced from the HTML body via
+  `cid:`). `parse_message`'s body extraction records `body_mime_type` (`"text/plain"` or `"text/html"`)
+  alongside `body_text` (preferring a plain-text part when one exists, falling back to raw HTML markup
+  otherwise), so downstream consumers (like `cli.py`'s `export`) can tell which case they're in without
+  re-deriving it - and separately, `body_html` (via `_extract_body_html`) captures the message's
+  `text/html` part independently whenever one exists, alongside `body_text` rather than instead of it, so
+  neither representation is lost when a message carries both. `import_message` (writes a raw RFC 5322
+  message via `users.messages.import`, base64url-encoding it, with `internalDateSource="dateHeader"` and
+  `neverMarkSpam=True`) and `create_label` (`users.labels.create`) are the write-side counterparts used
+  only by `store-in-gmail`; `delete_label` (`users.labels.delete`) is a further write-side helper used only
+  by `scripts/gmail-roundtrip-test.py`'s `cleanup` action, not by any core CLI command. See `README.md`'s
+  "Database contents" section for the exact, currently-documented behavior (and known gaps —
+  `TODO.md` tracks fixing them).
 - **`db.py`** — SQLite schema and upsert helpers. `messages` (upserted by Gmail's message `id`, so
   reruns never duplicate), `sync_state` (currently just `last_history_id`), `labels` (id -> display name,
   refreshed in full every run), `message_addresses` and `attachments` (each one row per message/role/address or
@@ -218,9 +226,10 @@ Modules and packages under `src/mail_utils/` (src layout — see README's "Proje
   renamed for clarity once `export` and filtering existed too and "update" no longer distinctly described
   what it did.
 
-Full column-by-column documentation of what's actually stored (and, importantly, what *isn't* — e.g. attachments
-are never captured at all) lives in `README.md`'s "Database contents" section. Treat that as the authoritative
-schema reference, not this file — update it whenever `parse_message` or the schema in `db.py` changes.
+Full column-by-column documentation of what's actually stored (and, importantly, what's opt-in or
+conditional — e.g. attachment *content* is only captured with `--with-attachments`, never by default)
+lives in `README.md`'s "Database contents" section. Treat that as the authoritative schema reference, not
+this file — update it whenever `parse_message` or the schema in `db.py` changes.
 
 Schema changes to `messages` (like adding `cc`/`bcc`) need a migration, not just an edit to `SCHEMA` in `db.py` —
 `CREATE TABLE IF NOT EXISTS` only applies to a database that doesn't exist yet, so an existing
