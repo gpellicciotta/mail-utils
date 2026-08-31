@@ -9,7 +9,7 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0018
+**Next ID:** 0019
 
 ---
 
@@ -17,4 +17,6 @@ An overview of all tasks and their planning.
 
 ### Backlog
 
+- [~] A0018 Make gmail-roundtrip-test.py's cleanup action also delete the label after trashing its  @claude
+      messages, instead of leaving an empty label behind in the mailbox.
 - [ ] T0017 capture-filenameless-attachments
