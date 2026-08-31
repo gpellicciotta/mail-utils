@@ -9,7 +9,7 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0019
+**Next ID:** 0020
 
 ---
 
@@ -17,4 +17,6 @@ An overview of all tasks and their planning.
 
 ### Backlog
 
+- [~] A0019 Fix stale "attachments are never captured" claims in docs/cli-spec.md and CLAUDE.md, and a  @claude
+      dangling README "Project layout" cross-reference, found while checking a specific docs claim.
 - [ ] T0017 capture-filenameless-attachments
