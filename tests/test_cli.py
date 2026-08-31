@@ -128,9 +128,114 @@ def _write_eml_export(path, **overrides):
         "body_mime_type": "text/plain",
         "attachments": [],
         "body_text": "Body text",
+        "body_html": None,
     }
     fields.update(overrides)
     cli._export_message_eml(path, **fields)
+
+
+def _build_eml_message(**overrides):
+    fields = {
+        "msg_id": "msg1",
+        "thread_id": None,
+        "sender": "jane@example.com",
+        "recipient": "me@example.com",
+        "cc": None,
+        "bcc": None,
+        "subject": "Hello",
+        "date": "Wed, 19 Aug 2026 10:00:00 -0700",
+        "internal_date_ms": None,
+        "labels": [],
+        "body_mime_type": "text/plain",
+        "attachments": [],
+        "body_text": "Plain body",
+        "body_html": None,
+    }
+    fields.update(overrides)
+    return cli._build_eml_message(**fields)
+
+
+def test_build_eml_message_preserves_both_bodies_as_multipart_alternative():
+    msg = _build_eml_message(body_text="Plain body", body_html="<p>HTML body</p>")
+
+    assert msg.get_content_type() == "multipart/alternative"
+    assert msg.get_body(preferencelist=("plain",)).get_content().strip() == "Plain body"
+    assert "<p>HTML body</p>" in msg.get_body(preferencelist=("html",)).get_content()
+
+
+def test_build_eml_message_uses_html_only_when_no_plain_text():
+    msg = _build_eml_message(body_text=None, body_html="<p>Only HTML</p>")
+
+    assert msg.get_content_type() == "text/html"
+    assert "<p>Only HTML</p>" in msg.get_content()
+
+
+def test_build_eml_message_uses_html_only_when_body_text_is_the_html_fallback_duplicate():
+    """For an html-only message, _extract_body_text's fallback puts the same raw HTML markup into
+    body_text (with body_mime_type "text/html") that _extract_body_html also captures - body_text
+    isn't genuinely plain text there, so it must not be wrapped as a bogus text/plain alternative
+    (that would flip body_mime_type to text/plain on the next import, losing the html/plain distinction
+    - caught via a real-account round-trip test)."""
+    html = "<html><body><p>Only HTML</p></body></html>"
+    msg = _build_eml_message(body_text=html, body_mime_type="text/html", body_html=html)
+
+    assert msg.get_content_type() == "text/html"
+    assert "<p>Only HTML</p>" in msg.get_content()
+
+
+def test_build_eml_message_embeds_inline_image_with_matching_content_id(tmp_path, monkeypatch):
+    attachment_store.configure(tmp_path / "attachments")
+    digest = attachment_store.save(b"PNG bytes")
+
+    msg = _build_eml_message(
+        body_text="Plain body",
+        body_html='<p>See <img src="cid:logo@example"></p>',
+        attachments=[
+            {
+                "filename": "logo.png",
+                "mime_type": "image/png",
+                "size": 9,
+                "content_sha256": digest,
+                "content_id": "<logo@example>",
+            }
+        ],
+    )
+
+    html_part = msg.get_body(preferencelist=("html",))
+    assert html_part.get_content_type() == "text/html"
+    related_parts = [p for p in msg.walk() if p.get_content_type() == "image/png"]
+    assert len(related_parts) == 1
+    assert related_parts[0]["Content-ID"] == "<logo@example>"
+    assert related_parts[0].get_content() == b"PNG bytes"
+    assert related_parts[0].get_content_disposition() == "inline"
+    assert related_parts[0].get_filename() == "logo.png"
+    assert list(msg.iter_attachments()) == []
+
+
+def test_build_eml_message_falls_back_to_regular_attachment_without_html_body(tmp_path, monkeypatch):
+    """An inline image's content_id is only actionable once there's an HTML body to embed it into -
+    without one (plain-text-only message), it must not be silently dropped."""
+    attachment_store.configure(tmp_path / "attachments")
+    digest = attachment_store.save(b"PNG bytes")
+
+    msg = _build_eml_message(
+        body_text="Plain body",
+        body_html=None,
+        attachments=[
+            {
+                "filename": "logo.png",
+                "mime_type": "image/png",
+                "size": 9,
+                "content_sha256": digest,
+                "content_id": "<logo@example>",
+            }
+        ],
+    )
+
+    attachment_parts = list(msg.iter_attachments())
+    assert len(attachment_parts) == 1
+    assert attachment_parts[0].get_filename() == "logo.png"
+    assert attachment_parts[0].get_content() == b"PNG bytes"
 
 
 def _no_sleep(monkeypatch):

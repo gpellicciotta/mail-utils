@@ -469,16 +469,22 @@ def _db_candidates(conn: sqlite3.Connection) -> Iterator[tuple[str, Path | None,
     needing a prior export step. Ordered by id for deterministic, resumable processing."""
     label_names_by_id = dict(conn.execute("SELECT id, name FROM labels"))
     attachments_by_message: dict[str, list] = {}
-    for message_id, filename, mime_type, size, content_sha256 in conn.execute(
-        "SELECT message_id, filename, mime_type, size, content_sha256 FROM attachments ORDER BY message_id"
+    for message_id, filename, mime_type, size, content_sha256, content_id in conn.execute(
+        "SELECT message_id, filename, mime_type, size, content_sha256, content_id FROM attachments ORDER BY message_id"
     ):
         attachments_by_message.setdefault(message_id, []).append(
-            {"filename": filename, "mime_type": mime_type, "size": size, "content_sha256": content_sha256}
+            {
+                "filename": filename,
+                "mime_type": mime_type,
+                "size": size,
+                "content_sha256": content_sha256,
+                "content_id": content_id,
+            }
         )
 
     rows = conn.execute(
         "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
-        "internal_date_ms, label_ids, body_text, body_mime_type FROM messages ORDER BY id"
+        "internal_date_ms, label_ids, body_text, body_mime_type, body_html FROM messages ORDER BY id"
     ).fetchall()
 
     for (
@@ -494,6 +500,7 @@ def _db_candidates(conn: sqlite3.Connection) -> Iterator[tuple[str, Path | None,
         label_ids,
         body_text,
         body_mime_type,
+        body_html,
     ) in rows:
         label_names = [label_names_by_id.get(lbl, lbl) for lbl in label_ids.split(",")] if label_ids else []
         msg = _build_eml_message(
@@ -510,6 +517,7 @@ def _db_candidates(conn: sqlite3.Connection) -> Iterator[tuple[str, Path | None,
             body_mime_type=body_mime_type,
             attachments=attachments_by_message.get(msg_id, []),
             body_text=body_text,
+            body_html=body_html,
         )
         yield msg_id, None, msg.as_bytes(policy=_email_policy_default), label_names
 
@@ -1136,10 +1144,21 @@ def _build_eml_message(
     body_mime_type: str | None,
     attachments: list,
     body_text: str | None,
+    body_html: str | None = None,
 ) -> EmailMessage:
     """Build the same standard RFC 5322 message `export --format eml` writes to disk - also used
     to build store-in-gmail's database-source candidates on the fly, so a database-sourced store
-    produces byte-for-byte the same message shape as storing a previously exported .eml file."""
+    produces byte-for-byte the same message shape as storing a previously exported .eml file.
+
+    When both a plain-text and an HTML body were captured, both are preserved as a
+    multipart/alternative body (plain first, HTML second, per RFC 2046's "richest representation
+    last" convention) instead of picking one and discarding the other. An inline image - an
+    attachment whose Content-ID was captured, referenced from the HTML body via `cid:` - is
+    embedded as a related part under the HTML alternative so `<img src="cid:...">` keeps
+    resolving after import; that only happens for attachments whose actual bytes were captured
+    (`--with-attachments` at import time), same precondition as any other real attachment part
+    below - a content-less inline image falls back to the same X-Mail-Utils-Attachment metadata
+    stub as any other attachment with no captured bytes."""
     msg = EmailMessage()
     if subject:
         msg["Subject"] = subject
@@ -1182,12 +1201,51 @@ def _build_eml_message(
             att_desc += f" ({'; '.join(meta)})"
         msg["X-Mail-Utils-Attachment"] = att_desc
 
-    if body_mime_type == "text/html":
+    if body_text and body_mime_type == "text/plain" and body_html:
+        # body_mime_type must be checked here, not just "is body_text truthy" - for an html-only
+        # message, _extract_body_text's fallback puts the *same* raw HTML markup into body_text (with
+        # body_mime_type "text/html"), so body_text isn't genuinely plain text in that case. Building
+        # a multipart/alternative from it anyway would wrap raw HTML in a bogus text/plain part -
+        # confirmed via a real-account round-trip: re-importing that message flipped its
+        # body_mime_type to "text/plain" and left the HTML markup literal in body_text.
+        msg.set_content(body_text, subtype="plain", charset="utf-8")
+        msg.add_alternative(body_html, subtype="html", charset="utf-8")
+        html_part = msg.get_payload()[1]
+    elif body_html:
+        msg.set_content(body_html, subtype="html", charset="utf-8")
+        html_part = msg
+    elif body_mime_type == "text/html":
         msg.set_content(body_text or "", subtype="html", charset="utf-8")
+        html_part = None
     else:
         msg.set_content(body_text or "", subtype="plain", charset="utf-8")
+        html_part = None
 
+    inline_attachments = []
+    regular_attachments = []
     for att in content_attachments:
+        if html_part is not None and att.get("content_id"):
+            inline_attachments.append(att)
+        else:
+            regular_attachments.append(att)
+
+    for att in inline_attachments:
+        data = attachment_store.read(att["content_sha256"])
+        mime_type = att.get("mime_type") or "application/octet-stream"
+        maintype, _, subtype = mime_type.partition("/")
+        # disposition="inline" must be passed explicitly alongside filename - add_related() only
+        # defaults to inline disposition when no filename is given; passing both otherwise silently
+        # reverts to "attachment" (verified empirically), which would defeat embedding it at all.
+        html_part.add_related(
+            data,
+            maintype=maintype or "image",
+            subtype=subtype or "png",
+            filename=att.get("filename") or "attachment",
+            cid=att["content_id"],
+            disposition="inline",
+        )
+
+    for att in regular_attachments:
         data = attachment_store.read(att["content_sha256"])
         mime_type = att.get("mime_type") or "application/octet-stream"
         maintype, _, subtype = mime_type.partition("/")
@@ -1217,6 +1275,7 @@ def _export_message_eml(
     body_mime_type: str | None,
     attachments: list,
     body_text: str | None,
+    body_html: str | None = None,
 ) -> None:
     msg = _build_eml_message(
         msg_id=msg_id,
@@ -1232,6 +1291,7 @@ def _export_message_eml(
         body_mime_type=body_mime_type,
         attachments=attachments,
         body_text=body_text,
+        body_html=body_html,
     )
 
     target_file.write_bytes(msg.as_bytes(policy=_email_policy_default))
@@ -1271,16 +1331,22 @@ def _run_export(args: argparse.Namespace) -> None:
     label_names = dict(cur.execute("SELECT id, name FROM labels"))
 
     attachments_by_message = {}
-    for message_id, filename, mime_type, size, content_sha256 in cur.execute(
-        "SELECT message_id, filename, mime_type, size, content_sha256 FROM attachments ORDER BY message_id"
+    for message_id, filename, mime_type, size, content_sha256, content_id in cur.execute(
+        "SELECT message_id, filename, mime_type, size, content_sha256, content_id FROM attachments ORDER BY message_id"
     ):
         attachments_by_message.setdefault(message_id, []).append(
-            {"filename": filename, "mime_type": mime_type, "size": size, "content_sha256": content_sha256}
+            {
+                "filename": filename,
+                "mime_type": mime_type,
+                "size": size,
+                "content_sha256": content_sha256,
+                "content_id": content_id,
+            }
         )
 
     rows = cur.execute(
         "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
-        "internal_date_ms, label_ids, body_text, body_mime_type FROM messages"
+        "internal_date_ms, label_ids, body_text, body_mime_type, body_html FROM messages"
     ).fetchall()
     conn.close()
 
@@ -1299,6 +1365,7 @@ def _run_export(args: argparse.Namespace) -> None:
         label_ids,
         body_text,
         body_mime_type,
+        body_html,
     ) in rows:
         if matching_ids is not None and msg_id not in matching_ids:
             continue
@@ -1330,6 +1397,7 @@ def _run_export(args: argparse.Namespace) -> None:
                 body_mime_type=body_mime_type,
                 attachments=attachments_by_message.get(msg_id, []),
                 body_text=body_text,
+                body_html=body_html,
             )
         else:
             _export_message_md(

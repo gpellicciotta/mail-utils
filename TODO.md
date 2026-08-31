@@ -17,5 +17,4 @@ An overview of all tasks and their planning.
 
 ### Backlog
 
-- [~] T0014 preserve-html-body-and-inline-images  @claude
 - [ ] T0017 capture-filenameless-attachments

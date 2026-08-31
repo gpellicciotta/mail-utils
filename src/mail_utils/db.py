@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS messages (
     label_ids   TEXT,
     body_text   TEXT,
     body_mime_type TEXT,
+    body_html   TEXT,
     fetched_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -52,7 +53,8 @@ CREATE TABLE IF NOT EXISTS attachments (
     filename       TEXT NOT NULL,
     mime_type      TEXT,
     size           INTEGER,
-    content_sha256 TEXT
+    content_sha256 TEXT,
+    content_id     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_attachments_message_id
@@ -113,7 +115,9 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     _ensure_column(conn, "messages", "bcc", "TEXT")
     _ensure_column(conn, "messages", "internal_date_ms", "INTEGER")
     _ensure_column(conn, "messages", "body_mime_type", "TEXT")
+    _ensure_column(conn, "messages", "body_html", "TEXT")
     _ensure_column(conn, "attachments", "content_sha256", "TEXT")
+    _ensure_column(conn, "attachments", "content_id", "TEXT")
     _ensure_fts(conn)
     return conn
 
@@ -172,9 +176,9 @@ def upsert_addresses(conn: sqlite3.Connection, message_id: str, addresses: list)
 def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: list) -> None:
     """Replace message_id's rows in attachments with `attachments`.
 
-    Same delete-then-insert rationale as upsert_addresses. `content_sha256` is read via `.get()`
-    (defaulting to `None`) since only a caller that opted into `--with-attachments` sets it - every
-    other caller keeps passing plain metadata-only dicts unchanged.
+    Same delete-then-insert rationale as upsert_addresses. `content_sha256` and `content_id` are read
+    via `.get()` (defaulting to `None`) since not every caller sets them - `content_sha256` only when
+    `--with-attachments` was used, `content_id` only for a Gmail inline-image part that carried one.
     """
     conn.execute("DELETE FROM attachments WHERE message_id = ?", (message_id,))
     if attachments:
@@ -186,22 +190,26 @@ def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: l
                 "mime_type": att.get("mime_type"),
                 "size": att.get("size"),
                 "content_sha256": att.get("content_sha256"),
+                "content_id": att.get("content_id"),
             }
             for att in attachments
         ]
         conn.executemany(
-            "INSERT INTO attachments (message_id, attachment_id, filename, mime_type, size, content_sha256) "
-            "VALUES (:message_id, :attachment_id, :filename, :mime_type, :size, :content_sha256)",
+            "INSERT INTO attachments (message_id, attachment_id, filename, mime_type, size, content_sha256, content_id) "
+            "VALUES (:message_id, :attachment_id, :filename, :mime_type, :size, :content_sha256, :content_id)",
             rows,
         )
     conn.commit()
 
 
 def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
+    """`body_html` is read via `.get()` (defaulting to `None`) since not every source parser
+    populates it yet (see gmail_client.py's `parse_message` vs. outlook/thunderbird's)."""
+    params = {**msg, "body_html": msg.get("body_html")}
     conn.execute(
         """
-        INSERT INTO messages (id, thread_id, sender, recipient, cc, bcc, subject, date, internal_date_ms, snippet, label_ids, body_text, body_mime_type)
-        VALUES (:id, :thread_id, :sender, :recipient, :cc, :bcc, :subject, :date, :internal_date_ms, :snippet, :label_ids, :body_text, :body_mime_type)
+        INSERT INTO messages (id, thread_id, sender, recipient, cc, bcc, subject, date, internal_date_ms, snippet, label_ids, body_text, body_mime_type, body_html)
+        VALUES (:id, :thread_id, :sender, :recipient, :cc, :bcc, :subject, :date, :internal_date_ms, :snippet, :label_ids, :body_text, :body_mime_type, :body_html)
         ON CONFLICT(id) DO UPDATE SET
             thread_id = excluded.thread_id,
             sender = excluded.sender,
@@ -214,9 +222,10 @@ def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
             snippet = excluded.snippet,
             label_ids = excluded.label_ids,
             body_text = excluded.body_text,
-            body_mime_type = excluded.body_mime_type
+            body_mime_type = excluded.body_mime_type,
+            body_html = excluded.body_html
         """,
-        msg,
+        params,
     )
     try:
         conn.execute("DELETE FROM messages_fts WHERE id = ?", (msg["id"],))

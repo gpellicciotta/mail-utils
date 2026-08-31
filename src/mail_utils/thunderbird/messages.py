@@ -118,6 +118,26 @@ def extract_body(raw_msg: email.message.Message) -> tuple[str, str | None]:
     return "", None
 
 
+def extract_html_body(raw_msg: email.message.Message) -> str | None:
+    """Return the message's text/html part content, independent of whether a text/plain sibling
+    also exists - mirrors gmail_client.py's _extract_body_html, so both representations are
+    preserved rather than only the plain-text one extract_body prefers."""
+    parts = raw_msg.walk() if raw_msg.is_multipart() else [raw_msg]
+    for part in parts:
+        if part.get_filename():
+            continue
+        if part.get_content_type() == "text/html":
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                continue
+            charset = part.get_content_charset() or "utf-8"
+            try:
+                return payload.decode(charset, errors="replace")
+            except LookupError:
+                return payload.decode("utf-8", errors="replace")
+    return None
+
+
 def parse_message(raw_msg: email.message.Message, label_id: str | None = None) -> dict:
     """Parse a raw email.message.Message into a `messages` table row dict."""
     msg_id = make_message_id(raw_msg)
@@ -143,6 +163,7 @@ def parse_message(raw_msg: email.message.Message, label_id: str | None = None) -
         "label_ids": label_id or "",
         "body_text": body_text,
         "body_mime_type": body_mime_type,
+        "body_html": extract_html_body(raw_msg),
     }
 
 
@@ -186,6 +207,7 @@ def parse_attachments(raw_msg: email.message.Message, with_content: bool = False
                         "filename": decoded_fn,
                         "mime_type": part.get_content_type(),
                         "size": size,
+                        "content_id": part.get("Content-ID"),
                         "content": payload if with_content else None,
                     }
                 )

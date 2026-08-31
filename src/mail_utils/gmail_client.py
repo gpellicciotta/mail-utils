@@ -152,13 +152,30 @@ def _extract_body_text(payload: dict) -> tuple:
     return "", None
 
 
+def _extract_body_html(payload: dict) -> str | None:
+    """Return the raw text/html part's content when this message has one, independent of whether
+    a text/plain sibling also exists - unlike _extract_body_text (which prefers plain and only
+    falls back to html when no plain part exists anywhere), this always finds the html part so it
+    can be preserved alongside body_text rather than lost when both representations are present."""
+    if payload.get("mimeType") == "text/html" and payload.get("body", {}).get("data"):
+        return _decode_part(payload["body"]["data"])
+
+    for part in payload.get("parts", []) or []:
+        html = _extract_body_html(part)
+        if html:
+            return html
+
+    return None
+
+
 def _headers(raw: dict) -> dict:
     return {h["name"].lower(): h["value"] for h in raw.get("payload", {}).get("headers", [])}
 
 
 def parse_message(raw: dict) -> dict:
     headers = _headers(raw)
-    body_text, body_mime_type = _extract_body_text(raw.get("payload", {}))
+    payload = raw.get("payload", {})
+    body_text, body_mime_type = _extract_body_text(payload)
     return {
         "id": ID_PREFIX + raw["id"],
         "thread_id": raw.get("threadId"),
@@ -173,6 +190,7 @@ def parse_message(raw: dict) -> dict:
         "label_ids": ",".join(raw.get("labelIds", [])),
         "body_text": body_text,
         "body_mime_type": body_mime_type,
+        "body_html": _extract_body_html(payload),
     }
 
 
@@ -204,10 +222,22 @@ def parse_addresses(raw: dict) -> list:
     return rows
 
 
+def _part_content_id(part: dict) -> str | None:
+    """Return this MIME part's `Content-ID` header value (e.g. `<image001.png@01D...>`), or None -
+    the marker an HTML body's `<img src="cid:...">` reference points at, present on inline-image
+    parts but not on conventional attachments."""
+    for header in part.get("headers", []) or []:
+        if header.get("name", "").lower() == "content-id":
+            return header.get("value")
+    return None
+
+
 def parse_attachments(raw: dict) -> list:
     """Return one row per MIME part that carries a filename - name, mime
-    type, size, and Gmail's attachmentId (needed for a future
-    attachments.get fetch; the bytes themselves are never fetched here).
+    type, size, Gmail's attachmentId (needed for a future
+    attachments.get fetch; the bytes themselves are never fetched here),
+    and content_id (set only for an inline image referenced from the HTML
+    body via `cid:`, None for a conventional attachment).
 
     Includes inline images, not just conventional attachments - both show
     up as a "filename" on their MIME part, and this only captures
@@ -227,6 +257,7 @@ def parse_attachments(raw: dict) -> list:
                     "filename": filename,
                     "mime_type": part.get("mimeType"),
                     "size": body.get("size"),
+                    "content_id": _part_content_id(part),
                 }
             )
         for sub_part in part.get("parts", []) or []:

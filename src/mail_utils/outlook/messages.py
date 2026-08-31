@@ -39,6 +39,7 @@ PROP_ATTACH_LONG_FILENAME = 0x3707
 PROP_ATTACH_MIME_TAG = 0x370E
 PROP_ATTACH_SIZE = 0x0E20
 PROP_ATTACH_DATA_BINARY = 0x3701
+PROP_ATTACH_CONTENT_ID = 0x3712  # PidTagAttachContentId - set for an inline image referenced via cid:
 PROP_LTP_ROW_ID = 0x67F2  # an Attachment Table row's own attachment-object NID, [MS-PST] 2.4.6.1
 
 PTYPE_STRING = 0x001F  # UTF-16LE
@@ -184,6 +185,16 @@ def _extract_body(props: dict, codepage: int) -> tuple:
     return "", None
 
 
+def _extract_html_body(props: dict, codepage: int) -> str | None:
+    """Return PidTagHtmlBody's decoded content when present, independent of whether PidTagBody
+    (plain text) also exists - mirrors gmail_client.py's _extract_body_html, so both
+    representations are preserved rather than only the plain-text one _extract_body prefers."""
+    html_prop = props.get(PROP_HTML_BODY)
+    if html_prop is not None and html_prop.value:
+        return _decode_string(html_prop, codepage)
+    return None
+
+
 def _format_address(name: str | None, address: str | None) -> str | None:
     name = (name or "").strip()
     address = (address or "").strip()
@@ -229,6 +240,7 @@ def parse_message(raw: RawMessage, label_id: str | None = None) -> dict:
         "label_ids": label_id or "",
         "body_text": body_text,
         "body_mime_type": body_mime_type,
+        "body_html": _extract_html_body(props, codepage),
     }
 
 
@@ -309,6 +321,20 @@ def _recipient_table_summary(recipients: list) -> dict:
     return {role: ", ".join(values) or None for role, values in by_role.items()}
 
 
+def _decode_content_id(content_id_bytes: bytes | None) -> str | None:
+    """PidTagAttachContentId stores the bare id (e.g. `image001@01D...`), matching the `cid:` URI
+    in the HTML body - but a MIME `Content-ID` header needs it wrapped in angle brackets (RFC 5322
+    msg-id syntax), same form gmail_client.py's parse_attachments already captures straight off the
+    raw `Content-ID` header. Normalize here so cli.py's EML builder can treat every source's
+    content_id the same way, without needing to know which source produced it."""
+    if not content_id_bytes:
+        return None
+    value = content_id_bytes.decode("utf-16-le", errors="replace").strip()
+    if not value:
+        return None
+    return value if value.startswith("<") else f"<{value}>"
+
+
 def parse_attachments(raw: RawMessage, pst: PSTFile | None = None) -> list:
     """`pst`, when given, additionally fetches each attachment's actual bytes into a "content" key
     via `fetch_attachment_content` - a separate resolve + read per attachment, so left out (`None`)
@@ -328,6 +354,7 @@ def parse_attachments(raw: RawMessage, pst: PSTFile | None = None) -> list:
                 "filename": filename_bytes.decode("utf-16-le", errors="replace"),
                 "mime_type": mime_bytes.decode("utf-16-le", errors="replace") if mime_bytes else None,
                 "size": struct.unpack_from("<i", size_bytes, 0)[0] if size_bytes else None,
+                "content_id": _decode_content_id(row.get(PROP_ATTACH_CONTENT_ID)),
                 "content": fetch_attachment_content(pst, raw, row) if pst is not None else None,
             }
         )

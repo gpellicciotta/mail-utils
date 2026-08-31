@@ -126,6 +126,34 @@ def _seed_messages(to_address: str) -> list[EmailMessage]:
     m5.add_attachment(large_payload, maintype="application", subtype="octet-stream", filename="large.bin")
     messages.append(m5)
 
+    m6 = EmailMessage()
+    m6["Subject"] = f"{SUBJECT_PREFIX}HTML body with inline image"
+    m6["From"] = "roundtrip-sender@example.com"
+    m6["To"] = to_address
+    m6["Date"] = format_datetime(base + timedelta(hours=5))
+    m6.set_content("Plain-text fallback: see the logo image below.\n")
+    inline_cid = "roundtrip-inline-logo@example.com"
+    m6.add_alternative(
+        f'<html><body><p>Formatted body with an inline image:</p><img src="cid:{inline_cid}"></body></html>\n',
+        subtype="html",
+    )
+    smallest_png = bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108020000009077"
+        "53de0000000c4944415408d763f8cfc0c00000030101007e5ac1550000000049454e44ae426082"
+    )
+    # Real-world inline images (Outlook, Gmail compose) carry a filename even though disposition is
+    # inline - matching that here matters because gmail_client.py's parse_attachments only captures a
+    # MIME part that has one; a filename-less inline part is invisible to it, same as any other
+    # attachment (a separate, pre-existing gap - see TODO.md).
+    # disposition="inline" is passed explicitly - add_related() defaults to inline disposition only
+    # when no filename is given; passing both filename and cid (matching how real mail clients embed
+    # inline images) otherwise silently reverts EmailMessage's default to "attachment" (verified
+    # empirically), which would defeat the point of this seed message.
+    m6.get_payload()[1].add_related(
+        smallest_png, maintype="image", subtype="png", filename="logo.png", cid=f"<{inline_cid}>", disposition="inline"
+    )
+    messages.append(m6)
+
     return messages
 
 
@@ -178,9 +206,11 @@ def _load_db(db_path: Path) -> dict:
     label_name_by_id = dict(conn.execute("SELECT id, name FROM labels"))
     messages = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM messages")}
     attachments = {}
-    for row in conn.execute("SELECT message_id, filename, mime_type, size, content_sha256 FROM attachments ORDER BY message_id"):
+    for row in conn.execute(
+        "SELECT message_id, filename, mime_type, size, content_sha256, content_id FROM attachments ORDER BY message_id"
+    ):
         attachments.setdefault(row["message_id"], []).append(
-            (row["filename"], row["mime_type"], row["size"], row["content_sha256"])
+            (row["filename"], row["mime_type"], row["size"], row["content_sha256"], row["content_id"])
         )
     addresses = {}
     for row in conn.execute("SELECT message_id, role, address, name FROM message_addresses"):
@@ -228,7 +258,7 @@ def _compare_databases(origin: dict, result: dict) -> list[str]:
     for msg_id in unmatched_result:
         problems.append(f"Result message {msg_id!r} ({result['messages'][msg_id]['subject']!r}) has no unique match in origin.")
 
-    exact_fields = ("sender", "recipient", "cc", "bcc", "body_text", "body_mime_type", "internal_date_ms")
+    exact_fields = ("sender", "recipient", "cc", "bcc", "body_text", "body_mime_type", "body_html", "internal_date_ms")
     for origin_id, result_id in pairs:
         o, r = origin["messages"][origin_id], result["messages"][result_id]
         label = f"{o['subject']!r} ({origin_id} -> {result_id})"
@@ -248,7 +278,7 @@ def _compare_databases(origin: dict, result: dict) -> list[str]:
         r_atts = sorted(result["attachments"].get(result_id, []))
         if o_atts != r_atts:
             problems.append(f"{label}: attachments differ:\n  origin: {o_atts}\n  result: {r_atts}")
-        if any(sha is None for _, _, _, sha in o_atts):
+        if any(sha is None for _, _, _, sha, _ in o_atts):
             problems.append(f"{label}: origin has an attachment with no captured content (missing --with-attachments?)")
 
         o_addrs = origin["addresses"].get(origin_id, set())
@@ -279,6 +309,18 @@ def _decoded_attachments(parsed) -> list:
     for part in parsed.iter_attachments():
         result.append((part.get_filename(), part.get_content_type(), part.get_content()))
     return sorted(result, key=lambda t: (t[0] or "", t[1] or ""))
+
+
+def _decoded_inline_parts(parsed) -> list:
+    """Return (content_id, mime_type, bytes) for every MIME part carrying a Content-ID header - an
+    inline image embedded via cid: is part of the multipart/related body tree, not something
+    iter_attachments() surfaces, so it needs its own walk."""
+    result = []
+    for part in parsed.walk():
+        content_id = part.get("Content-ID")
+        if content_id:
+            result.append((content_id, part.get_content_type(), part.get_content()))
+    return sorted(result, key=lambda t: t[0])
 
 
 def _labels_from_header(parsed, exclude_prefix: str) -> set:
@@ -316,6 +358,13 @@ def _compare_exports(origin_dir: Path, result_dir: Path, pairs: list) -> list[st
             o_desc = [(f, c, len(b)) for f, c, b in o_atts]
             r_desc = [(f, c, len(b)) for f, c, b in r_atts]
             problems.append(f"{label}: decoded attachment content differs:\n  origin: {o_desc}\n  result: {r_desc}")
+
+        o_inline = _decoded_inline_parts(origin_parsed)
+        r_inline = _decoded_inline_parts(result_parsed)
+        if o_inline != r_inline:
+            o_desc = [(cid, c, len(b)) for cid, c, b in o_inline]
+            r_desc = [(cid, c, len(b)) for cid, c, b in r_inline]
+            problems.append(f"{label}: decoded inline (cid:) image content differs:\n  origin: {o_desc}\n  result: {r_desc}")
 
         o_labels = _labels_from_header(origin_parsed, exclude_prefix="mail-utils-store-in-gmail-")
         r_labels = _labels_from_header(result_parsed, exclude_prefix="mail-utils-store-in-gmail-")

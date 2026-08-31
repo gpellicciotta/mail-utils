@@ -68,20 +68,29 @@ imported from more than one source without collisions.
   `date` (the raw header string), `internal_date_ms` (Gmail's/the source's actual received timestamp,
   used for `export`'s year/month bucketing), `snippet` (Gmail only - `NULL` for PST/Thunderbird), `label_ids`
   (comma-separated ids, resolved to names via `labels`), `body_text` and `body_mime_type`
-  (`text/plain`/`text/html`, whichever the source actually carried), `fetched_at`.
+  (`text/plain`/`text/html`, whichever representation `body_text` holds - `text/plain` when the source
+  carried a plain-text part, `text/html` raw markup as a fallback when it only carried HTML), `body_html`
+  (the message's `text/html` part, captured independently and alongside `body_text` whenever the source
+  carries one - `NULL` for a plain-text-only message), `fetched_at`. `export --format eml` and
+  `store-in-gmail` rebuild a proper `multipart/alternative` body from `body_text` + `body_html` when both
+  are present, instead of keeping only one representation.
 - **`message_addresses`**: one row per (message, role, address) - `message_id`, `role`
   (`from`/`to`/`cc`/`bcc`), `address` (lowercased), `name`. Replaced in full for a message on every
   resync, not merged, since a message's own header content never changes.
 - **`attachments`**: one row per attachment part - `message_id`, `attachment_id` (Gmail's API id, needed to
   fetch that attachment's content; always `NULL` for PST/Thunderbird sources, which have no equivalent),
-  `filename`, `mime_type`, `size`, `content_sha256`. Filename/type/size are always captured; `content_sha256`
-  stays `NULL` unless the import ran with `--with-attachments` (see `docs/cli-spec.md`), in which case it's
+  `filename`, `mime_type`, `size`, `content_sha256`, `content_id` (the MIME `Content-ID` this part carried,
+  e.g. `<image001@01D...>` - set only for an inline image referenced from the HTML body via `cid:`, `NULL`
+  for a conventional attachment). Filename/type/size/content_id are always captured; `content_sha256` stays
+  `NULL` unless the import ran with `--with-attachments` (see `docs/cli-spec.md`), in which case it's
   the SHA-256 of the attachment's actual bytes, stored content-addressed at `<db-dir>/attachments/<content_sha256>`
   (identical attachments across messages share one file). `export` writes that content back out - a real
   MIME part for `--format eml`, a `<message-file-stem>.attachments/` sidecar directory for `--format md` -
-  falling back to metadata-only when `content_sha256` is `NULL`. An existing database isn't retroactively
-  migrated: pick up content for already-synced messages by rerunning the relevant `import*` command with
-  `--with-attachments` against the same database.
+  falling back to metadata-only when `content_sha256` is `NULL`. An attachment with both a `content_sha256`
+  and a `content_id` is re-embedded as an inline `Content-ID`-tagged part under the HTML body (so
+  `<img src="cid:...">` keeps resolving) rather than as a regular attachment. An existing database isn't
+  retroactively migrated: pick up content for already-synced messages by rerunning the relevant `import*`
+  command with `--with-attachments` against the same database.
 - **`labels`**: `id` -> `name`, refreshed in full on every sync. For Gmail this is the account's real label
   list; for PST/Thunderbird it's a synthetic `outlook:<folder path>` / `thunderbird:<folder path>` id per
   folder, so folder structure survives as "labels" the same way Gmail labels do.

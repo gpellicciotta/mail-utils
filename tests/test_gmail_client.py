@@ -1,6 +1,7 @@
 import base64
 
 from mail_utils.gmail_client import (
+    _extract_body_html,
     _extract_body_text,
     create_label,
     fetch_attachment_content,
@@ -98,6 +99,19 @@ def test_extract_body_text_returns_empty_for_no_text_parts():
     assert _extract_body_text(payload) == ("", None)
 
 
+def test_extract_body_html_returns_html_part_even_when_plain_sibling_exists():
+    payload = {
+        "mimeType": "multipart/alternative",
+        "parts": [_text_part("text/plain", "Plain body"), _text_part("text/html", "<p>HTML body</p>")],
+    }
+    assert _extract_body_html(payload) == "<p>HTML body</p>"
+
+
+def test_extract_body_html_returns_none_when_no_html_part():
+    payload = _text_part("text/plain", "Plain only")
+    assert _extract_body_html(payload) is None
+
+
 def test_parse_message_maps_headers_and_metadata():
     raw = {
         "id": "msg1",
@@ -130,7 +144,23 @@ def test_parse_message_maps_headers_and_metadata():
         "label_ids": "INBOX,UNREAD",
         "body_text": "Body text",
         "body_mime_type": "text/plain",
+        "body_html": None,
     }
+
+
+def test_parse_message_captures_body_html_alongside_plain_when_both_parts_exist():
+    raw = {
+        "id": "msg1",
+        "payload": {
+            "headers": [],
+            "mimeType": "multipart/alternative",
+            "parts": [_text_part("text/plain", "Plain body"), _text_part("text/html", "<p>HTML body</p>")],
+        },
+    }
+    parsed = parse_message(raw)
+    assert parsed["body_text"] == "Plain body"
+    assert parsed["body_mime_type"] == "text/plain"
+    assert parsed["body_html"] == "<p>HTML body</p>"
 
 
 def test_parse_message_internal_date_ms_is_none_when_absent():
@@ -227,14 +257,51 @@ def test_parse_attachments_finds_nested_filenamed_parts():
             "filename": "invoice.pdf",
             "mime_type": "application/pdf",
             "size": 12345,
+            "content_id": None,
         },
-        {"message_id": "gmail:msg1", "attachment_id": "att2", "filename": "photo.png", "mime_type": "image/png", "size": 999},
+        {
+            "message_id": "gmail:msg1",
+            "attachment_id": "att2",
+            "filename": "photo.png",
+            "mime_type": "image/png",
+            "size": 999,
+            "content_id": None,
+        },
     ]
 
 
 def test_parse_attachments_returns_empty_when_none_present():
     raw = {"id": "msg1", "payload": _text_part("text/plain", "Body")}
     assert parse_attachments(raw) == []
+
+
+def test_parse_attachments_captures_content_id_for_inline_image():
+    raw = {
+        "id": "msg1",
+        "payload": {
+            "mimeType": "multipart/related",
+            "parts": [
+                _text_part("text/html", "<p>See <img src='cid:image001@01D'></p>"),
+                {
+                    "mimeType": "image/png",
+                    "filename": "image001.png",
+                    "headers": [{"name": "Content-ID", "value": "<image001@01D>"}],
+                    "body": {"attachmentId": "att1", "size": 42},
+                },
+            ],
+        },
+    }
+    rows = parse_attachments(raw)
+    assert rows == [
+        {
+            "message_id": "gmail:msg1",
+            "attachment_id": "att1",
+            "filename": "image001.png",
+            "mime_type": "image/png",
+            "size": 42,
+            "content_id": "<image001@01D>",
+        }
+    ]
 
 
 def test_import_message_base64url_encodes_raw_bytes_and_sets_flags():
