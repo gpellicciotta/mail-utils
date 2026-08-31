@@ -17,5 +17,5 @@ An overview of all tasks and their planning.
 
 ### Backlog
 
-- [ ] T0017 capture-filenameless-attachments
+- [~] T0017 capture-filenameless-attachments  @antigravity
 - [~] T0020 full-archive-import-and-eml-roundtrip  @claude
