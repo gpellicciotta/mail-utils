@@ -14,6 +14,7 @@ Welcome to the `mail-utils` technical documentation.
 - [`thunderbird-import-plan.md`](thunderbird-import-plan.md) — Architecture and format handling for Thunderbird PCV/Mbox archives.
 - [`eml-export-support-plan.md`](eml-export-support-plan.md) — Design notes for standard RFC 5322 `.eml` message export.
 - [`reverse-import-plan.md`](reverse-import-plan.md) — Feasibility study for restoring exported mail back into Gmail/Outlook/Thunderbird.
+- [`parallel-pst-import-plan.md`](parallel-pst-import-plan.md) — Design for an opt-in multi-process `import-pst --parallel N` mode (backlog, not yet built).
 
 ## Root References
 - [`README.md`](../README.md) — Project overview and quickstart links.

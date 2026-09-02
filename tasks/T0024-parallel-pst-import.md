@@ -1,10 +1,10 @@
 # T0024: Parallel multi-process import for very large PST archives
 
-- **Status:** active
-- **Owner:** @claude
-- **Started:** 2026-09-02
-- **Branch:** task/T0024-parallel-pst-import
-- **Worktree:** ./work/T0024-parallel-pst-import
+- **Status:** available
+- **Owner:** none
+- **Started:** —
+- **Branch:** —
+- **Worktree:** —
 
 ## Goal
 
@@ -13,98 +13,69 @@ worker subprocesses - each parsing its own slice into its own throwaway database
 then merges the N partial results into the target `--db` directory, to cut wall-clock time for very large
 archives beyond what a single process can achieve.
 
+Full design (architecture, worker entry point, partition/merge logic, failure handling, testing strategy):
+see [`docs/parallel-pst-import-plan.md`](../docs/parallel-pst-import-plan.md).
+
 ## Scope
 
 - Discovered while working **T0020**: the ~26 GB `anubex-outlook-backup.pst` import was taking 30+ hours
-  and visibly slowing down over time. Root-caused directly in T0020's own branch (not this task) to a
-  real, separate bug - `db.py`'s `upsert_message`/`upsert_addresses`/`upsert_attachments` committing on
-  every single call (3 fsync-backed commits per message) with no WAL mode, against a database that grew
-  to several GB. That fix (batched commits + `journal_mode=WAL`) already landed in T0020's branch.
-- **This task is for further speedup on top of that fix**, via true multi-process parallelism - see
-  Dependencies for how its priority should be judged once the batching fix's real-world speedup is known.
-- New `--parallel N` flag on `import-pst`:
-  - Pre-scan via the existing `walk_folders()` (already cheap - structural only, no per-message parsing)
-    to enumerate every `message_nid` across all folders.
-  - Partition that flat list into N contiguous, roughly-equal chunks.
-  - Spawn N worker subprocesses, each running the existing per-message import loop (unchanged) against
-    its own slice, its own throwaway SQLite database, and its own throwaway attachment store directory -
-    SQLite does not support safe concurrent writers to one file from multiple OS processes, so each
-    worker needs full isolation, not shared state.
-  - Once every worker exits successfully, merge the N partial databases into the target `--db`:
-    `messages`/`message_addresses`/`attachments`/`labels` via `ATTACH DATABASE` + `INSERT OR IGNORE`
-    (partitions are disjoint by message id, so no real conflicts are expected in practice), then rebuild
-    the target's FTS5 index from the merged `messages` table rather than attempting to merge FTS5
-    segments directly.
-  - Merge each worker's attachment directory into the target's: content-addressed by `content_sha256`,
-    so copying any file that doesn't already exist at the target path is safe and idempotent.
-  - Clean up (delete) the N worker directories once the merge is verified.
-- Reuse all existing parsing/upsert code unchanged - this is purely a new orchestration layer (partition +
-  spawn + merge) around the existing single-process import loop, not a rewrite of the PST parser.
+  and visibly slowing down over time.
+- **Investigated, not implemented.** The real bottleneck turned out to be FTS5 index fragmentation from
+  per-message incremental delete+insert cycles, fixed on T0020's branch by doing one bulk FTS rebuild after
+  import instead of per-message maintenance. With that fix, the real 26 GB / 186,475-message archive now
+  imports single-process in **50.8 minutes** - well under the threshold that made this task feel urgent.
+- **Decision needed, not yet made:** whether multi-process parallelism is worth building at all, given the
+  single-process fix already handles every archive currently on hand. Kept in the Backlog rather than
+  cancelled, since a future, substantially larger archive could still make it worthwhile - see the design
+  doc's "When To Revisit" section for a concrete size threshold.
+- Reuse all existing parsing/upsert code unchanged if built - this stays purely a new orchestration layer
+  (partition + spawn + merge) around the existing single-process import loop, not a rewrite of the PST
+  parser.
 
 ## Out of Scope
 
-- Parallelizing `import-thunderbird` - PST is the motivating, much larger case here; revisit separately if
-  this proves valuable and Thunderbird archives of comparable size turn up.
-- Cross-machine/distributed parallelism - single-machine, multi-process only.
-- Making this the default for `import-pst` - stays an explicit opt-in flag given the added complexity and
-  new failure modes (a worker crashing mid-slice, partial-merge cleanup, etc.) versus the plain single-
-  process path.
+See [`docs/parallel-pst-import-plan.md`](../docs/parallel-pst-import-plan.md)'s "Out of Scope" section.
 
 ## Dependencies
 
-Spun off from **T0020** (full-archive-import-and-eml-roundtrip), whose own branch already contains the
-batching/WAL fix. **Before investing further in this task**, measure that fix's real-world speedup against
-the actual `anubex-outlook-backup.pst` file (in progress as of this task's creation) - if it alone gets the
-big file's import down to a few hours, the added complexity and new failure surface of multi-process
-parallelism may not be worth it for the archives on hand today, and this task should stay backlog-priority
-(still worth having for future, larger archives) rather than urgent.
-
-## Approach
-
-1. Wait for T0020's batching/WAL fix to be measured against the real 26 GB file; record the result here.
-2. Design the worker entry point: either a new hidden CLI action (`import-pst` gains internal
-   `--nid-range`/`--worker-index`/`--worker-count`-style plumbing) invoked as a subprocess per worker, or a
-   pure-Python `multiprocessing`/`subprocess` orchestration function that calls the existing import
-   machinery directly with a pre-filtered `message_nids` list - prefer whichever keeps the existing
-   single-process code path completely unchanged and the new orchestration layer isolated and testable on
-   its own.
-3. Implement the merge step as its own testable function (`merge_partial_databases` or similar) - unit
-   test it against small synthetic partial databases (attachments included) before trusting it against
-   real multi-GB output.
-4. Wire up `--parallel N` on `import-pst`, defaulting to today's single-process behavior when omitted.
-5. Validate end-to-end against the real `anubex-outlook-backup.pst`, comparing message/attachment counts
-   and a local round-trip comparison (`scripts/local-roundtrip-test.py`, from T0020) against a plain
-   single-process run of the same file, to prove the parallel path produces identical results.
+Spun off from **T0020** (full-archive-import-and-eml-roundtrip), whose branch contains the FTS5 fix that
+resolved the immediate need. No outstanding dependency - this task itself is now blocked only on a human
+decision of whether to build it.
 
 ## Implementation Checklist
 
-- [ ] T0020's batching/WAL fix measured against the real big file; priority of this task reassessed
-- [ ] Worker entry point designed and implemented
-- [ ] Partition logic (`walk_folders()` pre-scan + N-way chunking) implemented and unit-tested
-- [ ] Merge logic (databases + attachment directories + FTS5 rebuild) implemented and unit-tested
-- [ ] `--parallel N` wired up on `import-pst`, single-process behavior unchanged when omitted
-- [ ] Validated end-to-end against the real big file (counts + local round-trip comparison match a
-      single-process run)
+- [x] T0020's fix measured against the real big file; priority of this task reassessed - see Progress Log
+- [x] Full design documented - see `docs/parallel-pst-import-plan.md`
+- [ ] **Decision:** build this, or leave it backlogged/cancel it - pending
+- [ ] Worker entry point implemented (if decision is to build)
+- [ ] Partition logic implemented and unit-tested (if decision is to build)
+- [ ] Merge logic implemented and unit-tested (if decision is to build)
+- [ ] `--parallel N` wired up on `import-pst`, single-process behavior unchanged when omitted (if decision is to build)
+- [ ] Validated end-to-end against a real large archive (if decision is to build)
 
 ## Test Strategy
 
-Unit tests for partitioning and merge logic against small synthetic databases/attachment directories
-(fast, deterministic). The real end-to-end validation against `anubex-outlook-backup.pst` is manual,
-mirroring T0020's own approach - too large/slow for the automated suite.
+See `docs/parallel-pst-import-plan.md`'s "Testing Strategy" section.
 
 ## Completion Criteria
 
-- `import-pst --parallel N` produces a database and attachment store identical (per
+- A human decision recorded on whether to build this at all.
+- If built: `import-pst --parallel N` produces a database and attachment store identical (per
   `scripts/local-roundtrip-test.py`-style comparison) to what a plain single-process `import-pst` run of
-  the same file produces.
-- Measured wall-clock improvement recorded against the real `anubex-outlook-backup.pst` file.
+  the same file produces, with a measured wall-clock improvement against a real large archive.
 
 ## Progress Log
 
 - 2026-09-02: Claimed, worktree/branch created. Spun off from T0020 per the user's request while
-  investigating why the big-file import kept slowing down. T0020's own branch already fixed the actual
-  root cause found (commit-per-row, no WAL mode); this task covers the separate, larger idea (multi-
-  process parallelism) the user asked to pursue in parallel regardless of that fix's outcome.
+  investigating why the big-file import kept slowing down.
+- 2026-09-02: Investigated the real cause instead - FTS5 index fragmentation, not raw single-process
+  throughput. Fixed on T0020's branch. Re-ran the real `anubex-outlook-backup.pst` (~26 GB, 186,475
+  messages) end to end: 50.8 minutes total, well under the urgency threshold. No parallel-import
+  implementation work done.
+- 2026-09-02: Per user request, wrote the full design (`docs/parallel-pst-import-plan.md`) so it's
+  implementation-ready if a future archive justifies it, and moved this task back to the Backlog pending a
+  decision on whether to build it at all. Worktree/branch released - a fresh one is created via the normal
+  Claim Protocol if this task is picked up again.
 
 ## Validation Record
 
