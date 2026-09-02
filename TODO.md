@@ -15,9 +15,8 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [~] T0021 add-ansi-pst-format-support  @claude
 - [ ] T0026 pst-recursive-nested-message-import
-- [~] T0020 (needs T0021 T0026) full-archive-import-and-eml-roundtrip  @claude
+- [~] T0020 (needs T0026) full-archive-import-and-eml-roundtrip  @claude
 
 ### Backlog
 
