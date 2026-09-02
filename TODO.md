@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [ ] T0026 pst-recursive-nested-message-import
+- [~] T0026 pst-recursive-nested-message-import  @claude
 - [~] T0020 (needs T0026) full-archive-import-and-eml-roundtrip  @claude
 
 ### Backlog
