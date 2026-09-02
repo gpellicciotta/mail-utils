@@ -74,6 +74,12 @@ large/personal - same convention as the other 3 archives T0020 uses).
   (`wVer=14`, ANSI format) while the other 3 archives (`personal-email-backup.pst`,
   `anubex-outlook-backup.pst`: both `wVer=23`, Unicode; `personal-email-backup.pcv`: Thunderbird, unrelated
   format) parse fine. T0020 continues with those 3 in the meantime.
+- 2026-09-02: Promoted to Next Milestone; T0020's dependency is now formal (`TODO.md`: `T0020 (needs
+  T0027 T0021 T0026)`) rather than the earlier informal "once this lands, T0020 should import it too" -
+  T0020's "three smaller files" round-trip pass explicitly still excludes `anubex-friends-email.pst` until
+  this task lands; only the subsequent 4-archive run picks it up. No implementation work done yet - per
+  the user's requested work order, **T0027** (comma-splitting bug, unrelated code path) is worked first,
+  then this task, then **T0026**.
 
 ## Validation Record
 
