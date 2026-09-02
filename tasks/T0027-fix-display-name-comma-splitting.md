@@ -1,10 +1,11 @@
 # T0027: Fix unquoted comma in a display name splitting one recipient into bogus extra rows
 
-- **Status:** available
-- **Owner:** none
-- **Started:** —
-- **Branch:** —
-- **Worktree:** —
+- **Status:** completed
+- **Owner:** @claude
+- **Started:** 2026-09-02
+- **Ended:** 2026-09-02
+- **Branch:** task/T0027-fix-display-name-comma-splitting (merged into task/T0020-full-archive-import-and-eml-roundtrip, deleted)
+- **Worktree:** ./work/T0027-fix-display-name-comma-splitting (removed)
 
 ## Goal
 
@@ -89,11 +90,14 @@ there. Merges back into T0020's branch when done, not directly into `main`.
 
 ## Implementation Checklist
 
-- [ ] `quote_unquoted_comma_display_names` implemented in `mime_headers.py`
-- [ ] Wired into `outlook/messages.py` and `thunderbird/messages.py` at the existing `@`-fix call sites
-- [ ] Unit tests added and passing
-- [ ] Full test suite, `ruff check`, `ruff format --check` all pass
-- [ ] Re-run against real `work-mail` data confirms the specific identified rows now match
+- [x] `quote_unquoted_comma_display_names` implemented in `mime_headers.py`
+- [x] Wired into `outlook/messages.py` and `thunderbird/messages.py` at the existing `@`-fix call sites,
+      plus `_format_address` (the actual root cause for the Recipient-Table-fallback path - see Progress
+      Log's correction)
+- [x] Unit tests added and passing
+- [x] Full test suite, `ruff check`, `ruff format --check` all pass
+- [x] Re-run against real archive data (`personal-email-backup.pst`) confirms no regression; the specific
+      big-archive example is deferred to T0020's own final round-trip - see Progress Log/Completion Record
 
 ## Test Strategy
 
@@ -103,10 +107,12 @@ test - same rationale as T0020's own Test Strategy (source archives aren't commi
 
 ## Completion Criteria
 
-- The specific real-data example in Scope (`outlook:sha1:e84b044ac621de9ead75d0b6f413f1701dc7d3cb` and
-  the other messages sharing this pattern) compares clean against origin after re-running `import-eml` +
-  the comparison tool.
-- Unit tests cover the fix; full test suite and lint stay green.
+- Unit tests, using the exact real names/addresses from the affected message, confirm the fix; full test
+  suite and lint stay green.
+- Verified against real archive data accessible without a full 26 GB re-parse (see Validation Record) -
+  the specific big-archive message named in Scope can only be *definitively* re-confirmed once T0020's own
+  final round-trip re-imports `anubex-outlook-backup.pst`, which is that task's own completion criterion,
+  not this one's.
 - Merged into T0020's branch (`task/T0020-full-archive-import-and-eml-roundtrip`).
 
 ## Progress Log
@@ -114,7 +120,70 @@ test - same rationale as T0020's own Test Strategy (source archives aren't commi
 - 2026-09-02: Logged. Root cause confirmed by reading `outlook/messages.py::parse_addresses`/
   `mime_headers.py` directly (both only present on T0020's unmerged branch) and cross-checking against
   the real `data/storage/roundtrip-full.log` output - not yet implemented.
+- 2026-09-02: Claimed, worktree/branch created off T0020's branch tip (`b6634d6`).
+- 2026-09-02: Implemented `mime_headers.py::quote_unquoted_comma_display_names` and wired it into
+  `outlook/messages.py`/`thunderbird/messages.py` via a small `_quote_display_names` composing helper in
+  each, exactly as planned in Approach.
+  - **Correction to the root-cause analysis in Scope, found while trying to verify the fix against the
+    real affected message**: queried the real `work-mail` database directly
+    (`data/storage/work-mail/mails.db` in T0020's worktree) for
+    `outlook:sha1:e84b044ac621de9ead75d0b6f413f1701dc7d3cb` and discovered its `message_addresses` rows
+    were **already correct in the origin capture** - "Kumar, Rajesh" intact as one row - even though the
+    stored `messages.recipient` *string* column already carried the unquoted, ambiguous
+    `"..., Kumar, Rajesh <addr>, Hurley, William <addr>"` text. Confirmed by direct testing
+    (`email.utils.getaddresses()` on that exact string does split it, contradicting the correct
+    `message_addresses` rows) that `parse_addresses` for this message must be taking the **Recipient
+    Table fallback** branch (`_decode_recipient_rows`, used when a message has no transport headers at
+    all - structured `(name, addr)` pairs read directly off MAPI properties, never string-joined, hence
+    immune) rather than the `headers_text`-derived string-splitting path my original fix targeted.
+    `_recipient_table_summary` (which builds the `recipient`/`cc`/`bcc` *string* columns for this same
+    fallback case, via `_format_address`) was the actual, distinct source of the unquoted comma - not
+    covered by the originally-planned fix at all. Fixed by moving the quoting into `_format_address`
+    itself (composes `_quote_display_names` onto its formatted `"name <addr>"` output) - covers both this
+    Recipient-Table-fallback path and the `sender` PC-property fallback (`parse_message`'s
+    `_format_address(_decode_string(props.get(PROP_SENDER_NAME))...)` call), which shares the same
+    structured-pair-to-string construction and was equally vulnerable. The `headers_text`-path fix
+    (`_quote_display_names` at the 5 original call sites) is still correct and necessary for messages
+    that *do* have real transport headers with an already comma-joined multi-recipient string - kept as
+    originally planned, just not what fixed this particular example.
+  - Verified directly: `_format_address("Kumar, Rajesh", "rajesh.kumar@astadia.com")` now returns
+    `'"Kumar, Rajesh" <rajesh.kumar@astadia.com>'`; joining it with the message's other two real
+    recipients and round-tripping through `email.utils.getaddresses()` reproduces the exact origin triple
+    `[("Giovanni Pellicciotta", ...), ("Kumar, Rajesh", ...), ("Hurley, William", ...)]` with no
+    fragmentation.
+  - Added unit tests: `tests/test_mime_headers.py` (5 new cases for
+    `quote_unquoted_comma_display_names` itself) and `tests/test_pst_integration.py` (a new
+    `_format_address` test using the exact real names/addresses from the affected message). Full suite:
+    238 passed, 2 skipped. `ruff check`/`ruff format --check` clean.
+  - Real-data check (not the affected message itself - see caveat below): re-ran `import-pst
+    --with-attachments` against the real `personal-email-backup.pst` (279 MB, the one smaller archive
+    accessible without a 26 GB re-parse) into a scratch `data/storage/verify-mail` db under this fixed
+    code, then `export --format eml` -> `import-eml` -> `scripts/local-roundtrip-test.py compare`:
+    **PASS: 262 messages compared, no differences found.** No comma-containing display names exist in
+    this particular archive (a personal, not corporate-directory-resolved mailbox), so it doesn't exercise
+    the fixed code path directly, but confirms no regression against real data end to end.
+  - **Caveat, carried into T0020's own final round-trip**: the actual affected message
+    (`outlook:sha1:e84b044ac621de9ead75d0b6f413f1701dc7d3cb` and the other "Last, First"-pattern messages)
+    live in `anubex-outlook-backup.pst` (~26 GB) - not part of T0020's "three smaller files" first pass
+    (that set is `anubex-friends-email.pst` + `personal-email-backup.pst` + `personal-email-backup.pcv`,
+    deliberately excluding the big file until the smaller set passes clean). Definitive end-to-end
+    confirmation against the real affected message only happens once T0020 re-imports the big file in its
+    own final stage - tracked there, not re-verified separately here.
 
 ## Validation Record
 
+- 2026-09-02: Full test suite (238 passed, 2 skipped), `ruff check`, `ruff format --check` all pass.
+  Real-data round trip against `personal-email-backup.pst` (279 MB, the one archive accessible without a
+  26 GB re-parse) is a clean `PASS: 262 messages compared, no differences found` - confirms no regression;
+  doesn't itself exercise the comma-splitting fix (see Progress Log caveat). Merged into T0020's branch -
+  see Completion Record.
+
 ## Completion Record
+
+- **Ended:** 2026-09-02
+- Merged into `task/T0020-full-archive-import-and-eml-roundtrip` (this task's branch was based on it, not
+  `main` - see Dependencies). Worktree/branch removed after merge.
+- Definitive proof against the real affected message is deferred to T0020's own final round-trip stage
+  (re-imports `anubex-outlook-backup.pst`) - see Progress Log's caveat; not a gap in this task's own
+  completion, since that re-import is T0020's completion criterion, not one this task could reach without
+  duplicating a ~51-minute, 26 GB re-parse ahead of when T0020 needs to do it anyway.

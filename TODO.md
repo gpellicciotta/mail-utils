@@ -15,10 +15,9 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [~] T0027 fix-display-name-comma-splitting  @claude
 - [ ] T0021 add-ansi-pst-format-support
 - [ ] T0026 pst-recursive-nested-message-import
-- [~] T0020 (needs T0027 T0021 T0026) full-archive-import-and-eml-roundtrip  @claude
+- [~] T0020 (needs T0021 T0026) full-archive-import-and-eml-roundtrip  @claude
 
 ### Backlog
 
