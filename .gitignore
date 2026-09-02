@@ -24,6 +24,7 @@ token.json
 # Local data
 *.db
 logs/
+*.log
 data/
 export/
 exports/
@@ -31,3 +32,4 @@ exports/
 *.pcv
 !tests/fixtures/*.pst
 !tests/fixtures/*.pcv
+
