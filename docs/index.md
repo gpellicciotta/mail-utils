@@ -8,6 +8,7 @@ Welcome to the `mail-utils` technical documentation.
 - [`devops.md`](devops.md) — Setup, testing, linting, packaging, and CI/CD guide.
 - [`tutorial.md`](tutorial.md) — First-time user walkthrough for importing, searching, stats, exporting, and scheduling.
 - [`emails-formats.md`](emails-formats.md) — Reference on single-message and mailbox storage formats (.eml, .msg, .mbox, .pst).
+- [`database-design.md`](database-design.md) — Why the SQLite schema's tables are shaped the way they are.
 
 ## Design & Technical Plans
 - [`pst-support-plan.md`](pst-support-plan.md) — Architecture and specification for the pure-Python `[MS-PST]` parser.
