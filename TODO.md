@@ -9,7 +9,7 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0025
+**Next ID:** 0027
 
 ---
 
@@ -17,9 +17,11 @@ An overview of all tasks and their planning.
 
 - [~] T0020 full-archive-import-and-eml-roundtrip  @claude
 - [~] T0024 parallel-pst-import  @claude
+- [ ] T0025 Make a document describing the database design: which tables and why
 
 ### Backlog
 
 - [ ] T0021 add-ansi-pst-format-support
+- [ ] T0026 pst-recursive-nested-message-import
 - [ ] A0022 Rewrite all tasks files to the newly documented format. Make sure - especially for the uncompleted ones - to not lose essential information: always ask yourself, after the rewrite, do I know how to implement this based only on the information in the file as it now stands
 - [ ] T0023 (needs A0022) Ensure to comply with the updated logging guidelines
