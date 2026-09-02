@@ -16,7 +16,7 @@ An overview of all tasks and their planning.
 ## Next Milestone
 
 - [~] T0020 full-archive-import-and-eml-roundtrip  @claude
-- [ ] T0025 Make a document describing the database design: which tables and why
+- [~] T0025 database-design-doc  @claude
 
 ### Backlog
 
