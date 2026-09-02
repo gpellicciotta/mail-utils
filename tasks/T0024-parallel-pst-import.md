@@ -78,7 +78,7 @@ parallelism may not be worth it for the archives on hand today, and this task sh
 
 ## Implementation Checklist
 
-- [ ] T0020's batching/WAL fix measured against the real big file; priority of this task reassessed
+- [x] T0020's fix measured against the real big file; priority of this task reassessed - see Progress Log
 - [ ] Worker entry point designed and implemented
 - [ ] Partition logic (`walk_folders()` pre-scan + N-way chunking) implemented and unit-tested
 - [ ] Merge logic (databases + attachment directories + FTS5 rebuild) implemented and unit-tested
@@ -105,6 +105,24 @@ mirroring T0020's own approach - too large/slow for the automated suite.
   investigating why the big-file import kept slowing down. T0020's own branch already fixed the actual
   root cause found (commit-per-row, no WAL mode); this task covers the separate, larger idea (multi-
   process parallelism) the user asked to pursue in parallel regardless of that fix's outcome.
+- 2026-09-02: **Correction and result** - the commit-per-row/WAL fix above turned out *not* to be the
+  actual bottleneck (benchmarked directly against the real database: no measurable improvement). A
+  targeted diagnostic found the real cause: `messages_fts` (FTS5) index fragmentation from ~127,000
+  uninterrupted per-message incremental delete+insert cycles, costing ~1.5s/message regardless of
+  database size otherwise. Fixed on T0020's branch by skipping per-message FTS maintenance during bulk
+  imports and doing one bulk rebuild afterward instead (~173s for the whole index at that message count,
+  versus 50+ hours incrementally).
+  - **Re-ran the real `anubex-outlook-backup.pst` (~26 GB, 186,475 messages) end to end under both
+    fixes: 50.8 minutes total.** Comfortably under the "<4h" bar that was the trigger for treating a
+    fix as sufficient on its own.
+  - **Recommendation**: given a single process now completes the largest archive on hand in well under
+    an hour, the added complexity and new failure surface of multi-process parallelism (worker
+    isolation, partition/merge logic, new failure modes) is very likely not worth it for archives this
+    size. This task is a reasonable thing to keep for a *future*, substantially larger archive, but
+    doesn't read as urgent anymore. Left the actual decision (keep active / demote to Backlog / cancel)
+    to the user rather than assuming it unilaterally - see the chat transcript for this session.
+  - No implementation work done on the actual parallel-import feature itself this session - all of the
+    above was investigation that happened to originate here before being fixed on T0020's branch.
 
 ## Validation Record
 
