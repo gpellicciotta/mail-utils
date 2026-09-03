@@ -106,6 +106,39 @@ logger = logging.getLogger("mail_utils")
 
 PROGRESS_LOG_INTERVAL = 50
 
+_PROGRESS_LABEL_WIDTH = 18
+
+
+def _log_progress(operation: str, count: int, total: int | None, start_time: float, *, approx_total: bool = False) -> None:
+    """Log one progress update in a single shared shape, so every long-running command's progress lines
+    read alike and their numeric fields line up in a monospaced terminal/log regardless of which
+    operation emitted them (see A0029). `total` should be the best available exact count - every call
+    site materializes or pre-counts one rather than leaving it unset, so a percentage is always shown;
+    pass `approx_total=True` only for a known upper bound (Gmail's own mailbox-wide total, which this
+    sync can't reach 100% of since it skips Spam/Trash)."""
+    elapsed = time.time() - start_time
+    if total:
+        pct = 100.0 * count / total
+        total_str = f"~{total}" if approx_total else str(total)
+        logger.info(
+            "%-*s progress: %7d/%-8s messages (%5.1f%% - elapsed: %8.1fs)",
+            _PROGRESS_LABEL_WIDTH,
+            operation,
+            count,
+            total_str,
+            pct,
+            elapsed,
+        )
+    else:
+        logger.info(
+            "%-*s progress: %7d messages (elapsed: %8.1fs)",
+            _PROGRESS_LABEL_WIDTH,
+            operation,
+            count,
+            elapsed,
+        )
+
+
 # max_line_length=None disables header line-folding. Without it, a header needing RFC 2047 encoding
 # right after existing whitespace (e.g. a Subject with a trailing "topic: 日本語" run) gets folded in
 # a way that duplicates that whitespace on every export/store round-trip, growing by one space each
@@ -225,18 +258,7 @@ def _full_sync(service, conn, start_time: float, recursive: bool = False, with_a
     for msg_id in list_all_message_ids(service):
         count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
         if count % PROGRESS_LOG_INTERVAL == 0:
-            elapsed = time.time() - start_time
-            if total:
-                pct = 100.0 * count / total
-                logger.info(
-                    "Full sync progress: %d/~%d messages (%.1f%% - elapsed: %.1fs)",
-                    count,
-                    total,
-                    pct,
-                    elapsed,
-                )
-            else:
-                logger.info("Full sync progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
+            _log_progress("Full sync", count, total, start_time, approx_total=True)
     set_sync_state(conn, "last_history_id", history_id)
     return count
 
@@ -246,12 +268,15 @@ def _incremental_sync(
 ) -> int:
     logger.info("Running incremental sync from history ID %s", last_history_id)
     try:
+        # Materialized (rather than streamed) so `total` - and thus a %-complete - is known up front;
+        # incremental deltas are small enough that holding the id list in memory is cheap (see A0029).
+        changed_ids = list(list_changed_message_ids(service, last_history_id))
+        total = len(changed_ids)
         count = 0
-        for msg_id in list_changed_message_ids(service, last_history_id):
+        for msg_id in changed_ids:
             count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
             if count % PROGRESS_LOG_INTERVAL == 0:
-                elapsed = time.time() - start_time
-                logger.info("Incremental sync progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
+                _log_progress("Incremental sync", count, total, start_time)
         new_history_id = get_current_history_id(service)
         set_sync_state(conn, "last_history_id", new_history_id)
         return count
@@ -269,12 +294,14 @@ def _filtered_import(service, conn, query: str, start_time: float, recursive: bo
     unfiltered `import` runs' historyId-based bookkeeping.
     """
     logger.info("Running filtered import (sync_state is not touched)")
+    # Materialized (rather than streamed) so `total` - and thus a %-complete - is known up front (A0029).
+    ids = list(list_all_message_ids(service, query=query))
+    total = len(ids)
     count = 0
-    for msg_id in list_all_message_ids(service, query=query):
+    for msg_id in ids:
         count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
         if count % PROGRESS_LOG_INTERVAL == 0:
-            elapsed = time.time() - start_time
-            logger.info("Filtered import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
+            _log_progress("Filtered import", count, total, start_time)
     return count
 
 
@@ -644,9 +671,7 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
             logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
 
         if (count + skipped) % PROGRESS_LOG_INTERVAL == 0:
-            elapsed = time.time() - start_time
-            pct = (100.0 * (count + skipped) / total) if total else 0
-            logger.info("Store progress: %d/%d messages (%.1f%% - elapsed: %.1fs)", count + skipped, total, pct, elapsed)
+            _log_progress("Store", count + skipped, total, start_time)
 
     if not dry_run and not hit_max_messages:
         _finish_gmail_store_run(conn)
@@ -817,15 +842,7 @@ def _run_import_pst(args: argparse.Namespace) -> None:
                 upsert_attachments(conn, parsed["id"], attachments)
                 count += 1
                 if count % PROGRESS_LOG_INTERVAL == 0:
-                    elapsed = time.time() - start_time
-                    pct = (100.0 * count / total_messages) if total_messages else 0
-                    logger.info(
-                        "PST import progress: %d/%d messages (%.1f%% - elapsed: %.1fs)",
-                        count,
-                        total_messages,
-                        pct,
-                        elapsed,
-                    )
+                    _log_progress("PST import", count, total_messages, start_time)
 
     conn.close()
     elapsed = time.time() - start_time
@@ -844,6 +861,28 @@ def _process_tb_message(conn, raw_msg, label_id, recursive: bool, with_attachmen
         for sub in tb_extract_attached_messages(raw_msg):
             count += _process_tb_message(conn, sub, label_id, recursive=True, with_attachments=with_attachments)
     return count
+
+
+def _count_thunderbird_messages(source_path: Path, folders: list) -> int:
+    """Pre-count top-level messages across all folders via a lightweight extract-and-len() pass, so
+    import progress can report a percentage like every other importer does (A0029). Thunderbird's mbox
+    stores don't expose a message count without actually opening one - unlike PST, which already has
+    the counts in memory from `walk_folders` - so this necessarily extracts each folder a second time;
+    that's still just a copy/decompress, not full message parsing, so the added cost is modest."""
+    total = 0
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        temp_mbox = Path(tmp_dir) / "count.mbox"
+        for folder in folders:
+            if folder.file_size == 0 and source_path.is_file():
+                continue
+            extract_mbox_to_file(source_path, folder, temp_mbox)
+            box = mailbox.mbox(temp_mbox)
+            try:
+                total += len(box)
+            finally:
+                box.close()
+            temp_mbox.unlink()
+    return total
 
 
 def _run_import_thunderbird(args: argparse.Namespace) -> None:
@@ -867,6 +906,7 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
     source_path = Path(args.archive_path)
     folders = tb_walk_folders(source_path)
     upsert_labels(conn, tb_labels_for_folders(folders))
+    total_messages = _count_thunderbird_messages(source_path, folders)
 
     count = 0
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -882,8 +922,7 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
                 for raw_msg in box:
                     count += _process_tb_message(conn, raw_msg, label_id, recursive, with_attachments)
                     if count % PROGRESS_LOG_INTERVAL == 0:
-                        elapsed = time.time() - start_time
-                        logger.info("Thunderbird import progress: %d messages indexed (elapsed: %.1fs)", count, elapsed)
+                        _log_progress("Thunderbird import", count, total_messages, start_time)
             finally:
                 box.close()
                 if temp_mbox.exists():
@@ -1076,9 +1115,6 @@ def _run_stats(args: argparse.Namespace) -> None:
 def _safe_export_filename(msg_id: str) -> str:
     cleaned = re.sub(r'[/\\:*?"<>|]', "_", msg_id)
     return cleaned if len(cleaned) <= 120 else hashlib.sha256(msg_id.encode("utf-8")).hexdigest()
-
-
-EXPORT_PROGRESS_INTERVAL = 50
 
 
 def _export_message_md(
@@ -1418,10 +1454,8 @@ def _run_export(args: argparse.Namespace) -> None:
             )
 
         count += 1
-        if count % EXPORT_PROGRESS_INTERVAL == 0:
-            elapsed = time.time() - start_time
-            pct = (100.0 * count / total_to_export) if total_to_export else 0
-            logger.info("Export progress: %d/%d messages (%.1f%% - elapsed: %.1fs)", count, total_to_export, pct, elapsed)
+        if count % PROGRESS_LOG_INTERVAL == 0:
+            _log_progress("Export", count, total_to_export, start_time)
 
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages exported to %s", version, elapsed, count, output_dir)

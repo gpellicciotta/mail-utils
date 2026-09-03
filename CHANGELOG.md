@@ -13,6 +13,7 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ### vNext
+- BackEnd: Unify all import/export/store progress log lines into one aligned shape, always showing %-complete.
 - Docs: Add `database-design.md` explaining the rationale behind the SQLite schema's tables.
 - BackEnd: Capture attachments and inline images carrying no filename (but having a Content-ID or explicitly marked as attachments) across all sources.
 - BackEnd: Capture and restore each message's HTML body alongside its plain-text one, across all import sources.
