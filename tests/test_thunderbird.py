@@ -73,6 +73,14 @@ def test_decode_header_str():
     assert decode_header_str(None) == ""
 
 
+def test_decode_header_str_unfolds_raw_line_breaks():
+    # mailbox.mbox parses under compat32, which leaves RFC 5322 header folding (a raw CRLF/LF
+    # followed by whitespace) embedded in the header value - decode_header_str must strip it, since a
+    # value containing a literal newline crashes `export --format eml` when re-serialized as a header.
+    assert decode_header_str("A <a@example.com>,\n\tB <b@example.com>") == "A <a@example.com>,\tB <b@example.com>"
+    assert decode_header_str("A <a@example.com>,\r\n B <b@example.com>") == "A <a@example.com>, B <b@example.com>"
+
+
 def test_make_message_id_uses_header_or_fallback_hash():
     msg = EmailMessage()
     msg["Message-ID"] = "<12345@example.com>"
@@ -157,7 +165,7 @@ def test_parse_message_and_addresses_and_attachments():
 def test_parse_attachments_captures_filenameless_parts():
     msg = EmailMessage()
     msg.set_content("Body")
-    
+
     # Add a filenameless part with a Content-ID
     inline_part = EmailMessage()
     inline_part.set_payload(b"image bytes")
@@ -166,21 +174,51 @@ def test_parse_attachments_captures_filenameless_parts():
     # Not setting Content-Disposition or filename
     # Let's manually construct to be sure it has no filename
     from email.message import Message
+
     raw_msg = Message()
     raw_msg.set_payload([Message(), Message()])
     raw_msg.get_payload()[0].set_payload("Body")
     raw_msg.get_payload()[0].set_type("text/plain")
-    
+
     raw_msg.get_payload()[1].set_payload("image bytes")
     raw_msg.get_payload()[1].set_type("image/png")
     raw_msg.get_payload()[1].add_header("Content-ID", "<image123@example.com>")
-    
+
     atts = parse_attachments(raw_msg)
     assert len(atts) == 1
     assert atts[0]["filename"] is None
     assert atts[0]["mime_type"] == "image/png"
     assert atts[0]["content_id"] == "<image123@example.com>"
     assert atts[0]["size"] == len("image bytes")
+
+
+def test_parse_message_and_addresses_quote_unquoted_at_in_display_name():
+    # A real Thunderbird archive contained senders like "Panel @ InSites  <info@insitespanel.com>" -
+    # an unquoted "@" in the display name, invalid per RFC 5322. Left as-is, email.utils.getaddresses()
+    # (used by parse_addresses itself, and later by import-eml reading the exported header back)
+    # mis-parses the whole value and silently drops the real address - found via T0020's round-trip
+    # comparison. parse_message/parse_addresses must quote it at capture time, not just before export.
+    #
+    # Built via email.message_from_bytes() (the classic compat32 policy, matching how mailbox.mbox
+    # actually hands messages to parse_message) rather than EmailMessage() item assignment - the
+    # latter uses the modern policy even at *assignment* time, which would silently pre-mangle this
+    # exact malformed header before parse_message ever saw it, defeating the point of the test.
+    msg = email.message_from_bytes(
+        b"Message-ID: <msg-test-at-name@example.com>\r\nFrom: Panel @ InSites  <info@insitespanel.com>\r\n\r\n"
+    )
+
+    parsed = parse_message(msg)
+    assert parsed["sender"] == '"Panel @ InSites" <info@insitespanel.com>'
+
+    addrs = parse_addresses(msg)
+    assert addrs == [
+        {
+            "message_id": "thunderbird:<msg-test-at-name@example.com>",
+            "role": "from",
+            "address": "info@insitespanel.com",
+            "name": "Panel @ InSites",
+        }
+    ]
 
 
 def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path):
@@ -232,11 +270,16 @@ def test_walk_folders_and_import_thunderbird_end_to_end(tmp_path):
     (msg_count,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
     (label_count,) = conn.execute("SELECT COUNT(*) FROM labels").fetchone()
     (addr_count,) = conn.execute("SELECT COUNT(*) FROM message_addresses").fetchone()
+    # _run_import_thunderbird skips per-message FTS maintenance and rebuilds messages_fts once after
+    # the loop instead (a real, measured bottleneck against a large archive) - must still be fully
+    # populated by the time the command returns.
+    (fts_count,) = conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()
     conn.close()
 
     assert msg_count == 2
     assert label_count == 1
     assert addr_count == 4
+    assert fts_count == 2
 
 
 def test_import_thunderbird_with_attachments_flag_captures_content(tmp_path):

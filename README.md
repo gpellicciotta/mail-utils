@@ -18,6 +18,7 @@ A lightweight, privacy-preserving, local email archive indexing and extraction u
 - **SQLite FTS5 Full-Text Search**: Fast BM25 keyword searches with match highlighting and boolean queries (`mail-utils search "<query>"`).
 - **Offline Analytics**: Instant statistics on total messages, threads, labels, senders, and recipients (`mail-utils stats`).
 - **Flexible Export**: Export messages organized by year/month into **Markdown** (`.md` with YAML frontmatter) or standard **MIME** (`.eml`).
+- **EML Re-Import**: Import a previous `.eml` export straight back into the local database (`mail-utils import-eml`) — the mirror image of exporting, preserving original ids, bodies, and attachment content.
 - **Store in Gmail**: Write mail back into a live Gmail mailbox (`mail-utils store-in-gmail`), sourced from a `.eml` export or directly from the local database — filterable, resumable, and the one opt-in, write-capable command; everything else stays read-only.
 - **Task Automation**: Automated scheduling via Windows Task Scheduler or Unix cron (`mail-utils schedule`).
 - **Privacy & Safety**: Read-only by default — data stays on your local machine, and no command sends, labels, or deletes anything on the remote mailbox unless you explicitly run `store-in-gmail`.

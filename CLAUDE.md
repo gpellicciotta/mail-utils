@@ -42,6 +42,10 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   actually maps to after setting up several),
   `import-pst <path>` (Outlook .pst import, alias `import-outlook`),
   `import-thunderbird <path>` (Thunderbird .pcv/profile import, alias `import-pcv`),
+  `import-eml <source_dir>` (imports a `mail-utils export --format eml` directory tree straight into the
+  local database — the mirror image of `export --format eml`; preserves the original `X-Mail-Utils-ID` as
+  the row id, reconstructs `body_text`/`body_html`, and extracts real attachment content back into the
+  attachment cache),
   `search <query>` (SQLite FTS5 full-text search), `stats` (offline summary),
   `export <output_dir>` (offline markdown/EML dump via `--format md|eml`),
   `store-in-gmail [<source_dir>]` (writes mail into a live Gmail mailbox — the one write-capable command,
@@ -50,7 +54,7 @@ All commands use the project's venv (`.venv`, created once via `python -m venv .
   `schedule`/`unschedule` (recurring job registration — Windows Task Scheduler or cron, dispatched by `platform.system()`;
   `mail-utils schedule --job-name <name> --interval-minutes N -- import|import-gmail|export [flags...]`, see docs/cli-spec.md for
   scheduling details), `version` / `--version` (reads live package metadata), `help` / `-h` / `--help` (usage and exit codes).
-- `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`search`/`stats`/`export`/`store-in-gmail` accept `--db <dir>` to point at a
+- `import`/`import-gmail`/`import-pst`/`import-thunderbird`/`import-eml`/`search`/`stats`/`export`/`store-in-gmail` accept `--db <dir>` to point at a
   directory other than the default `data/` — the database (`<dir>/mails.db`) and attachment cache (`<dir>/attachments/`) both live inside
   it, scoped together. `import`/`import-gmail`/`store-in-gmail` also accept `--account <name>` to select which authorized Gmail account
   to use (a bare name resolves to `data/<name>-account.json`, a path is used verbatim; omitted falls back to `data/default-account.json`
@@ -224,7 +228,20 @@ Environment & Dependencies"):
   anyway). Used to be two separate modules (`main.py`/`stats.py`) — merged here so there's one entry point
   with real subcommands instead of separately invoked scripts. `import` was originally named `update`;
   renamed for clarity once `export` and filtering existed too and "update" no longer distinctly described
-  what it did.
+  what it did. `import-eml <source_dir>` (T0020) is the mirror image of `export --format eml`: candidates
+  come from the same `_eml_tree_candidates` walk `store-in-gmail`'s directory-source mode uses, but instead
+  of calling the Gmail API, `_run_import_eml` parses each message with `_extract_eml_body`/
+  `_extract_eml_attachments`/`_extract_eml_addresses` (the reverse of `_build_eml_message`) and upserts it
+  via `db.py`'s normal `upsert_message`/`upsert_addresses`/`upsert_attachments`, preserving the original
+  `X-Mail-Utils-ID` as the row's `id` rather than minting a new one (unlike Gmail, which always assigns a
+  fresh id on `store-in-gmail`). `X-Mail-Utils-Labels` names are resolved to ids via
+  `_resolve_import_eml_label_ids`, minting a new `import-eml:<name>` id for any name not already in the
+  target database - the original source's label id scheme (Gmail's opaque ids, Outlook's `outlook:<path>`,
+  Thunderbird's hashed id) isn't recoverable from a name alone, and round-trip fidelity only depends on the
+  *label name* surviving, not the specific id backing it. `_build_eml_message` also writes a lossless
+  `X-Mail-Utils-Internal-Date-Ms` header (added alongside `import-eml`) specifically so `internal_date_ms`
+  round-trips as the exact original integer rather than being re-derived from the `Date` header, which only
+  has second-level precision.
 
 Full column-by-column documentation of what's actually stored (and, importantly, what's opt-in or
 conditional — e.g. attachment *content* is only captured with `--with-attachments`, never by default)

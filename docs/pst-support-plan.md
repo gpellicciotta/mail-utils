@@ -57,6 +57,9 @@ The Outlook parser lives under `src/mail_utils/outlook/` and is implemented from
 
 ## Out of Scope
 
-- ANSI (32-bit legacy) PST format (only modern Unicode 64-bit PSTs supported).
 - `NDB_CRYPT_CYCLIC` obfuscation.
 - PST writing/modification (mail-utils is read-only by design).
+
+Both the modern Unicode (64-bit) and legacy ANSI (32-bit, Outlook 97-2002, `wVer` 14/15) PST formats are
+supported - see `outlook/ndb.py`'s module docstring for how the format-specific byte layouts were derived
+and verified (T0021).

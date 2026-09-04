@@ -15,9 +15,8 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [ ] T0022 (needs T0020) rewrite-task-files-new-format
+- [ ] T0022 rewrite-task-files-new-format
 - [ ] T0023 (needs T0022) Ensure to comply with the updated logging guidelines
-- [~] T0020 full-archive-import-and-eml-roundtrip  @claude
 
 ### Backlog
 

@@ -134,6 +134,29 @@ mail-utils import-pcv <archive_path> [-r|--recursive] [--with-attachments] [--db
 
 ---
 
+### `import-eml`
+Imports a `mail-utils export --format eml` directory tree straight into the local database - the mirror
+image of `export --format eml`. Only understands mail-utils' own EML shape (the `X-Mail-Utils-*` headers
+`export`/`store-in-gmail` write); a `.eml` file with no `X-Mail-Utils-ID` header is skipped, same as
+`store-in-gmail`'s directory-source mode.
+
+```powershell
+mail-utils import-eml <source_dir> [--db <dir>]
+```
+
+- `<source_dir>`: Directory of `.eml` files to import (searched recursively).
+- `--db <dir>`: Directory holding this run's database and attachment cache (see "Database & Attachment Storage" below).
+
+Preserves the original message `id` from `X-Mail-Utils-ID` verbatim (rather than minting a new one),
+reconstructs a `multipart/alternative` body back into `body_text`/`body_html` when both were present,
+extracts real attachment content (including an inline `Content-ID`-tagged image) back into the
+content-addressed attachment cache, and resolves `X-Mail-Utils-Labels` names to (newly-minted, if not
+already present) label ids in the target database - a message's round-tripped *label names* are what's
+preserved, not the original source's specific label id scheme, which generally can't be recovered from an
+EML file alone.
+
+---
+
 ### `search`
 Full-text searches indexed messages using SQLite `FTS5`.
 

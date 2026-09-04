@@ -2,8 +2,10 @@ import argparse
 import base64
 import email
 import logging
+import sqlite3
 from datetime import datetime
 from email.policy import default as email_policy_default
+from email.utils import getaddresses
 from importlib.metadata import version as package_version
 from pathlib import Path
 
@@ -15,10 +17,12 @@ from mail_utils import attachment_store, cli
 from mail_utils.cli import (
     _eml_tree_candidates,
     _gmail_call_with_backoff,
+    _parse_attachment_stub_header,
     _resolve_label_ids,
     _run_check_gmail_account,
     _run_export,
     _run_import,
+    _run_import_eml,
     _run_import_gmail,
     _run_import_pst,
     _run_import_thunderbird,
@@ -236,6 +240,54 @@ def test_build_eml_message_falls_back_to_regular_attachment_without_html_body(tm
     assert len(attachment_parts) == 1
     assert attachment_parts[0].get_filename() == "logo.png"
     assert attachment_parts[0].get_content() == b"PNG bytes"
+
+
+def test_build_eml_message_quotes_unquoted_at_in_sender_display_name():
+    # A real Thunderbird-sourced sender like "Panel @ InSites  <info@insitespanel.com>" has an
+    # unquoted "@" in its display name (invalid per RFC 5322, but real archives contain it). Left
+    # unquoted, Python's own modern email policy misparses the entire value on the way back through
+    # import-eml, discarding the real address entirely - found via T0020's round-trip comparison.
+    msg = _build_eml_message(sender="Panel @ InSites  <info@insitespanel.com>")
+
+    assert getaddresses([str(msg.get("From"))]) == [("Panel @ InSites", "info@insitespanel.com")]
+
+
+def test_build_eml_message_leaves_already_valid_addresses_untouched():
+    msg = _build_eml_message(recipient="Kris Ceuppens <kris.ceuppens@astadia.com>, plain@example.com")
+
+    assert getaddresses([str(msg.get("To"))]) == [
+        ("Kris Ceuppens", "kris.ceuppens@astadia.com"),
+        ("", "plain@example.com"),
+    ]
+
+
+def test_build_eml_message_preserves_non_utf8_text_attachment_bytes_exactly(tmp_path, monkeypatch):
+    """A "text/*" attachment isn't guaranteed to be UTF-8 (e.g. a real Windows-1252-encoded .txt file
+    from an old Outlook archive) - EmailMessage.add_attachment() decodes "text" maintype content as a
+    string before re-encoding it, which silently corrupts any byte sequence that isn't valid under
+    whatever charset it guesses (found via T0020's round-trip comparison: a captured attachment's
+    content_sha256 differed after re-import even though nothing in mail-utils's own code touched the
+    bytes in between). cli._lossless_attachment_type() must force a binary-safe maintype for anything
+    outside image/audio/video/application, regardless of the captured mime_type."""
+    attachment_store.configure(tmp_path / "attachments")
+    non_utf8 = b"milestones for Gial \x96 August 2008"  # \x96 (Windows-1252 en dash) isn't valid UTF-8
+    digest = attachment_store.save(non_utf8)
+
+    msg = _build_eml_message(
+        attachments=[
+            {
+                "filename": "notes.txt",
+                "mime_type": "text/plain",
+                "size": len(non_utf8),
+                "content_sha256": digest,
+                "content_id": None,
+            }
+        ],
+    )
+
+    attachment_parts = list(msg.iter_attachments())
+    assert len(attachment_parts) == 1
+    assert attachment_parts[0].get_content() == non_utf8
 
 
 def _no_sleep(monkeypatch):
@@ -1131,6 +1183,49 @@ def test_export_md_writes_sidecar_attachments_directory_when_content_present(tmp
     assert "content_sha256" not in str(frontmatter)
 
 
+def test_export_md_sanitizes_a_filename_invalid_on_windows(tmp_path):
+    # A real Outlook attachment can be named e.g. "RE: Offer: IMS DB Migration" - colons are a valid
+    # MAPI/MIME filename character but not a valid Windows one, and writing it straight to disk as a
+    # sidecar file crashed a real export (OSError) against the real anubex-outlook-backup.pst archive -
+    # found via T0020's full-scale export run.
+    db_path = tmp_path / "mails.db"
+    attachment_store.configure(tmp_path / "attachments")
+
+    digest = attachment_store.save(b"PDF bytes")
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message())
+    upsert_attachments(
+        conn,
+        "msg1",
+        [
+            {
+                "message_id": "msg1",
+                "attachment_id": "a1",
+                "filename": "RE: Offer: IMS DB Migration.pdf",
+                "mime_type": "application/pdf",
+                "size": 9,
+                "content_sha256": digest,
+            }
+        ],
+    )
+    conn.close()
+
+    output_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(output_dir), format="md", filter=None, db=str(tmp_path)))
+
+    sidecar_dir = output_dir / "2019" / "08" / "msg1.attachments"
+    written = list(sidecar_dir.iterdir())
+    assert len(written) == 1
+    assert ":" not in written[0].name
+    assert written[0].read_bytes() == b"PDF bytes"
+
+    # The frontmatter still records the real, original filename (metadata, not a filesystem path).
+    raw = (output_dir / "2019" / "08" / "msg1.md").read_text(encoding="utf-8")
+    frontmatter = yaml.safe_load(raw.split("---\n", 2)[1])
+    assert frontmatter["attachments"][0]["filename"] == "RE: Offer: IMS DB Migration.pdf"
+
+
 def test_export_writes_eml_format_html_body(tmp_path):
     db_path = tmp_path / "mails.db"
 
@@ -1171,6 +1266,183 @@ def test_export_eml_buckets_missing_internal_date_as_unknown(tmp_path):
     _run_export(argparse.Namespace(output_dir=str(output_dir), format="eml", filter=None, db=str(tmp_path)))
 
     assert (output_dir / "unknown" / "msg1.eml").exists()
+
+
+def test_parse_attachment_stub_header_with_type_and_size():
+    row = _parse_attachment_stub_header("msg1", "report.pdf (type=application/pdf; size=12345)")
+    assert row == {
+        "message_id": "msg1",
+        "filename": "report.pdf",
+        "mime_type": "application/pdf",
+        "size": 12345,
+        "content_sha256": None,
+        "content_id": None,
+    }
+
+
+def test_parse_attachment_stub_header_with_no_metadata():
+    row = _parse_attachment_stub_header("msg1", "report.pdf")
+    assert row["filename"] == "report.pdf"
+    assert row["mime_type"] is None
+    assert row["size"] is None
+
+
+def test_import_eml_subcommand_routes_to_run_import_eml():
+    args = build_parser().parse_args(["import-eml", "some/export/dir"])
+    assert args.command == "import-eml"
+    assert args.source_dir == "some/export/dir"
+    assert args.func is _run_import_eml
+
+
+def test_run_import_eml_reports_missing_source_directory(tmp_path, capsys):
+    _run_import_eml(argparse.Namespace(source_dir=str(tmp_path / "does-not-exist"), db=str(tmp_path / "db")))
+    out = capsys.readouterr().out
+    assert "not found" in out
+
+
+def test_run_import_eml_skips_files_without_mail_utils_id_header(tmp_path):
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    (export_dir / "not-ours.eml").write_bytes(b"Subject: hi\r\n\r\nBody\r\n")
+
+    db_dir = tmp_path / "result"
+    _run_import_eml(argparse.Namespace(source_dir=str(export_dir), db=str(db_dir)))
+
+    conn = init_db(db_dir / "mails.db")
+    (count,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
+    assert count == 0
+    conn.close()
+
+
+def test_run_import_eml_round_trips_message_addresses_and_labels(tmp_path):
+    origin_dir = tmp_path / "origin"
+    conn = init_db(origin_dir / "mails.db")
+    upsert_labels(conn, [{"id": "outlook:Inbox/Projects", "name": "Inbox/Projects"}])
+    upsert_message(
+        conn,
+        _sample_message(
+            id="outlook:msg1",
+            label_ids="outlook:Inbox/Projects",
+            cc="carl@example.com",
+            bcc="hidden@example.com",
+        ),
+    )
+    conn.close()
+
+    export_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(export_dir), format="eml", filter=None, db=str(origin_dir)))
+
+    result_dir = tmp_path / "result"
+    _run_import_eml(argparse.Namespace(source_dir=str(export_dir), db=str(result_dir)))
+
+    conn = init_db(result_dir / "mails.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM messages").fetchone()
+    assert row["id"] == "outlook:msg1"
+    assert row["sender"] == "jane@example.com"
+    assert row["cc"] == "carl@example.com"
+    assert row["bcc"] == "hidden@example.com"
+    assert row["internal_date_ms"] == 1566230400000
+    assert row["body_text"].strip() == "Body text"
+
+    label_names = dict(conn.execute("SELECT id, name FROM labels").fetchall())
+    resolved_label_names = {label_names[lbl] for lbl in row["label_ids"].split(",")}
+    assert resolved_label_names == {"Inbox/Projects"}
+
+    # _run_import_eml skips per-message FTS maintenance and rebuilds messages_fts once after the loop
+    # instead (a real, measured bottleneck against a large archive) - must still be fully populated by
+    # the time the command returns.
+    (fts_count,) = conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()
+    assert fts_count == 1
+    conn.close()
+
+
+def test_run_import_eml_round_trips_attachment_content_and_content_id(tmp_path):
+    origin_dir = tmp_path / "origin"
+    attachment_store.configure(origin_dir / "attachments")
+    digest = attachment_store.save(b"PNG bytes")
+
+    conn = init_db(origin_dir / "mails.db")
+    upsert_message(
+        conn,
+        _sample_message(
+            id="outlook:msg1",
+            body_mime_type="text/plain",
+            body_text="Plain body",
+            body_html='<p>See <img src="cid:logo@example"></p>',
+        ),
+    )
+    upsert_attachments(
+        conn,
+        "outlook:msg1",
+        [
+            {
+                "message_id": "outlook:msg1",
+                "filename": "logo.png",
+                "mime_type": "image/png",
+                "size": 9,
+                "content_sha256": digest,
+                "content_id": "<logo@example>",
+            },
+            {
+                "message_id": "outlook:msg1",
+                "filename": "unread.pdf",
+                "mime_type": "application/pdf",
+                "size": 42,
+                "content_sha256": None,
+                "content_id": None,
+            },
+        ],
+    )
+    conn.close()
+
+    export_dir = tmp_path / "export"
+    _run_export(argparse.Namespace(output_dir=str(export_dir), format="eml", filter=None, db=str(origin_dir)))
+
+    result_dir = tmp_path / "result"
+    attachment_store.configure(result_dir / "attachments")
+    _run_import_eml(argparse.Namespace(source_dir=str(export_dir), db=str(result_dir)))
+
+    conn = init_db(result_dir / "mails.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM messages").fetchone()
+    assert row["body_html"].strip() == '<p>See <img src="cid:logo@example"></p>'
+
+    atts = {r["filename"]: r for r in conn.execute("SELECT * FROM attachments").fetchall()}
+    assert atts["logo.png"]["content_sha256"] == digest
+    assert atts["logo.png"]["content_id"] == "<logo@example>"
+    assert attachment_store.read(atts["logo.png"]["content_sha256"]) == b"PNG bytes"
+    assert atts["unread.pdf"]["content_sha256"] is None
+    assert atts["unread.pdf"]["mime_type"] == "application/pdf"
+    assert atts["unread.pdf"]["size"] == 42
+    conn.close()
+
+
+def test_run_import_eml_reconstructs_html_only_message_consistently():
+    """An html-only message stores the same raw markup in both body_text (as _extract_body_text's
+    existing fallback does) and body_html - reconstructing it must not misclassify it as plain text
+    (see _build_eml_message's own body_mime_type == "text/plain" guard for the forward direction)."""
+    html = "<html><body><p>Only HTML</p></body></html>"
+    msg = cli._build_eml_message(
+        msg_id="outlook:msg1",
+        thread_id=None,
+        sender=None,
+        recipient=None,
+        cc=None,
+        bcc=None,
+        subject=None,
+        date=None,
+        internal_date_ms=None,
+        labels=[],
+        body_mime_type="text/html",
+        attachments=[],
+        body_text=html,
+        body_html=html,
+    )
+    body_text, body_mime_type, body_html = cli._extract_eml_body(msg)
+    assert body_mime_type == "text/html"
+    assert body_text.strip() == html
+    assert body_html.strip() == html
 
 
 def test_export_buckets_missing_internal_date_as_unknown(tmp_path):

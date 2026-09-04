@@ -110,15 +110,19 @@ def _ensure_attachments_filename_nullable(conn: sqlite3.Connection) -> None:
     rows = conn.execute("PRAGMA table_info(attachments)").fetchall()
     for row in rows:
         if row[1] == "filename" and row[3] == 1:
-            conn.execute("CREATE TABLE attachments_new ("
-                         "message_id TEXT NOT NULL, "
-                         "attachment_id TEXT, "
-                         "filename TEXT, "
-                         "mime_type TEXT, "
-                         "size INTEGER, "
-                         "content_sha256 TEXT, "
-                         "content_id TEXT)")
-            conn.execute("INSERT INTO attachments_new SELECT message_id, attachment_id, filename, mime_type, size, content_sha256, content_id FROM attachments")
+            conn.execute(
+                "CREATE TABLE attachments_new ("
+                "message_id TEXT NOT NULL, "
+                "attachment_id TEXT, "
+                "filename TEXT, "
+                "mime_type TEXT, "
+                "size INTEGER, "
+                "content_sha256 TEXT, "
+                "content_id TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO attachments_new SELECT message_id, attachment_id, filename, mime_type, size, content_sha256, content_id FROM attachments"
+            )
             conn.execute("DROP TABLE attachments")
             conn.execute("ALTER TABLE attachments_new RENAME TO attachments")
             conn.execute("CREATE INDEX idx_attachments_message_id ON attachments (message_id)")
@@ -126,9 +130,40 @@ def _ensure_attachments_filename_nullable(conn: sqlite3.Connection) -> None:
             break
 
 
+def rebuild_fts(conn: sqlite3.Connection) -> None:
+    """Fully repopulate messages_fts from messages in one bulk operation - the counterpart to
+    upsert_message(update_fts=False), for a bulk-import loop that skips per-message FTS5 maintenance
+    (see its docstring for why) and calls this once after the loop instead.
+
+    Also serves as a one-off repair for a messages_fts index that's degraded from exactly the pattern
+    this replaces: FTS5's internal segment structure fragments under many small incremental
+    delete+insert operations, and a full rebuild is the straightforward fix (confirmed empirically
+    against a real ~3.7GB, 127,874-message database: the bulk rebuild here took ~3 minutes total,
+    versus a ~1.5s-per-message cost for the incremental path it replaces - literally orders of
+    magnitude apart at that scale)."""
+    conn.execute("DELETE FROM messages_fts")
+    conn.execute(
+        """
+        INSERT INTO messages_fts (id, subject, body_text, sender, recipient)
+        SELECT id, COALESCE(subject, ''), COALESCE(body_text, ''), COALESCE(sender, ''), COALESCE(recipient, '')
+        FROM messages
+        """
+    )
+    conn.commit()
+
+
 def init_db(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
+    # WAL mode avoids the rollback-journal's per-transaction create/fsync/delete cycle (a real,
+    # measured bottleneck on a large import: every upsert_message/upsert_addresses/upsert_attachments
+    # call used to commit individually under the default journal_mode=DELETE, and the cost grew
+    # noticeably worse as the database passed a few GB) - one append-only WAL file instead, checkpointed
+    # automatically. synchronous=NORMAL is the documented-safe pairing for WAL (still crash-safe against
+    # corruption; the only risk is losing the most recent *uncommitted* batch on a hard crash, which a
+    # bulk import already tolerates fine - upsert_message et al. are safe to simply reprocess).
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
     conn.commit()
     _ensure_column(conn, "messages", "cc", "TEXT")
@@ -178,29 +213,34 @@ def upsert_labels(conn: sqlite3.Connection, labels: list[dict]) -> None:
     conn.commit()
 
 
-def upsert_addresses(conn: sqlite3.Connection, message_id: str, addresses: list) -> None:
+def upsert_addresses(conn: sqlite3.Connection, message_id: str, addresses: list, commit: bool = True) -> None:
     """Replace message_id's rows in message_addresses with `addresses`.
 
     Delete-then-insert rather than an upsert: Gmail messages are immutable,
     so a rerun's address set for a given message never actually differs,
     but this keeps behavior correct/simple if it ever does.
-    """
+
+    `commit=False` for a bulk-import hot loop batching its own commits instead - see
+    upsert_message's docstring for why."""
     conn.execute("DELETE FROM message_addresses WHERE message_id = ?", (message_id,))
     if addresses:
         conn.executemany(
             "INSERT INTO message_addresses (message_id, role, address, name) VALUES (:message_id, :role, :address, :name)",
             addresses,
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
-def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: list) -> None:
+def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: list, commit: bool = True) -> None:
     """Replace message_id's rows in attachments with `attachments`.
 
     Same delete-then-insert rationale as upsert_addresses. `content_sha256` and `content_id` are read
     via `.get()` (defaulting to `None`) since not every caller sets them - `content_sha256` only when
     `--with-attachments` was used, `content_id` only for a Gmail inline-image part that carried one.
-    """
+
+    `commit=False` for a bulk-import hot loop batching its own commits instead - see
+    upsert_message's docstring for why."""
     conn.execute("DELETE FROM attachments WHERE message_id = ?", (message_id,))
     if attachments:
         rows = [
@@ -220,12 +260,28 @@ def upsert_attachments(conn: sqlite3.Connection, message_id: str, attachments: l
             "VALUES (:message_id, :attachment_id, :filename, :mime_type, :size, :content_sha256, :content_id)",
             rows,
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
-def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
+def upsert_message(conn: sqlite3.Connection, msg: dict, commit: bool = True, update_fts: bool = True) -> None:
     """`body_html` is read via `.get()` (defaulting to `None`) since not every source parser
-    populates it yet (see gmail_client.py's `parse_message` vs. outlook/thunderbird's)."""
+    populates it yet (see gmail_client.py's `parse_message` vs. outlook/thunderbird's).
+
+    `commit=False` lets a bulk-import hot loop batch its own commits instead of committing on every
+    single call (see cli.py's COMMIT_BATCH_INTERVAL) - committing every single message was a real,
+    measured bottleneck against a large archive (every commit forces a full fsync under SQLite's
+    default settings, and the cost only grows as the database gets larger), while every other, lower-
+    volume caller keeps today's simpler commit-immediately default.
+
+    `update_fts=False` skips the messages_fts delete+insert below entirely - the *much* bigger of the
+    two bottlenecks, measured against the real archive that motivated both parameters: FTS5's internal
+    segment structure fragments under many small incremental delete+insert operations, and at that
+    database's actual scale (~127,874 messages) this cost roughly 1.5 SECONDS per message, dwarfing
+    even the commit/fsync cost `commit=False` addresses. A bulk-import loop should pass
+    `update_fts=False` and call `rebuild_fts(conn)` once after the loop instead - confirmed to cost
+    around 3 minutes total for that same database, versus over 50 hours doing it incrementally.
+    Low-volume callers keep today's simpler default (correct immediately, no separate rebuild step)."""
     params = {**msg, "body_html": msg.get("body_html")}
     conn.execute(
         """
@@ -248,21 +304,23 @@ def upsert_message(conn: sqlite3.Connection, msg: dict) -> None:
         """,
         params,
     )
-    try:
-        conn.execute("DELETE FROM messages_fts WHERE id = ?", (msg["id"],))
-        conn.execute(
-            """
-            INSERT INTO messages_fts (id, subject, body_text, sender, recipient)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                msg["id"],
-                msg.get("subject") or "",
-                msg.get("body_text") or "",
-                msg.get("sender") or "",
-                msg.get("recipient") or "",
-            ),
-        )
-    except sqlite3.OperationalError:
-        pass
-    conn.commit()
+    if update_fts:
+        try:
+            conn.execute("DELETE FROM messages_fts WHERE id = ?", (msg["id"],))
+            conn.execute(
+                """
+                INSERT INTO messages_fts (id, subject, body_text, sender, recipient)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    msg["id"],
+                    msg.get("subject") or "",
+                    msg.get("body_text") or "",
+                    msg.get("sender") or "",
+                    msg.get("recipient") or "",
+                ),
+            )
+        except sqlite3.OperationalError:
+            pass
+    if commit:
+        conn.commit()
