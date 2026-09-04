@@ -22,6 +22,19 @@ A summarized overview of all changes, per version of this project.
 - BackEnd: Fix a crash when a cached Gmail token's refresh token has been revoked or expired; falls back to re-consent instead.
 - DevEx: Have gmail-roundtrip-test.py's cleanup action also delete the label, not just trash its messages.
 - Docs: Fix stale claims that attachment content is never captured/stored, pre-dating opt-in `--with-attachments`.
+- BackEnd: Add `import-eml`, importing a previous `.eml` export straight back into the local database.
+- BackEnd: Fix Outlook/Thunderbird imports leaving raw header line breaks that crashed `export --format eml`.
+- BackEnd: Fix Outlook imports never decoding non-ASCII sender/recipient names from transport headers.
+- BackEnd: Fix a captured attachment's stored size sometimes disagreeing with its actual saved bytes.
+- BackEnd: Fix non-UTF-8 text attachments getting silently corrupted on `export --format eml`.
+- BackEnd: Fix an address with an unquoted "@" in its display name losing its email address on import.
+- DevEx: Add `scripts/local-roundtrip-test.py` to verify `import-eml` round-trips losslessly against a database.
+- BackEnd: Fix `import-pst`/`import-thunderbird`/`import-eml`/Gmail full sync slowing drastically on a large mailbox.
+- BackEnd: Fix an unquoted comma in a "Last, First" display name splitting one recipient into bogus extra addresses.
+- BackEnd: Add support for the legacy ANSI (32-bit) Outlook PST format, alongside the existing Unicode format.
+- BackEnd: Fix Outlook folder/recipient/attachment names garbling on an ANSI PST, which stores them as 8-bit text.
+- BackEnd: Fix `import-pst --recursive` silently doing nothing; embedded message attachments are now indexed too.
+- BackEnd: Fix an address with an unquoted "[...]" annotation in its display name losing its email address on import.
 
 ## v3.0.0 [2026-08-28]
 - BackEnd: Add `prepare-gmail-account` and `--account` to authorize and select between multiple named Gmail accounts.

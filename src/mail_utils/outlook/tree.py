@@ -17,6 +17,9 @@ from .ndb import NID_ROOT_FOLDER, NID_TYPE_CONTENTS_TABLE, NID_TYPE_HIERARCHY_TA
 PROP_DISPLAY_NAME = 0x3001
 PROP_LTP_ROW_ID = 0x67F2
 
+PTYPE_STRING = 0x001F  # UTF-16LE
+_FALLBACK_CODEPAGE = 1252  # a folder row carries no PidTagMessageCodePage of its own to consult
+
 
 @dataclass
 class PSTFolder:
@@ -26,13 +29,25 @@ class PSTFolder:
 
 
 def _row_nid(row: dict) -> int | None:
-    value = row.get(PROP_LTP_ROW_ID)
-    return struct.unpack_from("<I", value, 0)[0] if value else None
+    prop = row.get(PROP_LTP_ROW_ID)
+    return struct.unpack_from("<I", prop.value, 0)[0] if prop else None
 
 
 def _row_name(row: dict) -> str:
-    value = row.get(PROP_DISPLAY_NAME)
-    return value.decode("utf-16-le", errors="replace") if value else ""
+    # `read_table_context` returns each column as a PSTProperty (prop_type + raw value), same shape
+    # as a Property Context read - PidTagDisplayName is PtypString (UTF-16LE) by Unicode-PST
+    # convention but PtypString8 (codepage-dependent 8-bit) in a real ANSI PST; decoding
+    # unconditionally as UTF-16LE (the previous behavior) produced garbled folder names against the
+    # real ANSI `anubex-friends-email.pst` archive - found via T0021.
+    prop = row.get(PROP_DISPLAY_NAME)
+    if prop is None or not prop.value:
+        return ""
+    if prop.prop_type == PTYPE_STRING:
+        return prop.value.decode("utf-16-le", errors="replace")
+    try:
+        return prop.value.decode(f"cp{_FALLBACK_CODEPAGE}", errors="replace")
+    except LookupError:
+        return prop.value.decode("cp1252", errors="replace")
 
 
 def walk_folders(pst: PSTFile, root_nid: int = NID_ROOT_FOLDER) -> list:

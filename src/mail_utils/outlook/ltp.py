@@ -261,7 +261,15 @@ def _resolve_row_matrix(pst: PSTFile, heap: HeapOnNode, hnid_rows: int, sub_bid:
 
 
 def read_table_context(pst: PSTFile, bid_data: int, bid_sub: int) -> list:
-    """Return one {prop_id: raw_bytes} dict per row of a node's Table Context.
+    """Return one {prop_id: PSTProperty} dict per row of a node's Table Context - same shape as
+    `read_property_context`'s return value, so callers can decode a TC-sourced string with the exact
+    same prop_type-aware logic (`outlook/messages.py::_decode_string`) as a PC-sourced one, rather
+    than assuming a fixed encoding. That distinction is real, not theoretical: `PidTagDisplayName`
+    and friends are `PtypString` (UTF-16LE) by Unicode-PST convention but `PtypString8` (codepage-
+    dependent 8-bit) in a real ANSI PST - found via T0021, where every caller that used to decode a
+    TC row's raw bytes as UTF-16LE unconditionally produced garbled folder/recipient/attachment names
+    against the real ANSI `anubex-friends-email.pst` archive, despite `read_property_context`'s own
+    prop_type-aware callers always having been correct.
 
     Used for folder hierarchy/contents tables and per-message recipient/attachment tables. Reads
     every row directly out of the Row Matrix rather than resolving the Row ID BTH (hidRowIndex) -
@@ -291,9 +299,10 @@ def read_table_context(pst: PSTFile, bid_data: int, bid_sub: int) -> list:
         for col in columns:
             raw_field = row[col.ib_data : col.ib_data + col.cb_data]
             if FIXED_SIZE_TYPES.get(col.prop_type) == col.cb_data:
-                props[col.prop_id] = raw_field
+                value = raw_field
             else:
                 hnid = struct.unpack_from("<I", raw_field, 0)[0]
-                props[col.prop_id] = resolve_hnid(pst, heap, hnid, bid_sub)
+                value = resolve_hnid(pst, heap, hnid, bid_sub)
+            props[col.prop_id] = PSTProperty(prop_type=col.prop_type, value=value)
         rows.append(props)
     return rows

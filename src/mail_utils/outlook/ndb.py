@@ -1,12 +1,26 @@
 """NDB (Node Database) layer of the MS-PST file format.
 
-Implements just enough of [MS-PST] section 2.2.2 to open a Unicode-format PST file, walk its
-Node BTree (NBT) and Block BTree (BBT), and resolve any NID to its fully decoded/decompressed
-byte stream - including multi-block data (XBLOCK/XXBLOCK) and subnodes (SLBLOCK/SIBLOCK).
+Implements just enough of [MS-PST] section 2.2.2 to open a PST file - Unicode (wVer >= 23) or ANSI
+(wVer 14/15) - and walk its Node BTree (NBT) and Block BTree (BBT), and resolve any NID to its fully
+decoded/decompressed byte stream - including multi-block data (XBLOCK/XXBLOCK) and subnodes
+(SLBLOCK/SIBLOCK).
 
-Deliberately out of scope: ANSI (32-bit) PST format, NDB_CRYPT_CYCLIC encoding, CRC/signature
-verification (advisory only in the spec - skipped here), and write support (this app is
-read-only by design, see CLAUDE.md).
+ANSI and Unicode share the same overall page/block/BTree *shape*; the only difference is the width
+of a BID/IB (4 bytes ANSI, 8 bytes Unicode) and everywhere that width propagates: BREF, BTENTRY,
+BBTENTRY, NBTENTRY, SLENTRY, SIENTRY, an XBLOCK/XXBLOCK's BID array, and BLOCKTRAILER's own `bid`
+field - plus the HEADER/ROOT structures, which differ in more ways than just field width (extra
+ANSI-only/Unicode-only fields, different field order). Every width-sensitive function below takes an
+explicit `is_ansi: bool` rather than inferring it per-call, so a caller can't accidentally mix formats
+mid-read. Exact byte offsets for both variants were verified against the real [MS-PST] specification
+(learn.microsoft.com/en-us/openspecs/office_file_formats/ms-pst) rather than derived from memory,
+given the cost of a silently-wrong offset against real archive data - see T0021.
+
+The higher LTP layer (ltp.py: Heap-on-Node, BTree-on-Heap, Property/Table Context) needs no
+ANSI-specific changes at all: HIDs (heap-internal handles) are always 32-bit in both PST formats, and
+everything LTP reads comes back through this module's already-format-aware `PSTFile` methods.
+
+Deliberately out of scope: NDB_CRYPT_CYCLIC encoding, CRC/signature verification (advisory only in
+the spec - skipped here), and write support (this app is read-only by design, see CLAUDE.md).
 """
 
 import struct
@@ -14,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PAGE_SIZE = 512
-HEADER_SIZE = 564
+HEADER_READ_SIZE = 564  # generous upper bound covering both the 512-byte ANSI and 564-byte Unicode header
 
 # [MS-PST] 2.2.2.7.1 PAGETRAILER ptype values
 PTYPE_BBT = 0x80
@@ -97,6 +111,8 @@ def decode_data(data: bytes, crypt_method: int) -> bytes:
 
 
 # --- NID (Node ID) - [MS-PST] 2.2.2.1 ---------------------------------------------------
+# NID is a 32-bit concept in both formats (Unicode's NBTENTRY/SIENTRY just zero-extend it to 8 bytes
+# for field-width alignment) - nid_type()/make_nid() need no ANSI/Unicode distinction.
 
 NID_TYPE_HID = 0x00
 NID_TYPE_INTERNAL = 0x01
@@ -126,6 +142,39 @@ def make_nid(nid_type_: int, nid_index: int) -> int:
     return (nid_index << 5) | nid_type_
 
 
+# --- BID/IB width helpers - [MS-PST] 2.2.2.2 (BID) / 2.2.2.3 (IB) ------------------------
+
+
+def _bid_ib_fmt(is_ansi: bool) -> str:
+    return "<I" if is_ansi else "<Q"
+
+
+def _ids_fmt(n: int, is_ansi: bool) -> str:
+    """A struct format string for `n` consecutive BID/IB/NID-width fields, e.g. `_ids_fmt(3, True)`
+    -> "<III" for an ANSI NBTENTRY's nid+bidData+bidSub."""
+    return "<" + ("I" if is_ansi else "Q") * n
+
+
+def _bid_ib_size(is_ansi: bool) -> int:
+    return 4 if is_ansi else 8
+
+
+def _block_trailer_size(is_ansi: bool) -> int:
+    # BLOCKTRAILER ([MS-PST] 2.2.2.8.1): cb(2) + wSig(2) + dwCRC(4) + bid(ANSI 4 / Unicode 8).
+    return 12 if is_ansi else 16
+
+
+def _slblock_entries_off(is_ansi: bool) -> int:
+    # SLBLOCK/SIBLOCK header ([MS-PST] 2.2.2.8.3.3.1.1/.2.1): btype(1)+cLevel(1)+cEnt(2) = 4 bytes,
+    # then rgentries immediately for ANSI - but Unicode adds a 4-byte dwPadding first (entries at
+    # offset 8), to keep the following 8-byte-wide NID/BID fields aligned. ANSI's 4-byte-wide fields
+    # are already aligned at offset 4, so it has no padding at all - verified against the real spec
+    # (not assumed by analogy with XBLOCK/BTPAGE, which *do* both start entries at a fixed offset 8
+    # regardless of format - SLBLOCK/SIBLOCK is the one structure where the entries' start offset
+    # itself, not just field width, differs by format).
+    return 4 if is_ansi else 8
+
+
 # --- Header / ROOT - [MS-PST] 2.2.2.6 / 2.2.2.5 -----------------------------------------
 
 
@@ -140,30 +189,48 @@ class Root:
 class Header:
     wVer: int
     crypt_method: int
+    is_ansi: bool
     root: Root
 
 
 def parse_header(raw: bytes) -> Header:
-    if len(raw) < HEADER_SIZE:
-        raise ValueError(f"PST header truncated: expected {HEADER_SIZE} bytes, got {len(raw)}")
-    if raw[0:4] != b"!BDN":
+    if len(raw) < 4 or raw[0:4] != b"!BDN":
         raise ValueError(f"Not a PST file (bad dwMagic {raw[0:4]!r})")
     if raw[8:10] != b"SM":
         raise ValueError(f"Bad wMagicClient {raw[8:10]!r}")
     wver = struct.unpack_from("<H", raw, 10)[0]
-    if wver < 23:
-        raise NotImplementedError(f"ANSI PST format (wVer={wver}) is not supported, only Unicode PST")
-    if raw[512] != 0x80:
-        raise ValueError(f"Bad bSentinel {raw[512]:#x} (expected 0x80) - header offsets may be wrong")
-    crypt_method = raw[513]
+    is_ansi = wver < 23
+    if is_ansi and wver not in (14, 15):
+        raise NotImplementedError(f"Unrecognized ANSI PST wVer={wver} (only 14/15 are known)")
 
-    root_off = 180
-    root = raw[root_off : root_off + 72]
-    ib_file_eof = struct.unpack_from("<Q", root, 4)[0]
-    bref_nbt = struct.unpack_from("<QQ", root, 4 + 8 + 8 + 8 + 8)
-    bref_bbt = struct.unpack_from("<QQ", root, 4 + 8 + 8 + 8 + 8 + 16)
+    if is_ansi:
+        # ANSI HEADER: bSentinel/bCryptMethod at offset 460/461 (rgentries(496)+cEnt/cEntMax/cbEnt/
+        # cLevel(4) of the header's own leading fields never applies here - this offset comes from
+        # the ANSI HEADER field layout itself: dwMagic..dwUnique(36) + rgnid(128) + root(40) +
+        # rgbFM(128) + rgbFP(128) = 460). Verified against [MS-PST] 2.2.2.6, not derived by analogy.
+        if len(raw) < 512:
+            raise ValueError(f"ANSI PST header truncated: expected 512 bytes, got {len(raw)}")
+        if raw[460] != 0x80:
+            raise ValueError(f"Bad bSentinel {raw[460]:#x} (expected 0x80) - ANSI header offsets may be wrong")
+        crypt_method = raw[461]
+        root_off = 164
+        root = raw[root_off : root_off + 40]
+        ib_file_eof = struct.unpack_from("<I", root, 4)[0]
+        bref_nbt = struct.unpack_from("<II", root, 20)
+        bref_bbt = struct.unpack_from("<II", root, 28)
+    else:
+        if len(raw) < 564:
+            raise ValueError(f"Unicode PST header truncated: expected 564 bytes, got {len(raw)}")
+        if raw[512] != 0x80:
+            raise ValueError(f"Bad bSentinel {raw[512]:#x} (expected 0x80) - header offsets may be wrong")
+        crypt_method = raw[513]
+        root_off = 180
+        root = raw[root_off : root_off + 72]
+        ib_file_eof = struct.unpack_from("<Q", root, 4)[0]
+        bref_nbt = struct.unpack_from("<QQ", root, 4 + 8 + 8 + 8 + 8)
+        bref_bbt = struct.unpack_from("<QQ", root, 4 + 8 + 8 + 8 + 8 + 16)
 
-    return Header(wVer=wver, crypt_method=crypt_method, root=Root(ib_file_eof, bref_nbt, bref_bbt))
+    return Header(wVer=wver, crypt_method=crypt_method, is_ansi=is_ansi, root=Root(ib_file_eof, bref_nbt, bref_bbt))
 
 
 # --- BTree pages - [MS-PST] 2.2.2.7 ------------------------------------------------------
@@ -176,79 +243,112 @@ class BTPage:
     entries: list  # list of raw per-entry byte slices, length cbEnt each
 
 
-def read_page(f, ib: int) -> BTPage:
+def read_page(f, ib: int, is_ansi: bool) -> BTPage:
     f.seek(ib)
     raw = f.read(PAGE_SIZE)
     if len(raw) != PAGE_SIZE:
         raise ValueError(f"Short page read at offset {ib:#x}: got {len(raw)} bytes")
 
-    ptype = raw[496]
-    ptype_repeat = raw[497]
+    # BTPAGE header fields (cEnt, cEntMax, cbEnt, cLevel) + pageTrailer sit at the very end of the
+    # page, but at different offsets for ANSI (rgentries is 496 bytes, no dwPadding) vs Unicode
+    # (rgentries is 488 bytes, +4 bytes dwPadding) - [MS-PST] 2.2.2.7.7.1.
+    if is_ansi:
+        c_ent, cb_ent, c_level = raw[496], raw[498], raw[499]
+        trailer_off = 500
+    else:
+        c_ent, cb_ent, c_level = raw[488], raw[490], raw[491]
+        trailer_off = 496
+
+    ptype = raw[trailer_off]
+    ptype_repeat = raw[trailer_off + 1]
     if ptype != ptype_repeat:
         raise ValueError(f"Page at {ib:#x}: ptype {ptype:#x} != ptypeRepeat {ptype_repeat:#x}")
 
-    c_ent, cb_ent, c_level = raw[488], raw[490], raw[491]
     entries = [raw[i * cb_ent : i * cb_ent + cb_ent] for i in range(c_ent)]
     return BTPage(ptype=ptype, c_level=c_level, entries=entries)
 
 
-def _btentry_bref(entry: bytes) -> tuple:
-    # BTENTRY (Unicode, 24 bytes): btkey(8) + BREF{bid(8), ib(8)}
-    bid, ib = struct.unpack_from("<QQ", entry, 8)
+def _btentry_bref(entry: bytes, is_ansi: bool) -> tuple:
+    # BTENTRY: btkey(ANSI 4 / Unicode 8) + BREF{bid, ib} (ANSI 4+4=8 / Unicode 8+8=16).
+    key_size = _bid_ib_size(is_ansi)
+    bid, ib = struct.unpack_from(_ids_fmt(2, is_ansi), entry, key_size)
     return bid, ib
 
 
-def find_nbt_leaf_entry(f, nbt_root_ib: int, nid: int) -> bytes | None:
+def find_nbt_leaf_entry(f, nbt_root_ib: int, nid: int, is_ansi: bool) -> bytes | None:
     """Walk the Node BTree from its root page down to the leaf entry for `nid`, or None."""
+    fmt = _bid_ib_fmt(is_ansi)
     ib = nbt_root_ib
     while True:
-        page = read_page(f, ib)
+        page = read_page(f, ib, is_ansi)
         if page.c_level == 0:
             for entry in page.entries:
-                entry_nid = struct.unpack_from("<Q", entry, 0)[0]
+                entry_nid = struct.unpack_from(fmt, entry, 0)[0]
                 if entry_nid == nid:
                     return entry
             return None
         # Intermediate level: descend into the last child whose btkey <= nid.
         chosen = None
         for entry in page.entries:
-            btkey = struct.unpack_from("<Q", entry, 0)[0]
+            btkey = struct.unpack_from(fmt, entry, 0)[0]
             if btkey <= nid:
                 chosen = entry
             else:
                 break
         if chosen is None:
             return None
-        _, child_ib = _btentry_bref(chosen)
+        _, child_ib = _btentry_bref(chosen, is_ansi)
         ib = child_ib
 
 
-def find_bbt_leaf_entry(f, bbt_root_ib: int, bid: int) -> bytes | None:
+def find_bbt_leaf_entry(f, bbt_root_ib: int, bid: int, is_ansi: bool) -> bytes | None:
     """Walk the Block BTree from its root page down to the leaf entry for `bid`, or None."""
+    fmt = _bid_ib_fmt(is_ansi)
     lookup_key = bid & ~0x3  # BBT is keyed on the raw BID; low 2 bits (r, i flags) are excluded from comparison
     ib = bbt_root_ib
     while True:
-        page = read_page(f, ib)
+        page = read_page(f, ib, is_ansi)
         if page.c_level == 0:
             for entry in page.entries:
-                entry_bid = struct.unpack_from("<Q", entry, 0)[0]
+                entry_bid = struct.unpack_from(fmt, entry, 0)[0]
                 if (entry_bid & ~0x3) == lookup_key:
                     return entry
             return None
         chosen = None
         for entry in page.entries:
-            btkey = struct.unpack_from("<Q", entry, 0)[0]
+            btkey = struct.unpack_from(fmt, entry, 0)[0]
             if (btkey & ~0x3) <= lookup_key:
                 chosen = entry
             else:
                 break
         if chosen is None:
             return None
-        _, child_ib = _btentry_bref(chosen)
+        _, child_ib = _btentry_bref(chosen, is_ansi)
         ib = child_ib
 
 
-def read_block_parts(f, bbt_root_ib: int, bid: int, crypt_method: int) -> list:
+def _read_bbt_block(f, bbt_root_ib: int, bid: int, is_ansi: bool) -> tuple:
+    """Resolve a BID via the BBT and read its raw (still block-trailer-stripped, still
+    permutation-encoded) bytes off disk. Returns (blockBid, data) - `blockBid` carries the `i`
+    (internal/XBLOCK) flag callers need; shared by every caller that would otherwise repeat the
+    BBTENTRY-parse-then-seek-then-round-up-to-64 dance (read_block_parts, XBLOCK/XXBLOCK chain
+    traversal, and both subnode-BTree readers)."""
+    entry = find_bbt_leaf_entry(f, bbt_root_ib, bid, is_ansi)
+    if entry is None:
+        raise KeyError(f"BID {bid:#x} not found in Block BTree")
+    # BBTENTRY: BREF{bid, ib} (ANSI 8 / Unicode 16) + cb(2) + cRef(2) [+ dwPadding(4), Unicode only].
+    bref_size = _bid_ib_size(is_ansi) * 2
+    block_bid, block_ib = struct.unpack_from(_ids_fmt(2, is_ansi), entry, 0)
+    cb = struct.unpack_from("<H", entry, bref_size)[0]
+
+    block_size = cb + _block_trailer_size(is_ansi)
+    block_size += (-block_size) % 64  # round up to 64-byte boundary
+    f.seek(block_ib)
+    data = f.read(block_size)[:cb]
+    return block_bid, data
+
+
+def read_block_parts(f, bbt_root_ib: int, bid: int, crypt_method: int, is_ansi: bool) -> list:
     """Resolve a BID to its data block's decoded bytes as a list of leaf-block chunks.
 
     A plain (non-internal) block yields a single-element list. An XBLOCK/XXBLOCK chain yields one
@@ -258,108 +358,88 @@ def read_block_parts(f, bbt_root_ib: int, bid: int, crypt_method: int) -> list:
     next record there; joining raw would splice that padding into the middle of the byte stream.
     `read_block_raw` (whole-blob callers, where padding is never present) does the joining itself.
     """
-    entry = find_bbt_leaf_entry(f, bbt_root_ib, bid)
-    if entry is None:
-        raise KeyError(f"BID {bid:#x} not found in Block BTree")
-    # BBTENTRY (Unicode, 24 bytes): BREF{bid(8), ib(8)} + cb(2) + cRef(2) + dwPadding(4)
-    block_bid, block_ib = struct.unpack_from("<QQ", entry, 0)
-    cb = struct.unpack_from("<H", entry, 16)[0]
-
-    block_size = cb + 16  # + BLOCKTRAILER
-    block_size += (-block_size) % 64  # round up to 64-byte boundary
-    f.seek(block_ib)
-    block = f.read(block_size)
-    data = block[:cb]
-
+    block_bid, data = _read_bbt_block(f, bbt_root_ib, bid, is_ansi)
     is_internal = bool(block_bid & 0x2)
     if is_internal:
-        return _read_xblock_parts(f, bbt_root_ib, data, crypt_method)
+        return _read_xblock_parts(f, bbt_root_ib, data, crypt_method, is_ansi)
     return [decode_data(data, crypt_method)]
 
 
-def read_block_raw(f, bbt_root_ib: int, bid: int, crypt_method: int) -> bytes:
+def read_block_raw(f, bbt_root_ib: int, bid: int, crypt_method: int, is_ansi: bool) -> bytes:
     """Resolve a BID to its data block's decoded bytes, concatenated (following XBLOCK/XXBLOCK chains)."""
-    return b"".join(read_block_parts(f, bbt_root_ib, bid, crypt_method))
+    return b"".join(read_block_parts(f, bbt_root_ib, bid, crypt_method, is_ansi))
 
 
-def _read_xblock_parts(f, bbt_root_ib: int, data: bytes, crypt_method: int) -> list:
-    # XBLOCK/XXBLOCK header: btype(1) + cLevel(1) + cEnt(2) + lcbTotal(4), then cEnt BIDs (8 bytes each).
+def _read_xblock_parts(f, bbt_root_ib: int, data: bytes, crypt_method: int, is_ansi: bool) -> list:
+    # XBLOCK/XXBLOCK header: btype(1) + cLevel(1) + cEnt(2) + lcbTotal(4) - fixed 8 bytes in both
+    # formats (lcbTotal never widens) - then cEnt BIDs, each ANSI 4 / Unicode 8 bytes.
     btype, c_level, c_ent = data[0], data[1], struct.unpack_from("<H", data, 2)[0]
     if btype != 0x01:
         raise ValueError(f"Expected XBLOCK/XXBLOCK btype 0x01, got {btype:#x}")
-    bids = [struct.unpack_from("<Q", data, 8 + i * 8)[0] for i in range(c_ent)]
+    fmt = _bid_ib_fmt(is_ansi)
+    bid_size = _bid_ib_size(is_ansi)
+    bids = [struct.unpack_from(fmt, data, 8 + i * bid_size)[0] for i in range(c_ent)]
     parts = []
     if c_level == 1:
         for bid in bids:
-            parts.extend(read_block_parts(f, bbt_root_ib, bid, crypt_method))
+            parts.extend(read_block_parts(f, bbt_root_ib, bid, crypt_method, is_ansi))
     elif c_level == 2:
         for bid in bids:
-            parts.extend(_read_xblock_bid_parts(f, bbt_root_ib, bid, crypt_method))
+            parts.extend(_read_xblock_bid_parts(f, bbt_root_ib, bid, crypt_method, is_ansi))
     else:
         raise ValueError(f"Unexpected XBLOCK cLevel {c_level}")
     return parts
 
 
-def _read_xblock_bid_parts(f, bbt_root_ib: int, bid: int, crypt_method: int) -> list:
-    entry = find_bbt_leaf_entry(f, bbt_root_ib, bid)
-    if entry is None:
-        raise KeyError(f"XXBLOCK child BID {bid:#x} not found in Block BTree")
-    _block_bid, block_ib = struct.unpack_from("<QQ", entry, 0)
-    cb = struct.unpack_from("<H", entry, 16)[0]
-    block_size = cb + 16
-    block_size += (-block_size) % 64
-    f.seek(block_ib)
-    data = f.read(block_size)[:cb]
-    return _read_xblock_parts(f, bbt_root_ib, data, crypt_method)
+def _read_xblock_bid_parts(f, bbt_root_ib: int, bid: int, crypt_method: int, is_ansi: bool) -> list:
+    _block_bid, data = _read_bbt_block(f, bbt_root_ib, bid, is_ansi)
+    return _read_xblock_parts(f, bbt_root_ib, data, crypt_method, is_ansi)
 
 
 # --- Subnode BTree - [MS-PST] 2.2.2.8.3.3 ------------------------------------------------
 
 
-def find_subnode(f, bbt_root_ib: int, sub_bid: int, crypt_method: int, target_nid: int):
+def find_subnode(f, bbt_root_ib: int, sub_bid: int, crypt_method: int, target_nid: int, is_ansi: bool):
     """Look up `target_nid` in the subnode BTree rooted at `sub_bid`. Returns (bidData, bidSub) or None.
 
     Subnode BTree blocks are structural (SLBLOCK/SIBLOCK), not "data" blocks, so - like BTree
     pages - they are NOT permutation-encoded, only referenced via the BBT for their raw bytes.
     """
-    entry = find_bbt_leaf_entry(f, bbt_root_ib, sub_bid)
-    if entry is None:
-        raise KeyError(f"Subnode block BID {sub_bid:#x} not found in Block BTree")
-    _block_bid, block_ib = struct.unpack_from("<QQ", entry, 0)
-    cb = struct.unpack_from("<H", entry, 16)[0]
-    block_size = cb + 16
-    block_size += (-block_size) % 64
-    f.seek(block_ib)
-    data = f.read(block_size)[:cb]
+    _block_bid, data = _read_bbt_block(f, bbt_root_ib, sub_bid, is_ansi)
 
     btype, c_level, c_ent = data[0], data[1], struct.unpack_from("<H", data, 2)[0]
     if btype != 0x02:
         raise ValueError(f"Expected SLBLOCK/SIBLOCK btype 0x02, got {btype:#x}")
+    id_size = _bid_ib_size(is_ansi)
+    entries_off = _slblock_entries_off(is_ansi)
 
     if c_level == 0:
-        # SLBLOCK: cEnt x SLENTRY{nid(8), bidData(8), bidSub(8)} starting at offset 8
+        # SLBLOCK: cEnt x SLENTRY{nid, bidData, bidSub} (each field ANSI 4 / Unicode 8).
+        entry_size = id_size * 3
         for i in range(c_ent):
-            off = 8 + i * 24
-            entry_nid, bid_data, bid_sub = struct.unpack_from("<QQQ", data, off)
+            off = entries_off + i * entry_size
+            entry_nid, bid_data, bid_sub = struct.unpack_from(_ids_fmt(3, is_ansi), data, off)
             if (entry_nid & 0xFFFFFFFF) == target_nid:
                 return bid_data, bid_sub
         return None
 
-    # SIBLOCK (cLevel == 1): cEnt x SIENTRY{nid(8), bid(8)} starting at offset 8, pointing at child SLBLOCKs
+    # SIBLOCK (cLevel == 1): cEnt x SIENTRY{nid, bid} (each field ANSI 4 / Unicode 8), pointing at
+    # child SLBLOCKs.
+    entry_size = id_size * 2
     chosen_bid = None
     for i in range(c_ent):
-        off = 8 + i * 16
-        entry_nid, child_bid = struct.unpack_from("<QQ", data, off)
+        off = entries_off + i * entry_size
+        entry_nid, child_bid = struct.unpack_from(_ids_fmt(2, is_ansi), data, off)
         if (entry_nid & 0xFFFFFFFF) <= target_nid:
             chosen_bid = child_bid
         else:
             break
     if chosen_bid is None:
         return None
-    return find_subnode(f, bbt_root_ib, chosen_bid, crypt_method, target_nid)
+    return find_subnode(f, bbt_root_ib, chosen_bid, crypt_method, target_nid, is_ansi)
 
 
-def list_subnode_entries(f, bbt_root_ib: int, sub_bid: int) -> list:
+def list_subnode_entries(f, bbt_root_ib: int, sub_bid: int, is_ansi: bool) -> list:
     """Return every (nid, bidData, bidSub) entry in the subnode BTree rooted at `sub_bid`.
 
     Unlike a folder's Hierarchy/Contents Table NID (built from the folder's own NID index via
@@ -369,34 +449,30 @@ def list_subnode_entries(f, bbt_root_ib: int, sub_bid: int) -> list:
     NID 0x200044 had its Recipient/Attachment Tables at subnode NIDs 0x692/0x671). So finding them
     requires enumerating every subnode and matching by `nid_type()`, not deriving the NID directly.
     """
-    entry = find_bbt_leaf_entry(f, bbt_root_ib, sub_bid)
-    if entry is None:
-        raise KeyError(f"Subnode block BID {sub_bid:#x} not found in Block BTree")
-    _block_bid, block_ib = struct.unpack_from("<QQ", entry, 0)
-    cb = struct.unpack_from("<H", entry, 16)[0]
-    block_size = cb + 16
-    block_size += (-block_size) % 64
-    f.seek(block_ib)
-    data = f.read(block_size)[:cb]
+    _block_bid, data = _read_bbt_block(f, bbt_root_ib, sub_bid, is_ansi)
 
     btype, c_level, c_ent = data[0], data[1], struct.unpack_from("<H", data, 2)[0]
     if btype != 0x02:
         raise ValueError(f"Expected SLBLOCK/SIBLOCK btype 0x02, got {btype:#x}")
+    id_size = _bid_ib_size(is_ansi)
+    entries_off = _slblock_entries_off(is_ansi)
 
     if c_level == 0:
+        entry_size = id_size * 3
         entries = []
         for i in range(c_ent):
-            off = 8 + i * 24
-            entry_nid, bid_data, bid_sub = struct.unpack_from("<QQQ", data, off)
+            off = entries_off + i * entry_size
+            entry_nid, bid_data, bid_sub = struct.unpack_from(_ids_fmt(3, is_ansi), data, off)
             entries.append((entry_nid & 0xFFFFFFFF, bid_data, bid_sub))
         return entries
 
     # SIBLOCK (cLevel == 1): recurse into every child SLBLOCK, not just one.
+    entry_size = id_size * 2
     entries = []
     for i in range(c_ent):
-        off = 8 + i * 16
-        _entry_nid, child_bid = struct.unpack_from("<QQ", data, off)
-        entries.extend(list_subnode_entries(f, bbt_root_ib, child_bid))
+        off = entries_off + i * entry_size
+        _entry_nid, child_bid = struct.unpack_from(_ids_fmt(2, is_ansi), data, off)
+        entries.extend(list_subnode_entries(f, bbt_root_ib, child_bid, is_ansi))
     return entries
 
 
@@ -404,7 +480,7 @@ class PSTFile:
     def __init__(self, path: Path):
         self.path = Path(path)
         self._f = open(self.path, "rb")  # noqa: SIM115 - lives for the object's lifetime, closed in close()/__exit__
-        header_bytes = self._f.read(HEADER_SIZE)
+        header_bytes = self._f.read(HEADER_READ_SIZE)
         self.header = parse_header(header_bytes)
 
     def close(self) -> None:
@@ -418,21 +494,21 @@ class PSTFile:
 
     def resolve_nid(self, nid: int):
         """Return (bidData, bidSub) for a top-level NID via the Node BTree, or None."""
-        entry = find_nbt_leaf_entry(self._f, self.header.root.bref_nbt[1], nid)
+        entry = find_nbt_leaf_entry(self._f, self.header.root.bref_nbt[1], nid, self.header.is_ansi)
         if entry is None:
             return None
-        # NBTENTRY (Unicode, 32 bytes): nid(8) + bidData(8) + bidSub(8) + nidParent(4) + dwPadding(4)
-        _, bid_data, bid_sub = struct.unpack_from("<QQQ", entry, 0)
+        # NBTENTRY: nid + bidData + bidSub (each ANSI 4 / Unicode 8) + nidParent(4) [+ dwPadding(4), Unicode only].
+        _, bid_data, bid_sub = struct.unpack_from(_ids_fmt(3, self.header.is_ansi), entry, 0)
         return bid_data, bid_sub
 
     def read_block(self, bid: int) -> bytes:
-        return read_block_raw(self._f, self.header.root.bref_bbt[1], bid, self.header.crypt_method)
+        return read_block_raw(self._f, self.header.root.bref_bbt[1], bid, self.header.crypt_method, self.header.is_ansi)
 
     def read_block_parts(self, bid: int) -> list:
-        return read_block_parts(self._f, self.header.root.bref_bbt[1], bid, self.header.crypt_method)
+        return read_block_parts(self._f, self.header.root.bref_bbt[1], bid, self.header.crypt_method, self.header.is_ansi)
 
     def read_subnode(self, sub_bid: int, nid: int):
-        return find_subnode(self._f, self.header.root.bref_bbt[1], sub_bid, self.header.crypt_method, nid)
+        return find_subnode(self._f, self.header.root.bref_bbt[1], sub_bid, self.header.crypt_method, nid, self.header.is_ansi)
 
     def list_subnodes(self, sub_bid: int) -> list:
-        return list_subnode_entries(self._f, self.header.root.bref_bbt[1], sub_bid)
+        return list_subnode_entries(self._f, self.header.root.bref_bbt[1], sub_bid, self.header.is_ansi)

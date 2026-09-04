@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from email import message_from_bytes
 from email.message import EmailMessage
 from email.policy import default as _email_policy_base
-from email.utils import format_datetime
+from email.utils import format_datetime, getaddresses, parsedate_to_datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
 from pathlib import Path
@@ -42,6 +42,7 @@ from .db import (
     init_db,
     is_stored_in_gmail,
     mark_stored_in_gmail,
+    rebuild_fts,
     set_sync_state,
     upsert_addresses,
     upsert_attachments,
@@ -68,7 +69,10 @@ from .gmail_client import (
 from .gmail_client import (
     extract_attached_messages as gmail_extract_attached_messages,
 )
+from .mime_headers import quote_unquoted_at_display_names
+from .outlook.messages import fetch_embedded_message as pst_fetch_embedded_message
 from .outlook.messages import fetch_message as pst_fetch_message
+from .outlook.messages import is_embedded_message_attachment as pst_is_embedded_message_attachment
 from .outlook.messages import parse_addresses as pst_parse_addresses
 from .outlook.messages import parse_attachments as pst_parse_attachments
 from .outlook.messages import parse_message as pst_parse_message
@@ -105,6 +109,13 @@ from .thunderbird.tree import labels_for_folders as tb_labels_for_folders
 logger = logging.getLogger("mail_utils")
 
 PROGRESS_LOG_INTERVAL = 50
+# db.upsert_message/upsert_addresses/upsert_attachments deliberately don't commit on their own (see
+# their docstrings) - every import loop below batches its own commits at this interval instead, plus
+# one final commit after the loop. Committing every single message used to be a real, measured
+# bottleneck against a large archive (three separate fsync-backed commits per message); this trades a
+# bounded, safely-reprocessable window of at most this many messages on a hard crash for a large
+# throughput win, especially paired with WAL mode (see db.init_db).
+COMMIT_BATCH_INTERVAL = 200
 
 _PROGRESS_LABEL_WIDTH = 18
 
@@ -203,6 +214,13 @@ def _attach_content_to_store(attachments: list) -> None:
         content = att.pop("content", None)
         if content is not None:
             att["content_sha256"] = attachment_store.save(content)
+            # A source archive's own recorded size (e.g. Outlook's PidTagAttachSize) can legitimately
+            # be stale/inconsistent with the actual attachment bytes (a real-world PST quirk, found via
+            # T0020's round-trip comparison against real archive data: a captured attachment whose
+            # content hashed identically before and after re-import still carried two different `size`
+            # values). Once real content is captured, its actual length is ground truth - prefer it
+            # over whatever metadata size the archive itself reported.
+            att["size"] = len(content)
 
 
 def _fetch_and_store_gmail_attachment_content(service, gmail_message_id: str, attachments: list) -> None:
@@ -218,26 +236,26 @@ def _fetch_and_store_gmail_attachment_content(service, gmail_message_id: str, at
         att["content_sha256"] = attachment_store.save(content)
 
 
-def _process_gmail_msg(service, conn, msg_id: str, recursive: bool, with_attachments: bool = False) -> int:
+def _process_gmail_msg(service, conn, msg_id: str, recursive: bool, with_attachments: bool = False, update_fts: bool = True) -> int:
     raw = fetch_message(service, msg_id)
     parsed = parse_message(raw)
-    upsert_message(conn, parsed)
-    upsert_addresses(conn, parsed["id"], parse_addresses(raw))
+    upsert_message(conn, parsed, commit=False, update_fts=update_fts)
+    upsert_addresses(conn, parsed["id"], parse_addresses(raw), commit=False)
     attachments = parse_attachments(raw)
     if with_attachments:
         _fetch_and_store_gmail_attachment_content(service, msg_id, attachments)
-    upsert_attachments(conn, parsed["id"], attachments)
+    upsert_attachments(conn, parsed["id"], attachments, commit=False)
     count = 1
     if recursive:
         for sub in gmail_extract_attached_messages(raw):
             sub_parsed = parse_message(sub)
-            upsert_message(conn, sub_parsed)
-            upsert_addresses(conn, sub_parsed["id"], parse_addresses(sub))
+            upsert_message(conn, sub_parsed, commit=False, update_fts=update_fts)
+            upsert_addresses(conn, sub_parsed["id"], parse_addresses(sub), commit=False)
             sub_attachments = parse_attachments(sub)
             if with_attachments:
                 # attachmentId is scoped to the real parent message (msg_id), not sub's synthetic id.
                 _fetch_and_store_gmail_attachment_content(service, msg_id, sub_attachments)
-            upsert_attachments(conn, sub_parsed["id"], sub_attachments)
+            upsert_attachments(conn, sub_parsed["id"], sub_attachments, commit=False)
             count += 1
     return count
 
@@ -256,10 +274,15 @@ def _full_sync(service, conn, start_time: float, recursive: bool = False, with_a
         )
     count = 0
     for msg_id in list_all_message_ids(service):
-        count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
+        count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments, update_fts=False)
+        if count % COMMIT_BATCH_INTERVAL == 0:
+            conn.commit()
         if count % PROGRESS_LOG_INTERVAL == 0:
             _log_progress("Full sync", count, total, start_time, approx_total=True)
     set_sync_state(conn, "last_history_id", history_id)
+    conn.commit()
+    logger.info("Rebuilding full-text search index...")
+    rebuild_fts(conn)
     return count
 
 
@@ -275,6 +298,8 @@ def _incremental_sync(
         count = 0
         for msg_id in changed_ids:
             count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
+            if count % COMMIT_BATCH_INTERVAL == 0:
+                conn.commit()
             if count % PROGRESS_LOG_INTERVAL == 0:
                 _log_progress("Incremental sync", count, total, start_time)
         new_history_id = get_current_history_id(service)
@@ -300,6 +325,8 @@ def _filtered_import(service, conn, query: str, start_time: float, recursive: bo
     count = 0
     for msg_id in ids:
         count += _process_gmail_msg(service, conn, msg_id, recursive, with_attachments)
+        if count % COMMIT_BATCH_INTERVAL == 0:
+            conn.commit()
         if count % PROGRESS_LOG_INTERVAL == 0:
             _log_progress("Filtered import", count, total, start_time)
     return count
@@ -353,6 +380,7 @@ def _run_import_gmail(args: argparse.Namespace) -> None:
         else:
             count = _incremental_sync(service, conn, last_history_id, start_time, recursive, with_attachments)
 
+    conn.commit()
     conn.close()
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
@@ -547,6 +575,237 @@ def _db_candidates(conn: sqlite3.Connection) -> Iterator[tuple[str, Path | None,
             body_html=body_html,
         )
         yield msg_id, None, msg.as_bytes(policy=_email_policy_default), label_names
+
+
+_ATTACHMENT_STUB_PATTERN = re.compile(r"^(?P<filename>.*?)(?: \((?P<meta>[^)]*)\))?$")
+
+
+def _parse_attachment_stub_header(msg_id: str, value: str) -> dict:
+    """Reverse of _build_eml_message's `X-Mail-Utils-Attachment` stub format
+    (`"<filename> (type=<mime>; size=<size>)"`, either metadata piece optional) - a best-effort parse
+    since a filename that itself contains a trailing "(...)" run is ambiguous, an accepted limitation
+    for this metadata-only fallback path."""
+    match = _ATTACHMENT_STUB_PATTERN.match(value)
+    filename = match.group("filename") if match else value
+    mime_type = None
+    size = None
+    meta = match.group("meta") if match else None
+    if meta:
+        for piece in meta.split("; "):
+            if piece.startswith("type="):
+                mime_type = piece[len("type=") :]
+            elif piece.startswith("size="):
+                try:
+                    size = int(piece[len("size=") :])
+                except ValueError:
+                    size = None
+    return {
+        "message_id": msg_id,
+        "filename": filename,
+        "mime_type": mime_type,
+        "size": size,
+        "content_sha256": None,
+        "content_id": None,
+    }
+
+
+def _extract_eml_body(msg) -> tuple[str | None, str | None, str | None]:
+    """Reverse of _build_eml_message's body construction. Returns (body_text, body_mime_type,
+    body_html), mirroring gmail_client.py's own (body_text, body_mime_type) + separate body_html
+    shape - get_body() finds the right part regardless of nesting (multipart/alternative,
+    multipart/related for an inline-image html body, or a bare single part), verified empirically
+    against all four shapes _build_eml_message can produce."""
+    plain_part = msg.get_body(preferencelist=("plain",))
+    html_part = msg.get_body(preferencelist=("html",))
+    body_html = html_part.get_content() if html_part is not None else None
+    if plain_part is not None:
+        return plain_part.get_content(), "text/plain", body_html
+    if body_html is not None:
+        return body_html, "text/html", body_html
+    return "", None, None
+
+
+def _extract_eml_attachments(msg_id: str, msg) -> list[dict]:
+    """Reverse of _build_eml_message's attachment handling: a metadata-only stub for every
+    `X-Mail-Utils-Attachment` header, real content (persisted via attachment_store, same as
+    --with-attachments does on the way in) for every inline (Content-ID-bearing) related part and
+    every regular attachment part.
+
+    The first loop below (via msg.walk()) picks up every Content-ID-bearing part; the second
+    (iter_attachments()) explicitly skips any part already picked up by the first, tracked via
+    `seen_part_ids`. This dedup is necessary, not defensive: `iter_attachments()` does *not* reliably
+    exclude an inline related part on its own - contrary to what an earlier version of this docstring
+    claimed ("verified empirically during T0014") - a `multipart/related` top-level message whose
+    inline part carries both a Content-ID *and* a filename (e.g. an inline calendar .ics attachment,
+    _build_eml_message's `add_related(..., disposition="inline")` shape) has `iter_attachments()`
+    yield that part too, even though `part.is_attachment()` correctly reports False for it. Without
+    this dedup, such a part was captured twice: once with its real Content-ID, once again as a bogus
+    second attachment with content_id=None (found via T0020's full-scale round-trip comparison)."""
+    attachments = [_parse_attachment_stub_header(msg_id, value) for value in msg.get_all("X-Mail-Utils-Attachment", [])]
+
+    seen_part_ids = set()
+    for part in msg.walk():
+        content_id = part.get("Content-ID")
+        if not content_id:
+            continue
+        seen_part_ids.add(id(part))
+        data = part.get_content()
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        attachments.append(
+            {
+                "message_id": msg_id,
+                "filename": part.get_filename() or "attachment",
+                "mime_type": part.get_content_type(),
+                "size": len(data),
+                "content_sha256": attachment_store.save(data),
+                "content_id": content_id,
+            }
+        )
+
+    for part in msg.iter_attachments():
+        if id(part) in seen_part_ids:
+            continue
+        data = part.get_content()
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        attachments.append(
+            {
+                "message_id": msg_id,
+                "filename": part.get_filename() or "attachment",
+                "mime_type": part.get_content_type(),
+                "size": len(data),
+                "content_sha256": attachment_store.save(data),
+                "content_id": None,
+            }
+        )
+
+    return attachments
+
+
+def _extract_eml_addresses(msg_id: str, msg) -> list[dict]:
+    """Reverse of gmail_client.py's parse_addresses (same dedup/lowercase rules), reading from the
+    already-parsed EML headers instead of a raw Gmail API payload."""
+    rows = []
+    for role in ("from", "to", "cc", "bcc"):
+        value = msg.get(role)
+        if not value:
+            continue
+        seen = set()
+        for name, addr in getaddresses([value]):
+            addr = addr.strip().lower()
+            if not addr or addr in seen:
+                continue
+            seen.add(addr)
+            rows.append({"message_id": msg_id, "role": role, "address": addr, "name": name.strip() or None})
+    return rows
+
+
+def _resolve_import_eml_label_ids(conn: sqlite3.Connection, label_names: list[str], cache: dict[str, str]) -> list[str]:
+    """Map label *names* (from `X-Mail-Utils-Labels`) back to `labels.id` values, minting a new
+    `import-eml:<name>` id (and upserting it) for any name not already in the target database - the
+    original id scheme (Gmail's opaque ids, Outlook's `outlook:<path>`, Thunderbird's hashed id) isn't
+    recoverable from the name alone, and doesn't need to be: a message's *set of label names* is what
+    round-trip fidelity actually depends on, not the specific id string backing each one, exactly the
+    same reasoning gmail-roundtrip-test.py's own label comparison already relies on (it resolves ids
+    back to names before comparing, rather than expecting matching raw ids)."""
+    label_ids = []
+    for name in label_names:
+        label_id = cache.get(name)
+        if label_id is None:
+            label_id = f"import-eml:{name}"
+            upsert_labels(conn, [{"id": label_id, "name": name}])
+            cache[name] = label_id
+        label_ids.append(label_id)
+    return label_ids
+
+
+def _run_import_eml(args: argparse.Namespace) -> None:
+    """Import a `mail-utils export --format eml` (or store-in-gmail source) directory tree straight
+    into a local database - the mirror image of `export --format eml`. Only understands mail-utils'
+    own EML shape (`X-Mail-Utils-*` headers); any `.eml` file without an `X-Mail-Utils-ID` header is
+    skipped, same as store-in-gmail's directory-source mode."""
+    _setup_logging()
+    version = _get_version()
+    start_time = time.time()
+    db_path = _resolve_db_path(args)
+    source_dir = Path(args.source_dir)
+
+    logger.info("Mail Utils %s operation started: EML directory import", version)
+    logger.info("Source:    %s", source_dir)
+    logger.info("Database:  %s", db_path)
+
+    if not source_dir.is_dir():
+        logger.info("Error: Source directory '%s' not found.", source_dir)
+        return
+
+    conn = init_db(db_path)
+    label_id_cache = {name: label_id for label_id, name in conn.execute("SELECT id, name FROM labels")}
+
+    eml_paths = sorted(source_dir.rglob("*.eml"))
+    count = 0
+    skipped = 0
+    for msg_id, eml_path, raw_bytes, label_names in _eml_tree_candidates(eml_paths):
+        if msg_id is None:
+            skipped += 1
+            continue
+
+        msg = message_from_bytes(raw_bytes, policy=_email_policy_default)
+        label_ids = _resolve_import_eml_label_ids(conn, label_names, label_id_cache)
+
+        internal_date_ms = None
+        raw_internal_date_ms = msg.get("X-Mail-Utils-Internal-Date-Ms")
+        if raw_internal_date_ms:
+            try:
+                internal_date_ms = int(raw_internal_date_ms)
+            except ValueError:
+                internal_date_ms = None
+        date = msg.get("Date")
+        if internal_date_ms is None and date:
+            try:
+                internal_date_ms = int(parsedate_to_datetime(date).timestamp() * 1000)
+            except (TypeError, ValueError):
+                internal_date_ms = None
+
+        body_text, body_mime_type, body_html = _extract_eml_body(msg)
+
+        upsert_message(
+            conn,
+            {
+                "id": msg_id,
+                "thread_id": msg.get("X-Mail-Utils-Thread-ID"),
+                "sender": msg.get("From"),
+                "recipient": msg.get("To"),
+                "cc": msg.get("Cc"),
+                "bcc": msg.get("Bcc"),
+                "subject": msg.get("Subject"),
+                "date": date,
+                "internal_date_ms": internal_date_ms,
+                "snippet": None,
+                "label_ids": ",".join(label_ids),
+                "body_text": body_text,
+                "body_mime_type": body_mime_type,
+                "body_html": body_html,
+            },
+            commit=False,
+            update_fts=False,
+        )
+        upsert_addresses(conn, msg_id, _extract_eml_addresses(msg_id, msg), commit=False)
+        upsert_attachments(conn, msg_id, _extract_eml_attachments(msg_id, msg), commit=False)
+
+        count += 1
+        if (count + skipped) % COMMIT_BATCH_INTERVAL == 0:
+            conn.commit()
+        if (count + skipped) % PROGRESS_LOG_INTERVAL == 0:
+            elapsed = time.time() - start_time
+            logger.info("EML import progress: %d/%d files (elapsed: %.1fs)", count + skipped, len(eml_paths), elapsed)
+
+    conn.commit()
+    logger.info("Rebuilding full-text search index...")
+    rebuild_fts(conn)
+    conn.close()
+    elapsed = time.time() - start_time
+    logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed, %d skipped", version, elapsed, count, skipped)
 
 
 _GMAIL_STORE_RUN_LABEL_KEY = "gmail_store_run_label"
@@ -806,6 +1065,30 @@ def _run_import(args: argparse.Namespace) -> None:
         )
 
 
+def _process_pst_message(conn, pst, raw, parsed, recursive: bool, with_attachments: bool) -> int:
+    """Upsert one already-fetched/parsed PST message, then (when `--recursive`) recurse into any
+    embedded-message attachments it carries - mirrors `_process_tb_message`'s self-recursive shape
+    (unlike `_process_gmail_msg`'s single-level loop, a genuinely embedded message can itself embed
+    another one, per [MS-OXCMSG]'s general message-nesting model, so this recurses fully rather than
+    stopping at one level)."""
+    upsert_message(conn, parsed, commit=False, update_fts=False)
+    upsert_addresses(conn, parsed["id"], pst_parse_addresses(raw), commit=False)
+    attachments = pst_parse_attachments(raw, pst=pst if with_attachments else None)
+    _attach_content_to_store(attachments)
+    upsert_attachments(conn, parsed["id"], attachments, commit=False)
+    count = 1
+    if recursive:
+        for row in raw.attachments:
+            if not pst_is_embedded_message_attachment(row):
+                continue
+            sub_raw = pst_fetch_embedded_message(pst, raw, row)
+            if sub_raw is None:
+                continue
+            sub_parsed = pst_parse_message(sub_raw, label_id=parsed["label_ids"] or None)
+            count += _process_pst_message(conn, pst, sub_raw, sub_parsed, recursive=True, with_attachments=with_attachments)
+    return count
+
+
 def _run_import_pst(args: argparse.Namespace) -> None:
     _setup_logging()
     version = _get_version()
@@ -835,15 +1118,15 @@ def _run_import_pst(args: argparse.Namespace) -> None:
             for msg_nid in folder.message_nids:
                 raw = pst_fetch_message(pst, msg_nid)
                 parsed = pst_parse_message(raw, label_id=label_id)
-                upsert_message(conn, parsed)
-                upsert_addresses(conn, parsed["id"], pst_parse_addresses(raw))
-                attachments = pst_parse_attachments(raw, pst=pst if with_attachments else None)
-                _attach_content_to_store(attachments)
-                upsert_attachments(conn, parsed["id"], attachments)
-                count += 1
+                count += _process_pst_message(conn, pst, raw, parsed, recursive, with_attachments)
+                if count % COMMIT_BATCH_INTERVAL == 0:
+                    conn.commit()
                 if count % PROGRESS_LOG_INTERVAL == 0:
                     _log_progress("PST import", count, total_messages, start_time)
 
+    conn.commit()
+    logger.info("Rebuilding full-text search index...")
+    rebuild_fts(conn)
     conn.close()
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
@@ -851,11 +1134,11 @@ def _run_import_pst(args: argparse.Namespace) -> None:
 
 def _process_tb_message(conn, raw_msg, label_id, recursive: bool, with_attachments: bool = False) -> int:
     parsed = tb_parse_message(raw_msg, label_id=label_id)
-    upsert_message(conn, parsed)
-    upsert_addresses(conn, parsed["id"], tb_parse_addresses(raw_msg))
+    upsert_message(conn, parsed, commit=False, update_fts=False)
+    upsert_addresses(conn, parsed["id"], tb_parse_addresses(raw_msg), commit=False)
     attachments = tb_parse_attachments(raw_msg, with_content=with_attachments)
     _attach_content_to_store(attachments)
-    upsert_attachments(conn, parsed["id"], attachments)
+    upsert_attachments(conn, parsed["id"], attachments, commit=False)
     count = 1
     if recursive:
         for sub in tb_extract_attached_messages(raw_msg):
@@ -921,6 +1204,8 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
             try:
                 for raw_msg in box:
                     count += _process_tb_message(conn, raw_msg, label_id, recursive, with_attachments)
+                    if count % COMMIT_BATCH_INTERVAL == 0:
+                        conn.commit()
                     if count % PROGRESS_LOG_INTERVAL == 0:
                         _log_progress("Thunderbird import", count, total_messages, start_time)
             finally:
@@ -928,6 +1213,9 @@ def _run_import_thunderbird(args: argparse.Namespace) -> None:
                 if temp_mbox.exists():
                     temp_mbox.unlink()
 
+    conn.commit()
+    logger.info("Rebuilding full-text search index...")
+    rebuild_fts(conn)
     conn.close()
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages indexed", version, elapsed, count)
@@ -1162,7 +1450,48 @@ def _export_message_md(
         sidecar_dir.mkdir(parents=True, exist_ok=True)
         for att in content_attachments:
             data = attachment_store.read(att["content_sha256"])
-            (sidecar_dir / (att.get("filename") or "attachment")).write_bytes(data)
+            # An attachment's captured filename is arbitrary sender-supplied text, not guaranteed to
+            # be a valid filesystem path component - a real Outlook attachment named e.g. "RE: Offer:
+            # IMS DB Migration" (colons are a valid MAPI/MIME filename character but not a valid
+            # Windows one) crashed a real export with OSError before this fix (found via T0020's
+            # full-scale export against the real 26 GB anubex-outlook-backup.pst). Reuses
+            # _safe_export_filename - same sanitization already applied to the message's own filename.
+            safe_name = _safe_export_filename(att.get("filename") or "attachment")
+            (sidecar_dir / safe_name).write_bytes(data)
+
+
+_LOSSLESS_ATTACHMENT_MAINTYPES = frozenset({"image", "audio", "video", "application"})
+
+
+def _lossless_attachment_type(mime_type: str | None) -> tuple[str, str]:
+    """Return (maintype, subtype) safe to hand to EmailMessage.add_attachment()/add_related() without
+    it silently corrupting the bytes. Python's email content manager only treats "image"/"audio"/
+    "video"/"application" maintypes as opaque binary - "text" (and anything else, including no mime
+    type at all) gets decoded to a string first using a guessed charset before being re-encoded, which
+    corrupts any attachment whose real bytes aren't valid under that guess (found via T0020's
+    round-trip comparison: a real Windows-1252-encoded .txt attachment came back with its non-ASCII
+    byte silently replaced by the Unicode replacement character). Attachment content must always
+    round-trip byte-for-byte, so anything outside the confirmed-safe maintypes falls back to
+    "application/octet-stream" for the actual wire encoding, regardless of the captured mime_type."""
+    maintype, _, subtype = (mime_type or "").partition("/")
+    if maintype in _LOSSLESS_ATTACHMENT_MAINTYPES and subtype:
+        return maintype, subtype
+    return "application", "octet-stream"
+
+
+def _sanitize_header_value(value: str | None) -> str | None:
+    """Collapse any character Python's `str.splitlines()` treats as a line break - not just \\n/\\r,
+    but also \\v, \\f, \\x1c-\\x1e, \\x85 (NEL), U+2028, and U+2029 - into a single space. The modern
+    email policy used to serialize this message rejects any header value where `splitlines()` finds
+    more than one line, and a source archive can legitimately contain one of these rarer characters
+    inside an otherwise-normal header value (found in a real Thunderbird-sourced Subject containing a
+    literal NEL where an ellipsis was apparently meant during charset decoding), not only leftover
+    RFC 5322 header folding - which is handled separately, at each source parser, before it ever
+    reaches here."""
+    if not value:
+        return value
+    lines = value.splitlines()
+    return " ".join(lines) if len(lines) > 1 else value
 
 
 def _build_eml_message(
@@ -1195,6 +1524,13 @@ def _build_eml_message(
     (`--with-attachments` at import time), same precondition as any other real attachment part
     below - a content-less inline image falls back to the same X-Mail-Utils-Attachment metadata
     stub as any other attachment with no captured bytes."""
+    subject = _sanitize_header_value(subject)
+    sender = quote_unquoted_at_display_names(_sanitize_header_value(sender))
+    recipient = quote_unquoted_at_display_names(_sanitize_header_value(recipient))
+    cc = quote_unquoted_at_display_names(_sanitize_header_value(cc))
+    bcc = quote_unquoted_at_display_names(_sanitize_header_value(bcc))
+    date = _sanitize_header_value(date)
+
     msg = EmailMessage()
     if subject:
         msg["Subject"] = subject
@@ -1217,6 +1553,12 @@ def _build_eml_message(
         msg["X-Mail-Utils-Thread-ID"] = thread_id
     if labels:
         msg["X-Mail-Utils-Labels"] = ", ".join(labels)
+    if internal_date_ms:
+        # The Date header alone can't losslessly round-trip internal_date_ms back via import-eml -
+        # RFC 5322 dates only carry second precision, and parsing one back can't recover the exact
+        # original integer if it ever carried sub-second precision or lay outside Date's parseable
+        # range. Carrying the raw value verbatim sidesteps re-deriving it at all.
+        msg["X-Mail-Utils-Internal-Date-Ms"] = str(internal_date_ms)
 
     content_attachments = []
     for att in attachments or []:
@@ -1267,15 +1609,14 @@ def _build_eml_message(
 
     for att in inline_attachments:
         data = attachment_store.read(att["content_sha256"])
-        mime_type = att.get("mime_type") or "application/octet-stream"
-        maintype, _, subtype = mime_type.partition("/")
+        maintype, subtype = _lossless_attachment_type(att.get("mime_type"))
         # disposition="inline" must be passed explicitly alongside filename - add_related() only
         # defaults to inline disposition when no filename is given; passing both otherwise silently
         # reverts to "attachment" (verified empirically), which would defeat embedding it at all.
         html_part.add_related(
             data,
-            maintype=maintype or "image",
-            subtype=subtype or "png",
+            maintype=maintype,
+            subtype=subtype,
             filename=att.get("filename") or "attachment",
             cid=att["content_id"],
             disposition="inline",
@@ -1283,12 +1624,11 @@ def _build_eml_message(
 
     for att in regular_attachments:
         data = attachment_store.read(att["content_sha256"])
-        mime_type = att.get("mime_type") or "application/octet-stream"
-        maintype, _, subtype = mime_type.partition("/")
+        maintype, subtype = _lossless_attachment_type(att.get("mime_type"))
         msg.add_attachment(
             data,
-            maintype=maintype or "application",
-            subtype=subtype or "octet-stream",
+            maintype=maintype,
+            subtype=subtype,
             filename=att.get("filename") or "attachment",
         )
 
@@ -1380,13 +1720,15 @@ def _run_export(args: argparse.Namespace) -> None:
             }
         )
 
-    rows = cur.execute(
-        "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
-        "internal_date_ms, label_ids, body_text, body_mime_type, body_html FROM messages"
-    ).fetchall()
-    conn.close()
+    if matching_ids is not None:
+        total_to_export = len(matching_ids)
+    else:
+        (total_to_export,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
 
-    total_to_export = len(matching_ids) if matching_ids is not None else len(rows)
+    # Streamed via the cursor rather than `.fetchall()`'d into a list - a full mailbox's `body_text`/
+    # `body_html` held for every message at once is gigabytes for a real archive (found via T0020's
+    # full-scale export against a 187k-message mailbox: ~3.4 GB of raw string content alone, enough to
+    # trigger a MemoryError partway through a run on a machine without that much free RAM to spare).
     count = 0
     for (
         msg_id,
@@ -1402,7 +1744,10 @@ def _run_export(args: argparse.Namespace) -> None:
         body_text,
         body_mime_type,
         body_html,
-    ) in rows:
+    ) in cur.execute(
+        "SELECT id, thread_id, sender, recipient, cc, bcc, subject, date, "
+        "internal_date_ms, label_ids, body_text, body_mime_type, body_html FROM messages"
+    ):
         if matching_ids is not None and msg_id not in matching_ids:
             continue
         if internal_date_ms:
@@ -1457,6 +1802,7 @@ def _run_export(args: argparse.Namespace) -> None:
         if count % PROGRESS_LOG_INTERVAL == 0:
             _log_progress("Export", count, total_to_export, start_time)
 
+    conn.close()
     elapsed = time.time() - start_time
     logger.info("Mail Utils %s operation ended in %.1fs: %d messages exported to %s", version, elapsed, count, output_dir)
 
@@ -1810,6 +2156,17 @@ def build_parser() -> argparse.ArgumentParser:
     import_tb_cmd.set_defaults(func=_run_import_thunderbird)
     subcommand_parsers["import-thunderbird"] = import_tb_cmd
     subcommand_parsers["import-pcv"] = import_tb_cmd
+
+    import_eml_cmd = subparsers.add_parser(
+        "import-eml",
+        help="Import a 'mail-utils export --format eml' directory tree into the local database",
+    )
+    import_eml_cmd.add_argument(
+        "source_dir", help="Directory of .eml files to import, e.g. output of 'mail-utils export --format eml'"
+    )
+    import_eml_cmd.add_argument("--db", help=db_help)
+    import_eml_cmd.set_defaults(func=_run_import_eml)
+    subcommand_parsers["import-eml"] = import_eml_cmd
 
     store_in_gmail_cmd = subparsers.add_parser(
         "store-in-gmail",

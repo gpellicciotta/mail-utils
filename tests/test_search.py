@@ -1,7 +1,7 @@
 import argparse
 
 from mail_utils.cli import _run_search, _sanitize_fts_query
-from mail_utils.db import init_db, upsert_message
+from mail_utils.db import init_db, rebuild_fts, upsert_message
 
 
 def _sample_msg(
@@ -71,6 +71,27 @@ def test_db_fts_indexing_and_search(tmp_path):
         "SELECT id FROM messages_fts WHERE messages_fts MATCH ? ORDER BY bm25(messages_fts)",
         ("cfo*",),
     ).fetchall()
+    assert [r[0] for r in rows] == ["msg1"]
+
+    conn.close()
+
+
+def test_upsert_message_update_fts_false_skips_fts_until_rebuild(tmp_path):
+    """update_fts=False is what a bulk-import loop passes to skip messages_fts maintenance on every
+    single call - found to be by far the dominant cost against a large real database (FTS5's internal
+    segment structure fragments under many small incremental delete+insert operations). rebuild_fts()
+    is the one bulk operation a bulk loop calls once, after the loop, to catch the FTS index back up."""
+    db_path = tmp_path / "test.db"
+    conn = init_db(db_path)
+
+    upsert_message(conn, _sample_msg(id="msg1", subject="Quarterly financial report"), update_fts=False)
+
+    rows = conn.execute("SELECT id FROM messages_fts WHERE messages_fts MATCH ?", ("financial",)).fetchall()
+    assert rows == []
+
+    rebuild_fts(conn)
+
+    rows = conn.execute("SELECT id FROM messages_fts WHERE messages_fts MATCH ?", ("financial",)).fetchall()
     assert [r[0] for r in rows] == ["msg1"]
 
     conn.close()

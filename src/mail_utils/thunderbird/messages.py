@@ -1,5 +1,4 @@
 import email.errors
-import email.header
 import email.message
 import email.policy
 import email.utils
@@ -7,25 +6,29 @@ import hashlib
 import re
 from datetime import datetime, timezone
 
+from mail_utils.mime_headers import (
+    decode_header_str,
+    quote_unquoted_at_display_names,
+    quote_unquoted_bracket_display_names,
+    quote_unquoted_comma_display_names,
+    quote_unquoted_paren_display_names,
+)
 
-def decode_header_str(val: str | None) -> str:
-    """Decode an RFC 2047 MIME encoded-word header into a clean Python string."""
-    if not val:
-        return ""
-    try:
-        parts = email.header.decode_header(val)
-        res = []
-        for part, enc in parts:
-            if isinstance(part, bytes):
-                try:
-                    res.append(part.decode(enc or "utf-8", errors="replace"))
-                except (LookupError, UnicodeDecodeError):
-                    res.append(part.decode("utf-8", errors="replace"))
-            else:
-                res.append(str(part))
-        return "".join(res)
-    except (ValueError, LookupError, UnicodeError, email.errors.HeaderParseError):
-        return str(val)
+
+def _quote_display_names(value):
+    """All four `quote_unquoted_*_display_names` fixes are independent (different offending
+    characters) - see `mime_headers.py`. Paren- and bracket-quoting run first since their regexes
+    deliberately exclude a name containing a comma (that combined shape is
+    `quote_unquoted_comma_display_names`'s job instead, see its own docstring), so running them first
+    can't corrupt anything the later passes still need to see unquoted. Either can leave behind an
+    already-quoted `"..."` fragment for a name that also has a comma outside the parens/brackets (e.g.
+    "Broeders, M.A.J.L. (Marco)" -> 'Broeders, "M.A.J.L. (Marco)"') - `quote_unquoted_comma_display_names`
+    knows to strip those nested quote characters before applying its own single, outer quoting, rather
+    than doubly-nesting them into invalid syntax (found via T0020's full-scale round-trip comparison -
+    see its own docstring)."""
+    return quote_unquoted_comma_display_names(
+        quote_unquoted_at_display_names(quote_unquoted_bracket_display_names(quote_unquoted_paren_display_names(value)))
+    )
 
 
 def make_message_id(raw_msg: email.message.Message) -> str:
@@ -142,10 +145,10 @@ def parse_message(raw_msg: email.message.Message, label_id: str | None = None) -
     """Parse a raw email.message.Message into a `messages` table row dict."""
     msg_id = make_message_id(raw_msg)
     subject = decode_header_str(raw_msg.get("Subject"))
-    sender = decode_header_str(raw_msg.get("From"))
-    recipient = decode_header_str(raw_msg.get("To"))
-    cc = decode_header_str(raw_msg.get("Cc"))
-    bcc = decode_header_str(raw_msg.get("Bcc"))
+    sender = _quote_display_names(decode_header_str(raw_msg.get("From")))
+    recipient = _quote_display_names(decode_header_str(raw_msg.get("To")))
+    cc = _quote_display_names(decode_header_str(raw_msg.get("Cc")))
+    bcc = _quote_display_names(decode_header_str(raw_msg.get("Bcc")))
     date_str, internal_date_ms = extract_dates(raw_msg)
     body_text, body_mime_type = extract_body(raw_msg)
 
@@ -175,7 +178,7 @@ def parse_addresses(raw_msg: email.message.Message) -> list[dict]:
         header_val = raw_msg.get(role)
         if not header_val:
             continue
-        decoded = decode_header_str(header_val)
+        decoded = _quote_display_names(decode_header_str(header_val))
         seen = set()
         for name, addr in email.utils.getaddresses([decoded]):
             addr = addr.strip().lower()

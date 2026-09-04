@@ -147,3 +147,83 @@ def test_upsert_message_defaults_body_html_to_none_when_not_supplied(tmp_path):
     row = conn.execute("SELECT body_html FROM messages WHERE id = 'msg1'").fetchone()
     assert row == (None,)
     conn.close()
+
+
+def test_upsert_functions_commit_by_default(tmp_path):
+    """Every caller outside a bulk-import hot loop relies on this default (commit immediately, same
+    as before commit=False was added for batching) - a second connection to the same file must see the
+    row without the first connection doing anything else."""
+    db_path = tmp_path / "gmail.db"
+    conn = init_db(db_path)
+    upsert_message(
+        conn,
+        {
+            "id": "msg1",
+            "thread_id": None,
+            "sender": None,
+            "recipient": None,
+            "cc": None,
+            "bcc": None,
+            "subject": None,
+            "date": None,
+            "internal_date_ms": None,
+            "snippet": None,
+            "label_ids": None,
+            "body_text": None,
+            "body_mime_type": None,
+        },
+    )
+    upsert_attachments(
+        conn,
+        "msg1",
+        [{"message_id": "msg1", "attachment_id": "a1", "filename": "f.pdf", "mime_type": "application/pdf", "size": 1}],
+    )
+
+    other_conn = sqlite3.connect(str(db_path))
+    assert other_conn.execute("SELECT COUNT(*) FROM messages").fetchone() == (1,)
+    assert other_conn.execute("SELECT COUNT(*) FROM attachments").fetchone() == (1,)
+    other_conn.close()
+    conn.close()
+
+
+def test_upsert_functions_with_commit_false_defer_to_the_caller(tmp_path):
+    """A bulk-import hot loop passes commit=False and batches its own commits (see cli.py's
+    COMMIT_BATCH_INTERVAL) - a second connection must not see the row until the first one commits."""
+    db_path = tmp_path / "gmail.db"
+    conn = init_db(db_path)
+    upsert_message(
+        conn,
+        {
+            "id": "msg1",
+            "thread_id": None,
+            "sender": None,
+            "recipient": None,
+            "cc": None,
+            "bcc": None,
+            "subject": None,
+            "date": None,
+            "internal_date_ms": None,
+            "snippet": None,
+            "label_ids": None,
+            "body_text": None,
+            "body_mime_type": None,
+        },
+        commit=False,
+    )
+    upsert_attachments(
+        conn,
+        "msg1",
+        [{"message_id": "msg1", "attachment_id": "a1", "filename": "f.pdf", "mime_type": "application/pdf", "size": 1}],
+        commit=False,
+    )
+
+    other_conn = sqlite3.connect(str(db_path))
+    assert other_conn.execute("SELECT COUNT(*) FROM messages").fetchone() == (0,)
+    other_conn.close()
+
+    conn.commit()
+    other_conn = sqlite3.connect(str(db_path))
+    assert other_conn.execute("SELECT COUNT(*) FROM messages").fetchone() == (1,)
+    assert other_conn.execute("SELECT COUNT(*) FROM attachments").fetchone() == (1,)
+    other_conn.close()
+    conn.close()
