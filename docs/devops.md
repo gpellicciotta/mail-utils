@@ -230,6 +230,8 @@ Every message stored in a given run carries a label unique to that run
 3. Optionally clear the corresponding rows from `gmail_store_state` in the local database, so a future
    `store-in-gmail` run would re-offer those messages as candidates rather than treating them as already
    stored (only relevant if you intend to store them again).
+4. For detailed failure detection, monitoring, and selective rollback playbooks, see the
+   [Production Store-in-Gmail Detection and Recovery Plan](specs/gmail-production-recovery-plan.md).
 
 ### Go-live checklist: running `store-in-gmail` against a real, non-disposable mailbox
 
