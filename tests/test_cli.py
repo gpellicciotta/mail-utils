@@ -354,17 +354,14 @@ def _log_record(created: float) -> logging.LogRecord:
 
 def test_utc_formatter_uses_utc_time():
     record = _log_record(1735689600.5)  # 2025-01-01T00:00:00.5Z
-    formatted = cli._UTCFormatter(cli._LOG_FORMAT).format(record)
-    assert "2025-01-01 00:00:00" in formatted
-    assert "UTC" in formatted
+    formatted = cli._FileFormatter().format(record)
+    assert "[2025-01-01 00:00:00] **[INFO]**  hello world" in formatted
 
 
-def test_console_formatter_omits_milliseconds():
+def test_console_formatter_omits_timestamps_and_info():
     record = _log_record(1735689600.5)
-    file_line = cli._UTCFormatter(cli._LOG_FORMAT).format(record)
-    console_line = cli._UTCFormatter(cli._LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S").format(record)
-    assert "," in file_line
-    assert "," not in console_line
+    console_line = cli._ConsoleFormatter().format(record)
+    assert console_line == "hello world"
 
 
 def test_import_subcommand_routes_to_run_import():
@@ -1541,6 +1538,16 @@ def test_stats_aligns_value_columns_across_all_top_lists(tmp_path, capsys):
     assert len({len(line) for line in data_lines}) == 1
 
 
+def test_format_severity_indicator():
+    assert cli.format_severity_indicator("ERROR") == "**[ERROR]**"
+    assert cli.format_severity_indicator("WARN") == "**[WARN]** "
+    assert cli.format_severity_indicator("WARNING") == "**[WARN]** "
+    assert cli.format_severity_indicator("INFO") == "**[INFO]** "
+    assert cli.format_severity_indicator("DEBUG") == "**[DEBUG]**"
+    assert cli.format_severity_indicator(logging.INFO) == "**[INFO]** "
+    assert cli.format_severity_indicator(logging.ERROR) == "**[ERROR]**"
+
+
 def test_logging_console_has_no_timestamps_while_logfile_has_timestamps(tmp_path, monkeypatch, capsys):
     db_path = tmp_path / "mails.db"
     log_dir = tmp_path / "logs"
@@ -1557,20 +1564,20 @@ def test_logging_console_has_no_timestamps_while_logfile_has_timestamps(tmp_path
     console_out = capsys.readouterr().out
     assert "operation started: Database stats" in console_out
     assert "operation ended in" in console_out
-    # Console output lines should not contain "[INFO]" or UTC timestamp prefix
+    # Console output lines should not contain "**[INFO]** " or timestamp prefix
     for line in console_out.splitlines():
-        assert "[INFO]" not in line
-        assert "UTC [" not in line
+        assert "**[INFO]**" not in line
+        assert not line.startswith("[20")
 
-    # File log must contain timestamp and [INFO]
+    # File log must contain timestamp and padded severity indicator
     assert log_path.exists()
     file_content = log_path.read_text(encoding="utf-8")
-    assert "[INFO] Mail Utils" in file_content
+    assert "**[INFO]**  Mail Utils" in file_content
     assert "operation started: Database stats" in file_content
-    assert "UTC [INFO]" in file_content
+    assert "] **[INFO]** " in file_content
 
 
-def test_utc_formatter_indents_subsequent_lines_for_multiline_messages():
+def test_file_formatter_indents_subsequent_lines_for_multiline_messages():
     record = logging.LogRecord(
         "mail_utils",
         logging.INFO,
@@ -1580,17 +1587,97 @@ def test_utc_formatter_indents_subsequent_lines_for_multiline_messages():
         None,
         None,
     )
-    record.created = 1735689600.0
-    formatter = cli._UTCFormatter(cli._LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+    record.created = 1735689600.0  # 2025-01-01 00:00:00 UTC
+    formatter = cli._FileFormatter(datefmt="%Y-%m-%d %H:%M:%S")
     formatted = formatter.format(record)
     lines = formatted.splitlines()
     assert len(lines) == 3
-    # First line has timestamp and log level prefix
-    assert lines[0].startswith("2025-01-01 00:00:00 UTC [INFO] Top senders:")
-    header_len = len("2025-01-01 00:00:00 UTC [INFO] ")
+    # First line has [YYYY-MM-DD HH:MM:SS] **[INFO]**  prefix
+    assert lines[0].startswith("[2025-01-01 00:00:00] **[INFO]**  Top senders:")
+    header_len = len("[2025-01-01 00:00:00] **[INFO]**  ")
     # Subsequent lines are indented by the header length
     assert lines[1] == (" " * header_len) + "  Bob <bob@x.com>      5"
     assert lines[2] == (" " * header_len) + "  Alice <alice@x.com>    3"
+
+
+def test_console_formatter_shows_warnings_and_errors_without_timestamps():
+    warn_record = logging.LogRecord("mail_utils", logging.WARNING, "test.py", 1, "A warning occurred", None, None)
+    err_record = logging.LogRecord("mail_utils", logging.ERROR, "test.py", 1, "An error occurred", None, None)
+    info_record = logging.LogRecord("mail_utils", logging.INFO, "test.py", 1, "Normal message", None, None)
+
+    formatter = cli._ConsoleFormatter()
+    assert formatter.format(warn_record) == "**[WARN]**  A warning occurred"
+    assert formatter.format(err_record) == "**[ERROR]** An error occurred"
+    assert formatter.format(info_record) == "Normal message"
+
+
+def test_custom_log_file_destination(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "mails.db"
+    custom_log = tmp_path / "custom" / "custom-output.log"
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(id="msg1"))
+    conn.close()
+
+    cli.main(["--log-file", str(custom_log), "stats", "--db", str(tmp_path)])
+
+    assert custom_log.exists()
+    content = custom_log.read_text(encoding="utf-8")
+    assert "**[INFO]**  Mail Utils" in content
+    assert "Database stats" in content
+
+
+def test_custom_log_file_after_subcommand(tmp_path, monkeypatch, capsys):
+    db_path = tmp_path / "mails.db"
+    custom_log = tmp_path / "custom" / "custom-after.log"
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message(id="msg1"))
+    conn.close()
+
+    cli.main(["stats", "--db", str(tmp_path), "--log-file", str(custom_log)])
+
+    assert custom_log.exists()
+    content = custom_log.read_text(encoding="utf-8")
+    assert "**[INFO]**  Mail Utils" in content
+
+
+def test_file_formatter_with_origin():
+    record = logging.LogRecord(
+        "mail_utils",
+        logging.INFO,
+        "test.py",
+        1,
+        "Message with origin",
+        None,
+        None,
+    )
+    record.created = 1735689600.0
+    record.origin = "<db_sync>"
+    formatter = cli._FileFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+    formatted = formatter.format(record)
+    assert formatted == "[2025-01-01 00:00:00] **[INFO]**  <db_sync> Message with origin"
+
+
+def test_debug_flag_controls_debug_logging(tmp_path, monkeypatch, capsys):
+    custom_log_off = tmp_path / "debug_off.log"
+    custom_log_on = tmp_path / "debug_on.log"
+
+    # With debug=False (default), debug messages are discarded
+    cli._setup_logging(log_file=str(custom_log_off), debug=False)
+    cli.logger.debug("Test debug message when debug is off")
+    cli.logger.info("Test info message")
+
+    off_content = custom_log_off.read_text(encoding="utf-8")
+    assert "Test debug message" not in off_content
+    assert "Test info message" in off_content
+
+    # With debug=True, debug messages are written with **[DEBUG]**
+    cli._setup_logging(log_file=str(custom_log_on), debug=True)
+    cli.logger.debug("Test debug message when debug is on")
+
+    on_content = custom_log_on.read_text(encoding="utf-8")
+    assert "**[DEBUG]** Test debug message when debug is on" in on_content
 
 
 def test_search_subcommand_routes_and_parses():

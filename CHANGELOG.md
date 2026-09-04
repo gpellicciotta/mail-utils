@@ -13,6 +13,7 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ### vNext
+- CLI: Add --log-file and --debug flags with standardized severity indicators and multiline log formatting.
 - BackEnd: Unify all import/export/store progress log lines into one aligned shape, always showing %-complete.
 - Docs: Add `database-design.md` explaining the rationale behind the SQLite schema's tables.
 - BackEnd: Capture attachments and inline images carrying no filename (but having a Content-ID or explicitly marked as attachments) across all sources.

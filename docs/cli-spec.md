@@ -7,7 +7,7 @@ This document defines the command-line interface, subcommands, options, exit cod
 ## Global Invocations & Flags
 
 ```powershell
-mail-utils [--version] [--verbose] [<command>] [<args>...]
+mail-utils [--version] [--verbose] [--log-file <path>] [--debug] [<command>] [<args>...]
 ```
 
 ### Global Flags
@@ -16,6 +16,8 @@ mail-utils [--version] [--verbose] [<command>] [<args>...]
   mail-utils v<version> - Copyright (c) Giovanni Pellicciotta
   ```
   With `--verbose`, also prints the matching release entry from `CHANGELOG.md`.
+- `--log-file <path>`: Path to operational log file (default: `logs/mail-utils.log`).
+- `--debug`: Enable debug logging output.
 - `help` (or no command): Print summary help for all subcommands. With `--verbose`, prints full `--help` for every subcommand.
 - `version`: Subcommand alias for `--version`.
 
