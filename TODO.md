@@ -15,8 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [~] T0032 [owner: @antigravity] Plan how to detect and recover from a store-in-gmail run against the real production account going wrong.
-- [ ] T0033 [needs: T0032] Execute store-in-gmail for real against the full archive, invoking the back-off/recovery procedure if needed.
+- [ ] T0033 Execute store-in-gmail for real against the full archive, invoking the back-off/recovery procedure if needed.
 
 ### Backlog
 
