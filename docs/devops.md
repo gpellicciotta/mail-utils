@@ -203,6 +203,8 @@ longer depends on which checkout/worktree a command happens to run from — it's
    `store-in-gmail --account tester`, ...) - the production account's own `default-account.json` (or
    whatever you've named it) is never touched. Pair it with `--db` pointed at a scratch directory too, if
    you don't want test data mixed into your real database.
+3. For comprehensive end-to-end verification procedures and edge-case testing, refer to the
+   [Store-In-Gmail Test Plan](specs/gmail-store-test-plan.md).
 
 The OAuth client itself may still be in Google Cloud Console's **Testing** publishing status, which
 restricts consent to accounts explicitly added under **APIs & Services → OAuth consent screen → Audience
