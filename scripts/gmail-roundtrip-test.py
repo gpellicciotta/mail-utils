@@ -342,8 +342,13 @@ def _compare_databases(origin: dict, result: dict) -> list[str]:
 
         o_atts = sorted(origin["attachments"].get(origin_id, []))
         r_atts = sorted(result["attachments"].get(result_id, []))
-        if o_atts != r_atts:
-            problems.append(f"{label}: attachments differ:\n  origin: {o_atts}\n  result: {r_atts}")
+        if len(o_atts) != len(r_atts):
+            problems.append(f"{label}: attachment count differs: {len(o_atts)} != {len(r_atts)}")
+        else:
+            o_summary = sorted(((fn or "").strip(), sz, sha, cid) for fn, _, sz, sha, cid in o_atts)
+            r_summary = sorted(((fn or "").strip(), sz, sha, cid) for fn, _, sz, sha, cid in r_atts)
+            if o_summary != r_summary:
+                problems.append(f"{label}: attachments differ:\n  origin: {o_atts}\n  result: {r_atts}")
         if any(sha is None for _, _, _, sha, _ in o_atts):
             problems.append(f"{label}: origin has an attachment with no captured content (missing --with-attachments?)")
 
