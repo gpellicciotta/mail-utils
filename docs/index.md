@@ -11,6 +11,7 @@ Welcome to the `mail-utils` technical documentation.
 - [`database-design.md`](database-design.md) — Why the SQLite schema's tables are shaped the way they are.
 
 ## Design & Technical Plans
+- [`specs/gmail-store-test-plan.md`](specs/gmail-store-test-plan.md) — Comprehensive test plan for store-in-gmail live validation.
 - [`pst-support-plan.md`](pst-support-plan.md) — Architecture and specification for the pure-Python `[MS-PST]` parser.
 - [`thunderbird-import-plan.md`](thunderbird-import-plan.md) — Architecture and format handling for Thunderbird PCV/Mbox archives.
 - [`eml-export-support-plan.md`](eml-export-support-plan.md) — Design notes for standard RFC 5322 `.eml` message export.

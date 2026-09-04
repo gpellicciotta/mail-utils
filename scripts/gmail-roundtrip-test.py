@@ -159,6 +159,59 @@ def _seed_messages(to_address: str) -> list[EmailMessage]:
     )
     messages.append(m6)
 
+    m7 = EmailMessage()
+    m7["Subject"] = f"{SUBJECT_PREFIX}display name with unquoted at symbol"
+    m7["From"] = '"John @ Work" <roundtrip-sender@example.com>'
+    m7["To"] = to_address
+    m7["Date"] = format_datetime(base + timedelta(hours=6))
+    m7.set_content("Testing display name containing an '@' character.\n")
+    messages.append(m7)
+
+    m8 = EmailMessage()
+    m8["Subject"] = f"{SUBJECT_PREFIX}display name with unquoted comma"
+    m8["From"] = '"Smith, Jane" <roundtrip-sender@example.com>'
+    m8["To"] = to_address
+    m8["Date"] = format_datetime(base + timedelta(hours=7))
+    m8.set_content("Testing display name formatted as Last, First.\n")
+    messages.append(m8)
+
+    m9 = EmailMessage()
+    m9["Subject"] = f"{SUBJECT_PREFIX}display name with bracket annotations"
+    m9["From"] = '"Alice [Contractor]" <roundtrip-sender@example.com>'
+    m9["To"] = to_address
+    m9["Date"] = format_datetime(base + timedelta(hours=8))
+    m9.set_content("Testing display name with bracket annotation.\n")
+    messages.append(m9)
+
+    m10 = EmailMessage()
+    m10["Subject"] = f"{SUBJECT_PREFIX}Windows-1252 encoded text attachment"
+    m10["From"] = "roundtrip-sender@example.com"
+    m10["To"] = to_address
+    m10["Date"] = format_datetime(base + timedelta(hours=9))
+    m10.set_content("Testing non-UTF-8 Windows-1252 text attachment preservation.\n")
+    # Windows-1252 bytes: 0x93 (left double quote), 0x94 (right double quote), 0x80 (euro symbol)
+    win1252_bytes = b"\x93Windows-1252 Special text\x94 with \x80 symbol.\r\n"
+    m10.add_attachment(win1252_bytes, maintype="text", subtype="plain", filename="win1252.txt")
+    messages.append(m10)
+
+    m11 = EmailMessage()
+    m11["Subject"] = f"{SUBJECT_PREFIX}attachment filename with special characters"
+    m11["From"] = "roundtrip-sender@example.com"
+    m11["To"] = to_address
+    m11["Date"] = format_datetime(base + timedelta(hours=10))
+    m11.set_content("Testing attachment filename containing colons and special characters.\n")
+    m11.add_attachment(b"PDF document simulation bytes", maintype="application", subtype="pdf", filename="RE: Offer: Report.pdf")
+    messages.append(m11)
+
+    m12 = EmailMessage()
+    m12["Subject"] = f"{SUBJECT_PREFIX}multipart alternative with rich plain and HTML"
+    m12["From"] = "roundtrip-sender@example.com"
+    m12["To"] = to_address
+    m12["Date"] = format_datetime(base + timedelta(hours=11))
+    m12.set_content("Plain text body alternative.\n")
+    m12.add_alternative("<html><body><h2>Rich HTML Body</h2><p>Paragraph content.</p></body></html>\n", subtype="html")
+    messages.append(m12)
+
     return messages
 
 
