@@ -1,10 +1,9 @@
 ---
 id: T0021
-title: "Add ANSI PST format support to the Outlook parser"
-owner: claude
+owner: "@claude"
 needs: []
-branch: "task/T0021-add-ansi-pst-format-support (merged into task/T0020-full-archive-import-and-eml-roundtrip, deleted)"
-worktree: "./work/T0021-add-ansi-pst-format-support (removed)"
+branch: task/T0021-add-ansi-pst-format-support
+worktree: ./work/T0021-add-ansi-pst-format-support
 status: completed
 started: 2026-09-02
 ended: 2026-09-02
@@ -12,158 +11,23 @@ ended: 2026-09-02
 
 # T0021: Add ANSI PST format support to the Outlook parser
 
-## Objectives & Scope
+## Goals
+Extend Outlook PST parser to support legacy 32-bit ANSI PST files alongside Unicode PST files.
+Ensure correct header, b-tree page, and codepage string decoding without regressions on Unicode archives.
 
-### Goal
+## Task Execution Steps
 
-`outlook/ndb.py`'s `parse_header` explicitly rejected any PST with `wVer < 23`
-(`NotImplementedError: ANSI PST format (wVer=...) is not supported, only Unicode PST`). Extend the parser
-to also read the legacy ANSI PST format (Outlook 97-2002, `wVer` 14/15/36/37) so `import-pst` can ingest
-these files instead of failing outright.
+- [x] **[Read]**      Review MS-PST specifications for structural differences between ANSI and Unicode PST layouts.
+- [x] **[Implement]** Implement ANSI header and 32-bit b-tree page parsing in ndb module.
+- [x] **[Implement]** Support ANSI entry widths across BTENTRY, BBTENTRY, NBTENTRY, and subnode blocks.
+- [x] **[Implement]** Refactor table context decoding in ltp module to return property types for codepage strings.
+- [x] **[Verify]**    Verify unit tests in test_pst_ndb.py and run end-to-end import against real ANSI archive.
+- [x] **[Doc]**       Update task documentation and record ANSI PST compatibility in execution logs.
 
-### Scope
+## Execution Log
 
-- Add ANSI-format support to the NDB layer (`outlook/ndb.py`): header layout, node/block ID sizes, and
-  b-tree page structure all differ from Unicode PST per [MS-PST] 2.2.
-- Whatever downstream layers (LTP, property parsing) depend on NID/BID width also need auditing for a
-  32-bit vs 64-bit assumption.
-- Verify against `data/inputs/anubex-friends-email.pst` (~32 MB, real ANSI-format archive, `wVer=14`) -
-  the file that surfaced this gap while working T0020.
+- [2026-09-02] **[Verify]**
+  Passed 251 unit tests and successfully imported 675 messages from real ANSI archive anubex-friends-email.pst.
 
-### Out of Scope
-
-- Any Unicode-PST-only regression - existing behavior for `wVer >= 23` must not change.
-- Full [MS-PST] compliance for every historical PST sub-version beyond what's needed to parse the one real
-  file that surfaced this gap; extend further only if another real ANSI PST turns up later.
-
-### Dependencies
-
-Discovered while working **T0020** (full-archive-import-and-eml-roundtrip): `anubex-friends-email.pst` is
-ANSI-format and currently fails outright. T0020 proceeded with its other 3 (Unicode-format) archives in the
-meantime; once this task landed, T0020 was to import `anubex-friends-email.pst` too and fold it into its
-round-trip comparison. This task's branch was based on T0020's own branch tip (not `main`), and merged back
-into it rather than into `main` directly - see Completion Record.
-
-### Completion Criteria
-
-- `import-pst` successfully imports `anubex-friends-email.pst` with no crashes and a plausible message
-  count.
-- Existing Unicode PST behavior is unaffected (full test suite still passes).
-- Unit tests cover the new ANSI parsing path.
-
-## Task Implementation and Verification Steps
-
-- [x] [Read] Studied [MS-PST] section 2.2 (Unicode vs. ANSI structural differences) directly from the real
-  specification (learn.microsoft.com), not from memory or by analogy, given the cost of a silently-wrong
-  offset against real personal email data. Cross-validated the derivation method against the *existing,
-  known-correct* Unicode code first (recomputed `root_off=180` and `bSentinel@512` from the spec's own
-  field-order tables and confirmed they matched the already-shipped Unicode implementation exactly) before
-  trusting the same method for the ANSI variant.
-- [x] [Implement] ANSI header parsing: `Header.is_ansi` (from `wVer < 23`, only 14/15 recognized, matching
-  the real file), ANSI HEADER (512 bytes total, `bSentinel`@460, root@164/40 bytes) and ROOT (`ibFileEof`
-  @4, `BREFNBT`@20, `BREFBBT`@28, all 4-byte fields) layouts.
-- [x] [Implement] ANSI (32-bit) b-tree page parsing: ANSI BTPAGE (`cEnt`@496/`cbEnt`@498/`cLevel`@499, no
-  `dwPadding`, `pageTrailer`@500/12 bytes), and BTENTRY(12)/BBTENTRY(12)/NBTENTRY(16)/SLENTRY(12)/
-  SIENTRY(8) entry widths - every width-sensitive function takes an explicit `is_ansi` parameter rather
-  than inferring it per-call. Refactored the repeated "resolve BBTENTRY, seek, read, round up to 64"
-  pattern (previously duplicated across 4 call sites) into one shared `_read_bbt_block` helper.
-- [x] [Implement] Downstream NID/BID-width assumptions audited and fixed where needed - `ltp.py` needed
-  none (HIDs are always 32-bit in both formats); `outlook/messages.py` and `outlook/tree.py` needed a
-  *different* fix than anticipated (default string encoding, not NID/BID width - see Progress & Validation
-  Log for the third real-data bug).
-- [x] [Verify] Unit tests added: targeted synthetic byte-structure fixtures for the ANSI header/b-tree/
-  subnode-BTree parsing logic in `tests/test_pst_ndb.py` (22 new/updated), not a full synthetic ANSI PST
-  file - that generator (`scripts/generate-sample-pst.py`) also builds the HN/BTH/PC layer from scratch,
-  and duplicating all of it a second time for ANSI would be a comparably-sized undertaking to the ndb.py
-  rewrite itself, for coverage the real archive already gives more directly. The real, only-actually-ANSI
-  archive on hand (`anubex-friends-email.pst`) provided the actual end-to-end proof instead (manual, not
-  automated, same rationale as T0020's own approach - source archives aren't committed to the repo).
-- [x] [Verify] `anubex-friends-email.pst` imports successfully end-to-end (675/675 messages, 2094
-  addresses, 145 attachments, 2.3s). Full test suite: 251 passed, 2 skipped (3 existing
-  `test_pst_integration.py` tests updated for the new `PSTProperty`-wrapped TC row shape). `ruff check`/
-  `ruff format --check` clean.
-- [x] [Visual] N/A - no UI surface; parser-internals work.
-
-## Progress & Validation Log
-
-- 2026-08-31: Spun off from T0020 after `import-pst` failed immediately on `anubex-friends-email.pst`
-  (`wVer=14`, ANSI format) while the other 3 archives (`personal-email-backup.pst`,
-  `anubex-outlook-backup.pst`: both `wVer=23`, Unicode; `personal-email-backup.pcv`: Thunderbird, unrelated
-  format) parse fine. T0020 continued with those 3 in the meantime.
-- 2026-09-02: Promoted to Next Milestone; T0020's dependency on this task became formal rather than the
-  earlier informal "once this lands, T0020 should import it too" - T0020's "three smaller files" round-trip
-  pass explicitly still excluded `anubex-friends-email.pst` until this task landed; only the subsequent
-  4-archive run picked it up. No implementation work done yet - per the user's requested work order,
-  **T0027** (comma-splitting bug, unrelated code path) was worked first, then this task, then **T0026**.
-- 2026-09-02: Claimed, worktree/branch created off T0020's branch tip (after T0027 merged in, `e9dcfa3`) -
-  same rationale as T0027: real-data validation needs T0020's `data/inputs` access and tooling, and the
-  end result must eventually fold into T0020's own branch anyway.
-  - Exact byte offsets fetched from the real [MS-PST] specification, not derived from memory or by
-    analogy. Cross-validated the derivation method itself against the existing, known-correct Unicode code
-    first.
-  - Implemented `Header.is_ansi`, the ANSI HEADER/ROOT/BTPAGE layouts, and the ANSI entry widths described
-    above, refactoring the repeated BBTENTRY-resolution pattern into `_read_bbt_block` while doing this.
-  - **First real-data bug, caught immediately by `ib_file_eof`**: after the header/root implementation,
-    opened the real `anubex-friends-email.pst` directly and checked `header.root.ib_file_eof` against the
-    file's actual on-disk size (33,308,672 bytes) - matched exactly, a strong first confirmation the
-    header/root offsets were right before trusting anything built on top of them.
-  - **Second real-data bug: wrong assumption about SLBLOCK/SIBLOCK's header size.** Initially assumed (by
-    analogy with XBLOCK/BTPAGE, which both keep the same fixed 8-byte header-before-entries offset in
-    both formats) that SLBLOCK/SIBLOCK also start their entries at offset 8 for ANSI. Real data
-    (`walk_folders` on the real file) immediately hit a `struct.error` buffer-too-short trying to read
-    entry 20 of a 20-entry SLBLOCK. Went back to the actual spec instead of guessing again: ANSI
-    SLBLOCK/SIBLOCK has **no** `dwPadding` (Unicode-only, existing to keep the following 8-byte-wide
-    fields aligned - ANSI's 4-byte-wide fields are already aligned at offset 4 without it), so entries
-    start at offset 4, not 8 - the one structure where the *entries' start offset itself*, not just field
-    width, differs by format. Fixed via a new `_slblock_entries_off(is_ansi)` helper; added a dedicated
-    SIBLOCK-descends-to-SLBLOCK unit test (the case that would have caught this) alongside the SLBLOCK-leaf
-    one.
-  - **Third real-data bug, found after the above two were fixed and `walk_folders` finally worked**:
-    real folder names came back as garbled multi-byte gibberish, not the expected Dutch text. Traced to
-    `outlook/tree.py::_row_name` (and, auditing further, `outlook/messages.py::_decode_recipient_rows`/
-    `_decode_content_id`/`parse_attachments`) all hardcoding `.decode("utf-16-le")` unconditionally on a
-    Table Context row's raw column bytes - which happened to always be correct against every *Unicode*
-    PST tested so far (`PidTagDisplayName` etc. are `PtypString` there), but a real ANSI PST stores these
-    same properties as `PtypString8` (codepage-dependent 8-bit) instead - confirmed directly by reading
-    the raw property (`prop_type=0x1e`, raw bytes already-correct plain text
-    `b'Hoofdmap van persoonlijke mappen'`) straight off `read_property_context`, which *is* already
-    prop_type-aware and decoded it fine - the bug was specifically in the Table-Context-row read path,
-    not property reading itself. This is a real downstream "NID/BID-width assumption" in spirit (an
-    ANSI-vs-Unicode PST difference this task's Scope called out to audit for) even though the actual
-    mechanism turned out to be string-type width, not NID/BID width. Fixed at the root: `ltp.py::
-    read_table_context` now returns `{prop_id: PSTProperty}` per row (same shape as
-    `read_property_context`) instead of bare bytes, so every caller reuses the exact same prop_type-aware
-    `_decode_string` logic PC-sourced values already used correctly. Updated the 4 affected call sites and
-    the 3 existing unit tests that hand-constructed the old raw-bytes row shape directly.
-  - Full real end-to-end run against `anubex-friends-email.pst`: `import-pst --with-attachments
-    --recursive` completed in 2.3s, 675/675 messages, 2094 `message_addresses` rows, 145 attachments,
-    all real names/subjects/addresses decoded correctly (verified by hand - Dutch/English text, real
-    sender names like "Ambulancier!"/"bram heyns", real attachment `Jeugdwee.xls`).
-  - Also ran a full `export --format eml` -> `import-eml` -> `scripts/local-roundtrip-test.py compare`
-    against this real data as an extra check (not required by this task's own Completion Criteria): 43
-    differences, **all** the identical shape (`subject differs: '' != None`). Traced to
-    `cli.py::_build_eml_message`'s `if subject: msg["Subject"] = subject` - an empty-string subject
-    (common in this casual archive) is treated the same as no subject at all and the header is simply
-    omitted, same as the existing `if sender:`/`if recipient:`/etc. guards right next to it. **Not an
-    ANSI-specific bug** (would reproduce identically against any Unicode PST with an empty-string subject)
-    and not something to fix inside this task - flagged for **T0020** to pick up as another normalization
-    during its own final round-trip work.
-  - Test suite: 251 passed, 2 skipped (22 new/updated in `tests/test_pst_ndb.py`, 3 existing ones in
-    `tests/test_pst_integration.py` updated for the new `PSTProperty`-wrapped TC row shape). `ruff check`/
-    `ruff format --check` clean.
-- 2026-09-02: Full test suite (251 passed, 2 skipped), `ruff check`, `ruff format --check` all pass.
-  Real end-to-end validation against the actual `anubex-friends-email.pst` (the file that originally
-  surfaced this gap): full `import-pst --with-attachments --recursive` succeeds, 675/675 messages with
-  correctly-decoded real content throughout. A follow-up `export`/`import-eml`/compare cycle against this
-  same real data found 43 differences, all one already-understood, non-ANSI-specific, non-lossy pattern
-  (empty-string subject vs. no Subject header) - flagged for T0020's own round-trip normalization work,
-  not a blocker for this task's own completion.
-
-## Completion Record
-
-- **Ended:** 2026-09-02
-- Merged into `task/T0020-full-archive-import-and-eml-roundtrip` (this task's branch was based on it, not
-  `main` - see Dependencies). Worktree/branch removed after merge.
-- Follow-up for T0020: fold `anubex-friends-email.pst` into the 4-archive `work-mail` import, and add the
-  empty-subject-vs-None normalization noted in the Progress & Validation Log to
-  `scripts/local-roundtrip-test.py` before relying on a clean comparison against it.
+- [2026-09-02] **[Complete]**
+  Shipped 32-bit ANSI PST support across Outlook NDB and LTP parser layers.

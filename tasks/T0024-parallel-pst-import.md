@@ -1,99 +1,33 @@
 ---
 id: T0024
-title: "Parallel multi-process import for very large PST archives"
-owner: null
+owner: "@gio"
 needs: []
-branch: null
-worktree: null
-status: available
-started: —
+branch: —
+worktree: —
+status: needs-review
+started: 2026-09-02
 ended: —
 ---
 
 # T0024: Parallel multi-process import for very large PST archives
 
-## Objectives & Scope
+## Goals
+Add an opt-in parallel multi-process import mode to import-pst for very large PST archives.
+Evaluate necessity following single-process FTS5 indexing performance improvements.
 
-### Goal
+## Task Execution Steps
 
-Add an opt-in parallel-import mode to `import-pst` that partitions a large archive's messages across N
-worker subprocesses - each parsing its own slice into its own throwaway database and attachment store -
-then merges the N partial results into the target `--db` directory, to cut wall-clock time for very large
-archives beyond what a single process can achieve.
+- [x] **[Read]**      Profile import performance on large archive and assess single-process FTS5 optimization.
+- [x] **[Doc]**       Document multi-process worker partition and merge architecture in docs/parallel-pst-import-plan.md.
+- [ ] **[Decide]**    Determine whether parallel PST import should be built or remain backlogged.
+- [ ] **[Implement]** Implement worker process entrypoint, partitioning logic, and SQLite database merge helpers.
+- [ ] **[Implement]** Add --parallel option to import-pst CLI command.
+- [ ] **[Verify]**    Verify byte-level parity between single-process and multi-process imports against test archives.
 
-Full design (architecture, worker entry point, partition/merge logic, failure handling, testing strategy):
-see [`docs/parallel-pst-import-plan.md`](../docs/parallel-pst-import-plan.md) - written and ready to
-implement from if a future decision picks this back up.
+## Execution Log
 
-### Scope
+- [2026-09-02] **[Read]**
+  Single-process FTS5 bulk rebuild reduced import duration to 50.8 minutes, removing immediate performance urgency.
 
-- Discovered while working **T0020**: the ~26 GB `anubex-outlook-backup.pst` import was taking 30+ hours
-  and visibly slowing down over time.
-- **Investigated, not implemented.** The real bottleneck turned out to be FTS5 index fragmentation from
-  per-message incremental delete+insert cycles, fixed on T0020's branch by doing one bulk FTS rebuild after
-  import instead of per-message maintenance. With that fix, the real 26 GB / 186,475-message archive now
-  imports single-process in **50.8 minutes** - well under the threshold that made this task feel urgent.
-- **Decision needed, not yet made:** whether multi-process parallelism is worth building at all, given the
-  single-process fix already handles every archive currently on hand. Kept in the Backlog rather than
-  cancelled, since a future, substantially larger archive could still make it worthwhile - see the design
-  doc's "When To Revisit" section for a concrete size threshold.
-- Reuse all existing parsing/upsert code unchanged if built - this stays purely a new orchestration layer
-  (partition + spawn + merge) around the existing single-process import loop, not a rewrite of the PST
-  parser.
-
-### Out of Scope
-
-See [`docs/parallel-pst-import-plan.md`](../docs/parallel-pst-import-plan.md)'s "Out of Scope" section.
-
-### Dependencies
-
-Spun off from **T0020** (full-archive-import-and-eml-roundtrip), whose branch contains the FTS5 fix that
-resolved the immediate need. No outstanding dependency - this task itself is now blocked only on a human
-decision of whether to build it.
-
-### Completion Criteria
-
-- A human decision recorded on whether to build this at all.
-- If built: `import-pst --parallel N` produces a database and attachment store identical (per
-  `scripts/local-roundtrip-test.py`-style comparison) to what a plain single-process `import-pst` run of
-  the same file produces, with a measured wall-clock improvement against a real large archive.
-
-## Task Implementation and Verification Steps
-
-To pick this task back up: read `docs/parallel-pst-import-plan.md` in full first (architecture, worker
-entry point, partition/merge logic, failure handling, and its own testing strategy are all there, not
-repeated here) - it is written to be implementation-ready on its own.
-
-- [x] [Read] T0020's single-process FTS5 fix measured against the real big file; priority of this task
-  reassessed (see Progress & Validation Log) - the urgency that originally motivated this task is gone,
-  but the option is kept open.
-- [x] [Doc] Full design documented in `docs/parallel-pst-import-plan.md`.
-- [ ] [Decide] **Pending:** build this, or leave it backlogged/cancel it. Not this task's own call - a
-  human decision, per Completion Criteria.
-- [ ] [Implement] Worker entry point (if decision is to build) - see design doc's "Worker Entry Point"
-  section.
-- [ ] [Implement] Partition logic, unit-tested (if decision is to build) - see design doc's "Partitioning"
-  section.
-- [ ] [Implement] Merge logic, unit-tested (if decision is to build) - see design doc's "Merge" section.
-- [ ] [Implement] `--parallel N` wired up on `import-pst`, single-process behavior unchanged when omitted
-  (if decision is to build).
-- [ ] [Verify] Validated end-to-end against a real large archive (if decision is to build) - see design
-  doc's "Testing Strategy" section for the comparison methodology
-  (`scripts/local-roundtrip-test.py`-style).
-- [ ] [Visual] N/A - no UI surface; CLI-only feature if built.
-
-## Progress & Validation Log
-
-- 2026-09-02: Claimed, worktree/branch created. Spun off from T0020 per the user's request while
-  investigating why the big-file import kept slowing down.
-- 2026-09-02: Investigated the real cause instead - FTS5 index fragmentation, not raw single-process
-  throughput. Fixed on T0020's branch. Re-ran the real `anubex-outlook-backup.pst` (~26 GB, 186,475
-  messages) end to end: 50.8 minutes total, well under the urgency threshold. No parallel-import
-  implementation work done.
-- 2026-09-02: Per user request, wrote the full design (`docs/parallel-pst-import-plan.md`) so it's
-  implementation-ready if a future archive justifies it, and moved this task back to the Backlog pending a
-  decision on whether to build it at all. Worktree/branch released - a fresh one is created via the normal
-  Claim Protocol if this task is picked up again.
-
-No validation has been recorded yet - this task has not been implemented (see Task Implementation and
-Verification Steps above; the pending `[Decide]` item is what's blocking any further work).
+- [2026-09-02] **[Doc]**
+  Authored full architecture design in docs/parallel-pst-import-plan.md pending decision on implementation.
