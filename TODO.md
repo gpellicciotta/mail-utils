@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [ ] T0033 Execute store-in-gmail for real against the full archive, invoking the back-off/recovery procedure if needed.
+- [~] T0033 [owner: @antigravity] Execute store-in-gmail for real against the full archive, invoking the back-off/recovery procedure if needed.
 
 ### Backlog
 
