@@ -9,7 +9,7 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0034
+**Next ID:** 0035
 
 ---
 
@@ -20,4 +20,6 @@ An overview of all tasks and their planning.
 ### Backlog
 
 - [?] T0024 [owner: @gio] Parallel multi-process import for very large PST archives.
+- [ ] T0034 Add markdown guidelines anti-patterns and automated linter to enforce document styling.
+
 
