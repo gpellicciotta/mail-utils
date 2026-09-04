@@ -170,37 +170,92 @@ def _get_version() -> str:
         return "2.3.0"
 
 
-class _UTCFormatter(logging.Formatter):
-    """Formats log timestamps in UTC and indents subsequent lines of multi-line messages."""
+def format_severity_indicator(level: int | str | None) -> str:
+    """Format severity tag with 5-character uppercase padding per general-guidelines.md."""
+    if level is None:
+        return ""
+    if isinstance(level, int):
+        level_str = logging.getLevelName(level)
+    else:
+        level_str = str(level)
+    clean = level_str.strip().upper()
+    if clean in ("WARN", "WARNING"):
+        return "**[WARN]** "
+    if clean == "INFO":
+        return "**[INFO]** "
+    if clean == "ERROR":
+        return "**[ERROR]**"
+    if clean == "DEBUG":
+        return "**[DEBUG]**"
+    padded = f"{clean:<5}"[:5]
+    return f"**[{padded}]**"
+
+
+class _FileFormatter(logging.Formatter):
+    """Formats log timestamps and 5-char severity indicators for log files,
+    indenting subsequent lines of multi-line messages per general-guidelines.md."""
 
     converter = time.gmtime
 
     def format(self, record: logging.LogRecord) -> str:
-        formatted = super().format(record)
-        lines = formatted.split("\n")
-        if len(lines) <= 1:
-            return formatted
-        first_line_msg = record.getMessage().split("\n")[0]
-        prefix_len = len(lines[0]) - len(first_line_msg)
-        indent = " " * max(0, prefix_len)
-        return lines[0] + "\n" + "\n".join(indent + line if line else line for line in lines[1:])
+        ts = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        sev = format_severity_indicator(record.levelname)
+        origin = getattr(record, "origin", None)
+        origin_str = f"<{origin.strip('<>')}> " if origin else ""
+        prefix = f"[{ts}] {sev} {origin_str}"
+        msg = record.getMessage()
+        lines = msg.splitlines()
+        if not lines:
+            return prefix.rstrip()
+        if len(lines) == 1:
+            return prefix + lines[0]
+        indent = " " * len(prefix)
+        return prefix + lines[0] + "\n" + "\n".join(indent + line if line else line for line in lines[1:])
 
 
-_LOG_FORMAT = "%(asctime)s UTC [%(levelname)s] %(message)s"
+class _ConsoleFormatter(logging.Formatter):
+    """Formats log entries for stdout/stderr, omitting timestamps and INFO indicators per general-guidelines.md."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = record.getMessage()
+        origin = getattr(record, "origin", None)
+        origin_str = f"<{origin.strip('<>')}> " if origin else ""
+        if record.levelno < logging.WARNING:
+            if not origin_str:
+                return msg
+            prefix = origin_str
+        else:
+            sev = format_severity_indicator(record.levelname)
+            prefix = f"{sev} {origin_str}"
+
+        lines = msg.splitlines()
+        if not lines:
+            return prefix.rstrip()
+        if len(lines) == 1:
+            return prefix + lines[0]
+        indent = " " * len(prefix)
+        return prefix + lines[0] + "\n" + "\n".join(indent + line if line else line for line in lines[1:])
 
 
-def _setup_logging() -> None:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+_UTCFormatter = _FileFormatter
+_LOG_FORMAT = "[%(asctime)s] %(severity)s %(message)s"
+
+
+def _setup_logging(log_file: Path | str | None = None, debug: bool = False) -> None:
+    path = Path(log_file) if log_file else LOG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.handlers.clear()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
-    file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
-    file_handler.setFormatter(_UTCFormatter(_LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
+    file_handler = logging.FileHandler(path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    file_handler.setFormatter(_FileFormatter())
     logger.addHandler(file_handler)
 
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    console_handler.setFormatter(_ConsoleFormatter())
     logger.addHandler(console_handler)
 
 
@@ -347,7 +402,7 @@ def _resolve_account_path(args: argparse.Namespace) -> Path:
 
 
 def _run_import_gmail(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -391,7 +446,7 @@ def _run_prepare_gmail_account(args: argparse.Namespace) -> None:
     (see config.resolve_account_path), so other commands can select it later via --account. Requests
     read-only SCOPES by default; --with-write additionally requests STORE_IN_GMAIL_SCOPES up front,
     for accounts being set up specifically to test/use store-in-gmail."""
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     account_path = resolve_account_path(args.name)
     with_write = getattr(args, "with_write", False)
@@ -421,7 +476,7 @@ def _run_check_gmail_account(args: argparse.Namespace) -> None:
     does (silently refreshing an expired token if possible), so it doesn't need its own separate,
     special-cased authentication path; it just never requests broader scopes than what's already
     cached, so it can't itself widen an account's permissions."""
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     account_path = resolve_account_path(args.name)
 
@@ -725,7 +780,7 @@ def _run_import_eml(args: argparse.Namespace) -> None:
     into a local database - the mirror image of `export --format eml`. Only understands mail-utils'
     own EML shape (`X-Mail-Utils-*` headers); any `.eml` file without an `X-Mail-Utils-ID` header is
     skipped, same as store-in-gmail's directory-source mode."""
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -832,7 +887,7 @@ def _finish_gmail_store_run(conn: sqlite3.Connection) -> None:
 
 
 def _run_store_in_gmail(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -1003,6 +1058,7 @@ def _detect_file_format(path: Path) -> str:
 
 
 def _run_import(args: argparse.Namespace) -> None:
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     source_path = getattr(args, "source_path", None)
 
     # When no source path is specified, try Gmail import if credentials exist
@@ -1012,7 +1068,6 @@ def _run_import(args: argparse.Namespace) -> None:
             _run_import_gmail(args)
             return
 
-        _setup_logging()
         logger.info(
             "Error: No import file specified and Gmail credentials not found at %s.\n"
             "Provide an archive path (e.g. 'mail-utils import archive.pst') or run "
@@ -1023,7 +1078,6 @@ def _run_import(args: argparse.Namespace) -> None:
 
     path = Path(source_path)
     if not path.exists():
-        _setup_logging()
         logger.info("Error: Import source '%s' not found.", source_path)
         return
 
@@ -1036,28 +1090,24 @@ def _run_import(args: argparse.Namespace) -> None:
         args.archive_path = str(path)
         _run_import_thunderbird(args)
     elif fmt == "eml":
-        _setup_logging()
         logger.info(
             "Error: Direct import of single EML message '%s' is not supported. "
             "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile folder), or Gmail API.",
             path.name,
         )
     elif fmt == "msg":
-        _setup_logging()
         logger.info(
             "Error: Direct import of single Outlook MSG file '%s' is not supported. "
             "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile folder), or Gmail API.",
             path.name,
         )
     elif fmt == "mbox":
-        _setup_logging()
         logger.info(
             "Error: Direct import of standalone Mbox file '%s' is not supported. "
             "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile folder), or Gmail API.",
             path.name,
         )
     else:
-        _setup_logging()
         logger.info(
             "Error: Unsupported file format for '%s'. "
             "Supported formats: Outlook PST (*.pst), Thunderbird archive (*.pcv, *.zip, profile directory), or Gmail API (when no file is specified).",
@@ -1090,7 +1140,7 @@ def _process_pst_message(conn, pst, raw, parsed, recursive: bool, with_attachmen
 
 
 def _run_import_pst(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -1169,7 +1219,7 @@ def _count_thunderbird_messages(source_path: Path, folders: list) -> int:
 
 
 def _run_import_thunderbird(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -1283,7 +1333,7 @@ def _create_filtered_ids_table(conn: sqlite3.Connection, matching_ids: set) -> N
 
 
 def _run_stats(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -1674,7 +1724,7 @@ def _export_message_eml(
 
 
 def _run_export(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -1820,7 +1870,7 @@ def _sanitize_fts_query(query: str) -> str:
 
 
 def _run_search(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     db_path = _resolve_db_path(args)
@@ -1927,7 +1977,7 @@ def _validate_inner_command(command: list) -> None:
 
 
 def _run_schedule(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     system = platform.system()
@@ -1991,7 +2041,7 @@ def _run_schedule(args: argparse.Namespace) -> None:
 
 
 def _run_unschedule(args: argparse.Namespace) -> None:
-    _setup_logging()
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
     start_time = time.time()
     system = platform.system()
@@ -2017,10 +2067,24 @@ def _run_unschedule(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    common_parent = argparse.ArgumentParser(add_help=False)
+    common_parent.add_argument(
+        "--log-file",
+        default=argparse.SUPPRESS,
+        help="Path to operational log file (default: logs/mail-utils.log)",
+    )
+    common_parent.add_argument(
+        "--debug",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Enable debug logging output",
+    )
+
     parser = argparse.ArgumentParser(
         prog="mail-utils",
         description="A lightweight, privacy-preserving, local email archive indexing and extraction utility.",
         add_help=False,
+        parents=[common_parent],
     )
     parser.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     parser.add_argument("--version", action="store_true", help="Show version and exit")
@@ -2034,13 +2098,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommand_parsers = {}
 
-    help_cmd = subparsers.add_parser("help", help="Show this help message and exit", add_help=False)
+    help_cmd = subparsers.add_parser("help", parents=[common_parent], help="Show this help message and exit", add_help=False)
     help_cmd.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     help_cmd.add_argument("--verbose", action="store_true", help="Also print full --help for every subcommand")
     help_cmd.add_argument("subcommand", nargs="?", default=None, help="Optional subcommand to show help for")
     subcommand_parsers["help"] = help_cmd
 
-    version_cmd = subparsers.add_parser("version", help="Show version and exit (same as --version)", add_help=False)
+    version_cmd = subparsers.add_parser(
+        "version", parents=[common_parent], help="Show version and exit (same as --version)", add_help=False
+    )
     version_cmd.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     version_cmd.add_argument("--verbose", action="store_true", help="Also print the matching CHANGELOG.md entry")
     subcommand_parsers["version"] = version_cmd
@@ -2067,6 +2133,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_cmd = subparsers.add_parser(
         "import",
+        parents=[common_parent],
         help="Import mail from an archive file/directory, or from Gmail if no file is provided",
     )
     import_cmd.add_argument(
@@ -2088,7 +2155,11 @@ def build_parser() -> argparse.ArgumentParser:
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
 
-    import_gmail_cmd = subparsers.add_parser("import-gmail", help="Import new mail from Gmail via the Gmail API")
+    import_gmail_cmd = subparsers.add_parser(
+        "import-gmail",
+        parents=[common_parent],
+        help="Import new mail from Gmail via the Gmail API",
+    )
     import_gmail_cmd.add_argument(
         "--filter",
         help=filter_help + " Passed straight through to Gmail's own search; forces a filtered full "
@@ -2105,6 +2176,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare_gmail_account_cmd = subparsers.add_parser(
         "prepare-gmail-account",
+        parents=[common_parent],
         help="Interactively authorize a Gmail account and save its credentials for later use with --account",
     )
     prepare_gmail_account_cmd.add_argument(
@@ -2121,6 +2193,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     check_gmail_account_cmd = subparsers.add_parser(
         "check-gmail-account",
+        parents=[common_parent],
         help="Report the authenticated email, granted scopes, and mailbox size for an --account (read-only)",
     )
     check_gmail_account_cmd.add_argument("name", help="Account name (resolved the same way as --account) or an explicit file path")
@@ -2130,6 +2203,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_pst_cmd = subparsers.add_parser(
         "import-pst",
         aliases=["import-outlook"],
+        parents=[common_parent],
         help="Import an Outlook .pst archive's messages into the local database",
     )
     import_pst_cmd.add_argument("pst_path", help="Path to the .pst file to import")
@@ -2145,6 +2219,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_tb_cmd = subparsers.add_parser(
         "import-thunderbird",
         aliases=["import-pcv"],
+        parents=[common_parent],
         help="Import a Mozilla Thunderbird archive (.pcv, .zip, or profile folder) into the local database",
     )
     import_tb_cmd.add_argument("archive_path", help="Path to the .pcv/.zip archive or Thunderbird profile directory to import")
@@ -2159,6 +2234,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_eml_cmd = subparsers.add_parser(
         "import-eml",
+        parents=[common_parent],
         help="Import a 'mail-utils export --format eml' directory tree into the local database",
     )
     import_eml_cmd.add_argument(
@@ -2170,6 +2246,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     store_in_gmail_cmd = subparsers.add_parser(
         "store-in-gmail",
+        parents=[common_parent],
         help="Store previously-exported (or already-indexed) mail into a live Gmail mailbox (requests write-capable scopes)",
     )
     store_in_gmail_cmd.add_argument(
@@ -2191,20 +2268,32 @@ def build_parser() -> argparse.ArgumentParser:
     store_in_gmail_cmd.set_defaults(func=_run_store_in_gmail)
     subcommand_parsers["store-in-gmail"] = store_in_gmail_cmd
 
-    search_cmd = subparsers.add_parser("search", help="Full-text search indexed messages using SQLite FTS5")
+    search_cmd = subparsers.add_parser(
+        "search",
+        parents=[common_parent],
+        help="Full-text search indexed messages using SQLite FTS5",
+    )
     search_cmd.add_argument("query", help="Search query (supports boolean operators AND, OR, NOT, and prefix queries)")
     search_cmd.add_argument("-n", "--limit", type=int, default=20, help="Maximum number of search results to return (default: 20)")
     search_cmd.add_argument("--db", help=db_help)
     search_cmd.set_defaults(func=_run_search)
     subcommand_parsers["search"] = search_cmd
 
-    stats = subparsers.add_parser("stats", help="Print summary stats from the local database")
+    stats = subparsers.add_parser(
+        "stats",
+        parents=[common_parent],
+        help="Print summary stats from the local database",
+    )
     stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
     stats.add_argument("--db", help=db_help)
     stats.set_defaults(func=_run_stats)
     subcommand_parsers["stats"] = stats
 
-    export = subparsers.add_parser("export", help="Export all messages as markdown or EML files")
+    export = subparsers.add_parser(
+        "export",
+        parents=[common_parent],
+        help="Export all messages as markdown or EML files",
+    )
     export.add_argument("output_dir", help="Directory to write exported files into (created if missing)")
     export.add_argument(
         "--format",
@@ -2219,7 +2308,9 @@ def build_parser() -> argparse.ArgumentParser:
     subcommand_parsers["export"] = export
 
     schedule_cmd = subparsers.add_parser(
-        "schedule", help="Register a recurring mail-utils command (Windows Task Scheduler or cron)"
+        "schedule",
+        parents=[common_parent],
+        help="Register a recurring mail-utils command (Windows Task Scheduler or cron)",
     )
     schedule_cmd.add_argument("--job-name", default="default", help="Identifies this job (default: 'default')")
     schedule_cmd.add_argument("--interval-minutes", type=int, default=30, help="How often to run, in minutes (default: 30)")
@@ -2233,7 +2324,11 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_cmd.set_defaults(func=_run_schedule)
     subcommand_parsers["schedule"] = schedule_cmd
 
-    unschedule_cmd = subparsers.add_parser("unschedule", help="Remove a job registered by 'schedule'")
+    unschedule_cmd = subparsers.add_parser(
+        "unschedule",
+        parents=[common_parent],
+        help="Remove a job registered by 'schedule'",
+    )
     unschedule_cmd.add_argument("--job-name", default="default", help="Which job to remove (default: 'default')")
     unschedule_cmd.set_defaults(func=_run_unschedule)
     subcommand_parsers["unschedule"] = unschedule_cmd
@@ -2308,6 +2403,7 @@ def main(argv: list[str] | None = None) -> int:
         _print_help(parser, verbose=getattr(args, "verbose", False))
         return 0
 
+    _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     args.func(args)
     return 0
 
