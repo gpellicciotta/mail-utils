@@ -3,46 +3,40 @@
 This specification details the end-to-end verification plan for `mail-utils store-in-gmail`.
 It exercises full round-trip fidelity, kill and resume handling, and all edge cases discovered in T0020.
 
----
-
-## 1. Objectives
+## Objectives
 
 - Validate live migration fidelity of `store-in-gmail` against the disposable test account `tester.pellicciotta@gmail.com`.
 - Verify resumability and idempotency when an upload run is interrupted or capped via `--max-messages`.
 - Verify lossless handling of all complex MIME structures and header edge cases identified in T0020.
 - Verify safe teardown and cleanup using `scripts/gmail-roundtrip-test.py cleanup`.
 
----
+## Test Environment and Safety Controls
 
-## 2. Test Environment and Safety Controls
+- Target account: `tester.pellicciotta@gmail.com` (configured via `mail-utils prepare-gmail-account tester --with-write`).
+- Account verification: execute `mail-utils check-gmail-account tester` before every test run.
+- Safety rule: never run test write operations against any production account.
+- Dedicated workspaces: store temporary SQLite databases and EML files under `data/test-run/`.
+- Cleanup requirement: trash and delete all seeded test messages and tracking labels after testing.
 
-- **Target Account**: `tester.pellicciotta@gmail.com` (configured via `mail-utils prepare-gmail-account tester --with-write`).
-- **Account Verification**: Execute `mail-utils check-gmail-account tester` before every test run.
-- **Safety Rule**: Never run test write operations against any production account.
-- **Dedicated Workspaces**: Store temporary SQLite databases and EML files under `data/test-run/`.
-- **Cleanup Requirement**: All seeded test messages and tracking labels must be trashed and deleted after testing.
+## Test Scenarios
 
----
-
-## 3. Test Scenarios
-
-### Scenario A: Full Round-Trip Fidelity with Curated T0020 Edge Cases
+### Full Round-Trip Fidelity with Curated Edge Cases
 
 This scenario validates that messages restored to Gmail and synced back match origin attributes exactly.
 
 #### Seed Dataset Composition
-1. **Standard Messages**:
+1. Standard messages:
    - Plain text body with no attachments.
    - HTML body with UTF-8 Unicode characters (emoji, CJK, accents).
    - Multipart/alternative body with plain text and rich HTML.
-2. **Attachment Variations**:
+2. Attachment variations:
    - Single image attachment (PNG) with inline disposition and Content-ID reference.
    - Dual attachments (text file and arbitrary binary octet-stream).
    - Medium binary payload (256 KB) testing chunked transport.
    - Non-UTF-8 text attachment (Windows-1252 character encoding).
    - Attachment filename containing colons or characters sanitized by filesystem export.
    - Filenameless attachment bearing Content-ID.
-3. **MIME and Header Variations**:
+3. MIME and header variations:
    - Display name containing unquoted `@` symbol (e.g. `John @ Work <john@example.com>`).
    - Display name formatted as `Last, First` with unquoted comma.
    - Display name containing unquoted bracket annotations (e.g. `Alice [Contractor] <alice@example.com>`).
@@ -78,9 +72,7 @@ This scenario validates that messages restored to Gmail and synced back match or
    python scripts/gmail-roundtrip-test.py compare --origin-db data/test-origin/mails.db --origin-export data/test-origin-export --result-db data/test-result/mails.db --result-export data/test-result-export
    ```
 
----
-
-### Scenario B: Kill and Resume Interruption Test
+### Kill and Resume Interruption Test
 
 This scenario validates that interrupted store operations resume without duplicating messages or minting conflicting tracking labels.
 
@@ -100,9 +92,7 @@ This scenario validates that interrupted store operations resume without duplica
 7. Verify that `sync_state` clears `gmail_store_run_label` upon successful run completion.
 8. Re-run the command a third time to verify clean no-op termination with 0 stored messages and 10 skipped.
 
----
-
-### Scenario C: Directory Source Mode (`.eml` tree)
+### Directory Source Mode
 
 This scenario validates restoring messages directly from a folder of `.eml` files.
 
@@ -115,9 +105,7 @@ This scenario validates restoring messages directly from a folder of `.eml` file
 3. Test with a mix of valid `.eml` files and non-export `.eml` files lacking `X-Mail-Utils-ID`.
 4. Confirm non-export files are logged and safely skipped without aborting the batch.
 
----
-
-### Scenario D: Teardown and Cleanup
+### Teardown and Cleanup
 
 1. List and trash all test source messages:
    ```powershell
@@ -132,12 +120,10 @@ This scenario validates restoring messages directly from a folder of `.eml` file
    Remove-Item -Recurse -Force data/test-origin, data/test-origin-export, data/test-result, data/test-result-export
    ```
 
----
+## Pass and Fail Criteria
 
-## 4. Pass / Fail Criteria
-
-- **Zero Data Loss**: Decoded plain text and HTML bodies match verbatim.
-- **Attachment Integrity**: Binary and text attachment SHA-256 digests match between origin and result.
-- **Header Fidelity**: Sender, recipient, CC, BCC, subject, and date headers round-trip without corruption.
-- **Resume Idempotency**: Interrupted runs resume cleanly with zero duplicate uploads in Gmail.
-- **Clean Teardown**: All test labels and messages are moved to Trash with no persistent clutter.
+- Zero data loss: decoded plain text and HTML bodies match verbatim.
+- Attachment integrity: binary and text attachment SHA-256 digests match between origin and result.
+- Header fidelity: sender, recipient, CC, BCC, subject, and date headers round-trip without corruption.
+- Resume idempotency: interrupted runs resume cleanly with zero duplicate uploads in Gmail.
+- Clean teardown: all test labels and messages are moved to Trash with no persistent clutter.
