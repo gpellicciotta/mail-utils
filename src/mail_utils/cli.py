@@ -978,11 +978,15 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
             if run_label_id not in label_ids:
                 label_ids = [*label_ids, run_label_id]
             last_call_time = _throttle_gmail_store(last_call_time)
-            result = _gmail_call_with_backoff(import_message, service, raw_bytes, label_ids=label_ids)
-            mark_stored_in_gmail(conn, msg_id, result.get("id"))
-            count += 1
-            last_stored_msg_id = msg_id
-            logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
+            try:
+                result = _gmail_call_with_backoff(import_message, service, raw_bytes, label_ids=label_ids)
+                mark_stored_in_gmail(conn, msg_id, result.get("id"))
+                count += 1
+                last_stored_msg_id = msg_id
+                logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
+            except HttpError as e:
+                logger.error("Failed to store %s: %s (skipping message)", msg_id, e)
+                skipped += 1
 
         if (count + skipped) % PROGRESS_LOG_INTERVAL == 0:
             _log_progress("Store", count + skipped, total, start_time)
@@ -1586,6 +1590,8 @@ def _build_eml_message(
         msg["Subject"] = subject
     if sender:
         msg["From"] = sender
+    else:
+        msg["From"] = "unknown@unknown.invalid"
     if recipient:
         msg["To"] = recipient
     if cc:
@@ -1597,6 +1603,8 @@ def _build_eml_message(
     elif internal_date_ms:
         dt = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
         msg["Date"] = format_datetime(dt)
+    else:
+        msg["Date"] = format_datetime(datetime.fromtimestamp(0, tz=timezone.utc))
 
     msg["X-Mail-Utils-ID"] = msg_id
     if thread_id:
