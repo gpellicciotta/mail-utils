@@ -540,18 +540,24 @@ def _throttle_gmail_store(last_call_time: float) -> float:
 
 def _gmail_call_with_backoff(func, *args, **kwargs):
     """Call a Gmail API function, retrying with exponential backoff if Gmail reports a rate-limit
-    error (HTTP 429, or 403 with a rate/quota-related reason) - a transient burst (e.g. right after
-    creating several new labels) shouldn't abort an entire store-in-gmail run."""
+    error (HTTP 429, or 403 with a rate/quota-related reason), server errors (5xx), or transient
+    socket timeouts and network connection drops."""
     delay = 1.0
     for attempt in range(1, _GMAIL_STORE_MAX_RETRIES + 1):
         try:
             return func(*args, **kwargs)
         except HttpError as e:
             status = getattr(e.resp, "status", None)
-            is_rate_limit = status == 429 or (status == 403 and "rate" in str(e).lower())
-            if not is_rate_limit or attempt == _GMAIL_STORE_MAX_RETRIES:
+            is_retryable = status == 429 or (status == 403 and "rate" in str(e).lower()) or (status is not None and 500 <= status < 600)
+            if not is_retryable or attempt == _GMAIL_STORE_MAX_RETRIES:
                 raise
-            logger.info("Gmail rate limit hit, retrying in %.0fs (attempt %d/%d)", delay, attempt, _GMAIL_STORE_MAX_RETRIES)
+            logger.info("Gmail transient API error (%s), retrying in %.0fs (attempt %d/%d)", status, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
+            time.sleep(delay)
+            delay *= 2
+        except (TimeoutError, ConnectionError, OSError) as e:
+            if attempt == _GMAIL_STORE_MAX_RETRIES:
+                raise
+            logger.info("Gmail transient network error (%s), retrying in %.0fs (attempt %d/%d)", e, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
             time.sleep(delay)
             delay *= 2
 
