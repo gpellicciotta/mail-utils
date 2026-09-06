@@ -18,8 +18,8 @@ Ensure lossless upload with rate limiting, deduplication, and automated recovery
 
 ## Task Execution Steps
 
-- [ ] **[Verify]**    Verify and refresh OAuth credentials for the target account gio-rw.
-- [ ] **[Verify]**    Verify source database integrity and confirm candidate message counts.
+- [x] **[Verify]**    Verify and refresh OAuth credentials for the target account gio-rw.
+- [x] **[Verify]**    Verify source database integrity and confirm candidate message counts.
 - [ ] **[Implement]** Execute full production upload of archive messages into Gmail.
 - [ ] **[Verify]**    Verify Gmail storage completion and audit remote message counts.
 - [ ] **[Doc]**       Record execution summary and finalize changelog and documentation.
@@ -28,3 +28,6 @@ Ensure lossless upload with rate limiting, deduplication, and automated recovery
 
 - [2026-09-05] **[Verify]**
   Claimed task and initialized full archive migration plan for account gio-rw.
+
+- [2026-09-06] **[Verify]**
+  Verified OAuth tokens for account gio-rw and confirmed 187,353 total messages with 76,295 already stored.
