@@ -525,7 +525,7 @@ _GMAIL_STORE_MAX_CALLS_PER_SECOND = 8
 average - roughly 10 calls/sec) with headroom left for the label list/create calls sharing the
 same per-user budget."""
 
-_GMAIL_STORE_MAX_RETRIES = 6
+_GMAIL_STORE_MAX_RETRIES = 12
 
 
 def _throttle_gmail_store(last_call_time: float) -> float:
@@ -554,13 +554,13 @@ def _gmail_call_with_backoff(func, *args, **kwargs):
                 raise
             logger.info("Gmail transient API error (%s), retrying in %.0fs (attempt %d/%d)", status, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
             time.sleep(delay)
-            delay *= 2
+            delay = min(delay * 2, 60.0)
         except (TimeoutError, ConnectionError, OSError, httplib2.error.HttpLib2Error) as e:
             if attempt == _GMAIL_STORE_MAX_RETRIES:
                 raise
             logger.info("Gmail transient network error (%s), retrying in %.0fs (attempt %d/%d)", e, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
             time.sleep(delay)
-            delay *= 2
+            delay = min(delay * 2, 60.0)
 
 
 def _eml_tree_candidates(eml_paths: list[Path]) -> Iterator[tuple[str | None, Path, bytes, list[str]]]:
