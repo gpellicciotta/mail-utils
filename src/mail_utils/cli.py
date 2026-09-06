@@ -984,6 +984,11 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
             label_ids = _resolve_label_ids(service, label_names, label_cache)
             if run_label_id not in label_ids:
                 label_ids = [*label_ids, run_label_id]
+            if len(raw_bytes) > 25 * 1024 * 1024:
+                logger.warning("Skipping %s: payload size (%d bytes) exceeds Gmail 25 MB limit", msg_id, len(raw_bytes))
+                skipped += 1
+                continue
+
             last_call_time = _throttle_gmail_store(last_call_time)
             try:
                 result = _gmail_call_with_backoff(import_message, service, raw_bytes, label_ids=label_ids)
@@ -991,7 +996,7 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
                 count += 1
                 last_stored_msg_id = msg_id
                 logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
-            except HttpError as e:
+            except (HttpError, TimeoutError, ConnectionError, OSError, httplib2.error.HttpLib2Error) as e:
                 logger.error("Failed to store %s: %s (skipping message)", msg_id, e)
                 skipped += 1
 
