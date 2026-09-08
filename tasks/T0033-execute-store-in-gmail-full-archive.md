@@ -133,3 +133,6 @@ Ensure lossless upload with rate limiting, deduplication, and automated recovery
 
 - [2026-09-08] **[Implement]**
   Iteration 48: uploaded 1,362 messages this hour, surpassing 90% with 169,891 stored (90.68%) and 17,462 remaining; 1 new policy-blocked error (total 1,042); estimated completion in ~8.4 hours (~01:00 CEST Sep 9).
+
+- [2026-09-08] **[Implement]**
+  Server restart at ~17:09 CEST killed upload process at 170,350 stored (90.9%); relaunched store-in-gmail (task-734) and hourly cron (task-736) at 17:12 CEST; process resumed cleanly from DB checkpoint.
