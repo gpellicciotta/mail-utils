@@ -136,3 +136,6 @@ Ensure lossless upload with rate limiting, deduplication, and automated recovery
 
 - [2026-09-08] **[Implement]**
   Server restart at ~17:09 CEST killed upload process at 170,350 stored (90.9%); relaunched store-in-gmail (task-734) and hourly cron (task-736) at 17:12 CEST; process resumed cleanly from DB checkpoint.
+
+- [2026-09-08] **[Implement]**
+  Iteration 49: working through dense cluster of policy-blocked and oversized messages; 169,940 stored (90.71%) with 17,413 remaining; 162 new errors this period (total 1,204, all policy/size blocks); estimated completion in ~8.3 hours (~02:00 CEST Sep 9).
