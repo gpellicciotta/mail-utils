@@ -115,3 +115,9 @@ Ensure lossless upload with rate limiting, deduplication, and automated recovery
 
 - [2026-09-07] **[Implement]**
   Uploaded 2,394 messages during the past hour, reaching 135,113 stored messages (72.12%) with 52,240 remaining.
+
+- [2026-09-08] **[Implement]**
+  Resumed monitoring after stream interruption (iterations 31–43 missed, 23:00 Sep 7–13:00 Sep 8 CEST); upload continued unattended, processing 29,258 messages over 14 hours (~2,090 msgs/hr), reaching 164,371 stored (87.73%) with 22,982 remaining.
+
+- [2026-09-08] **[Implement]**
+  Iteration 44: 164,371 stored messages (87.73%), 22,982 remaining, 1,039 total errors (1,029 policy-blocked, 10 network timeout); estimated completion in ~11 hours (~00:00 CEST Sep 9).
