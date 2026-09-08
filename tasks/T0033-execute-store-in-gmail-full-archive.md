@@ -127,3 +127,6 @@ Ensure lossless upload with rate limiting, deduplication, and automated recovery
 
 - [2026-09-08] **[Implement]**
   Iteration 46: uploaded 1,440 messages this hour, reaching 167,210 stored (89.25%) with 20,143 remaining; no new errors; estimated completion in ~9.6 hours (~00:30 CEST Sep 9).
+
+- [2026-09-08] **[Implement]**
+  Iteration 47: uploaded 1,319 messages this hour, reaching 168,529 stored (89.95%) with 18,824 remaining; 2 new policy-blocked errors (total 1,041); estimated completion in ~9 hours (~01:00 CEST Sep 9).
