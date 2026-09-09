@@ -31,6 +31,7 @@ from mail_utils.cli import (
     _run_stats,
     _run_store_in_gmail,
     _run_unschedule,
+    _strip_attachments_for_retry,
     _throttle_gmail_store,
     _validate_inner_command,
     build_parser,
@@ -64,15 +65,28 @@ def _rate_limit_error(status=429):
     return HttpError(_FakeResp(status), b"rate limit exceeded")
 
 
+def _invalid_attachment_error():
+    return HttpError(_FakeResp(400), b'{"error": {"message": "Invalid attachment."}}')
+
+
 class _FakeMessagesResource:
-    def __init__(self, fail_first_n_imports=0):
+    def __init__(self, fail_first_n_imports=0, reject_if_has_attachment=False, always_reject=False):
         self.import_calls = []
         self._fail_remaining = fail_first_n_imports
+        self._reject_if_has_attachment = reject_if_has_attachment
+        self._always_reject = always_reject
 
     def import_(self, userId, body, internalDateSource, neverMarkSpam):
         if self._fail_remaining > 0:
             self._fail_remaining -= 1
             raise _rate_limit_error()
+        if self._always_reject:
+            raise _invalid_attachment_error()
+        if self._reject_if_has_attachment:
+            raw = base64.urlsafe_b64decode(body["raw"])
+            parsed = email.message_from_bytes(raw, policy=email_policy_default)
+            if list(parsed.iter_attachments()):
+                raise _invalid_attachment_error()
         self.import_calls.append(
             {"userId": userId, "body": body, "internalDateSource": internalDateSource, "neverMarkSpam": neverMarkSpam}
         )
@@ -95,8 +109,8 @@ class _FakeLabelsResource:
 
 
 class _FakeUsers:
-    def __init__(self, existing_labels, fail_first_n_imports=0):
-        self.messages_resource = _FakeMessagesResource(fail_first_n_imports)
+    def __init__(self, existing_labels, fail_first_n_imports=0, reject_if_has_attachment=False, always_reject=False):
+        self.messages_resource = _FakeMessagesResource(fail_first_n_imports, reject_if_has_attachment, always_reject)
         self.labels_resource = _FakeLabelsResource(existing_labels)
 
     def messages(self):
@@ -110,8 +124,8 @@ class _FakeUsers:
 
 
 class _FakeService:
-    def __init__(self, existing_labels=(), fail_first_n_imports=0):
-        self.users_resource = _FakeUsers(existing_labels, fail_first_n_imports)
+    def __init__(self, existing_labels=(), fail_first_n_imports=0, reject_if_has_attachment=False, always_reject=False):
+        self.users_resource = _FakeUsers(existing_labels, fail_first_n_imports, reject_if_has_attachment, always_reject)
 
     def users(self):
         return self.users_resource
@@ -799,6 +813,104 @@ def test_run_store_in_gmail_from_database_includes_real_attachment_content(tmp_p
     assert len(attachment_parts) == 1
     assert attachment_parts[0].get_filename() == "report.pdf"
     assert attachment_parts[0].get_content() == b"PDF bytes"
+
+
+def test_strip_attachments_for_retry_drops_attachments_and_notes_removal(tmp_path):
+    attachment_store.configure(tmp_path / "attachments")
+    digest = attachment_store.save(b"PDF bytes")
+
+    raw_bytes = _build_eml_message(
+        body_text="Body text",
+        attachments=[{"filename": "report.pdf", "content_sha256": digest, "mime_type": "application/pdf"}],
+    ).as_bytes(policy=email_policy_default)
+
+    stripped_bytes, dropped = _strip_attachments_for_retry(raw_bytes)
+
+    assert dropped == ["report.pdf"]
+    stripped_msg = email.message_from_bytes(stripped_bytes, policy=email_policy_default)
+    assert list(stripped_msg.iter_attachments()) == []
+    assert "Body text" in stripped_msg.get_content()
+    assert "report.pdf" in stripped_msg.get_content()
+
+
+def test_strip_attachments_for_retry_returns_none_without_attachments():
+    raw_bytes = _build_eml_message(body_text="Body text").as_bytes(policy=email_policy_default)
+
+    assert _strip_attachments_for_retry(raw_bytes) is None
+
+
+def test_run_store_in_gmail_retries_without_attachment_when_gmail_rejects_it(tmp_path, monkeypatch, capsys):
+    _no_sleep(monkeypatch)
+    db_path = tmp_path / "mails.db"
+    attachment_store.configure(tmp_path / "attachments")
+    digest = attachment_store.save(b"bad bytes")
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message())
+    upsert_attachments(
+        conn,
+        "msg1",
+        [
+            {
+                "message_id": "msg1",
+                "attachment_id": "a1",
+                "filename": "corrupt.dat",
+                "mime_type": "application/octet-stream",
+                "size": 9,
+                "content_sha256": digest,
+            }
+        ],
+    )
+    conn.close()
+
+    fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}], reject_if_has_attachment=True)
+    monkeypatch.setattr(cli, "get_credentials", lambda account_path, scopes=None: "fake-creds")
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, filter=None, max_messages=None, db=str(tmp_path)))
+
+    (import_call,) = fake_service.users_resource.messages_resource.import_calls
+    stored = email.message_from_bytes(base64.urlsafe_b64decode(import_call["body"]["raw"]), policy=email_policy_default)
+    assert list(stored.iter_attachments()) == []
+    assert "corrupt.dat" in stored.get_content()
+
+    out = capsys.readouterr().out
+    assert "1 messages stored, 0 skipped" in out
+
+
+def test_run_store_in_gmail_skips_when_stripped_retry_also_fails(tmp_path, monkeypatch, capsys):
+    _no_sleep(monkeypatch)
+    db_path = tmp_path / "mails.db"
+    attachment_store.configure(tmp_path / "attachments")
+    digest = attachment_store.save(b"bad bytes")
+
+    conn = init_db(db_path)
+    upsert_message(conn, _sample_message())
+    upsert_attachments(
+        conn,
+        "msg1",
+        [
+            {
+                "message_id": "msg1",
+                "attachment_id": "a1",
+                "filename": "corrupt.dat",
+                "mime_type": "application/octet-stream",
+                "size": 9,
+                "content_sha256": digest,
+            }
+        ],
+    )
+    conn.close()
+
+    fake_service = _FakeService(existing_labels=[{"id": "INBOX", "name": "INBOX"}], always_reject=True)
+    monkeypatch.setattr(cli, "get_credentials", lambda account_path, scopes=None: "fake-creds")
+    monkeypatch.setattr(cli, "build_gmail_service", lambda creds: fake_service)
+
+    _run_store_in_gmail(argparse.Namespace(source_dir=None, dry_run=False, filter=None, max_messages=None, db=str(tmp_path)))
+
+    assert fake_service.users_resource.messages_resource.import_calls == []
+    out = capsys.readouterr().out
+    assert "0 messages stored, 1 skipped" in out
 
 
 def test_import_pst_subcommand_routes_to_run_import_pst():

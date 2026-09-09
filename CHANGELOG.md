@@ -13,6 +13,10 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ### vNext
+- BackEnd: Retry a store-in-gmail failure with attachments stripped instead of skipping the message.
+- BackEnd: Skip store-in-gmail messages exceeding Gmail's 25 MB limit instead of crashing the run.
+- BackEnd: Add exponential backoff retries, up to twelve attempts, for transient network and server errors during store-in-gmail.
+- BackEnd: Supply fallback From and Date headers for store-in-gmail messages lacking a sender or date.
 - CLI: Add --log-file and --debug flags with standardized severity indicators and multiline log formatting.
 - BackEnd: Unify all import/export/store progress log lines into one aligned shape, always showing %-complete.
 - Docs: Add `database-design.md` explaining the rationale behind the SQLite schema's tables.
