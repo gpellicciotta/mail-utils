@@ -14,6 +14,7 @@ Welcome to the `mail-utils` technical documentation.
 - [`specs/gmail-store-test-plan.md`](specs/gmail-store-test-plan.md) — Comprehensive test plan for store-in-gmail live validation.
 - [`specs/gmail-production-recovery-plan.md`](specs/gmail-production-recovery-plan.md) — Production detection and recovery playbook for store-in-gmail.
 - [`specs/gmail-full-archive-migration-report.md`](specs/gmail-full-archive-migration-report.md) — Full execution record and error catalogue for the T0033 production migration.
+- [`specs/gmail-full-archive-migration-failed-messages.md`](specs/gmail-full-archive-migration-failed-messages.md) — Per-message ledger of every message that initially failed to store, and its recovery outcome.
 - [`pst-support-plan.md`](pst-support-plan.md) — Architecture and specification for the pure-Python `[MS-PST]` parser.
 - [`thunderbird-import-plan.md`](thunderbird-import-plan.md) — Architecture and format handling for Thunderbird PCV/Mbox archives.
 - [`eml-export-support-plan.md`](eml-export-support-plan.md) — Design notes for standard RFC 5322 `.eml` message export.
