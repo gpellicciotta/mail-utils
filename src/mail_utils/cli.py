@@ -549,16 +549,26 @@ def _gmail_call_with_backoff(func, *args, **kwargs):
             return func(*args, **kwargs)
         except HttpError as e:
             status = getattr(e.resp, "status", None)
-            is_retryable = status == 429 or (status == 403 and "rate" in str(e).lower()) or (status is not None and 500 <= status < 600)
+            is_retryable = (
+                status == 429 or (status == 403 and "rate" in str(e).lower()) or (status is not None and 500 <= status < 600)
+            )
             if not is_retryable or attempt == _GMAIL_STORE_MAX_RETRIES:
                 raise
-            logger.info("Gmail transient API error (%s), retrying in %.0fs (attempt %d/%d)", status, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
+            logger.info(
+                "Gmail transient API error (%s), retrying in %.0fs (attempt %d/%d)",
+                status,
+                delay,
+                attempt,
+                _GMAIL_STORE_MAX_RETRIES,
+            )
             time.sleep(delay)
             delay = min(delay * 2, 60.0)
         except (TimeoutError, ConnectionError, OSError, httplib2.error.HttpLib2Error) as e:
             if attempt == _GMAIL_STORE_MAX_RETRIES:
                 raise
-            logger.info("Gmail transient network error (%s), retrying in %.0fs (attempt %d/%d)", e, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
+            logger.info(
+                "Gmail transient network error (%s), retrying in %.0fs (attempt %d/%d)", e, delay, attempt, _GMAIL_STORE_MAX_RETRIES
+            )
             time.sleep(delay)
             delay = min(delay * 2, 60.0)
 
@@ -913,7 +923,10 @@ def _strip_attachments_for_retry(raw_bytes: bytes) -> tuple[bytes, list[str]] | 
         f"{', ...' if len(dropped) > 20 else ''}"
     )
 
-    stripped = EmailMessage(policy=_email_policy_default)
+    # Built with the plain default policy, matching _build_eml_message - set_content()'s line-length
+    # heuristics break under _email_policy_default's max_line_length=None. Only the final
+    # serialization below needs the no-wrapping policy.
+    stripped = EmailMessage()
     for key, value in parsed.items():
         if key.lower() not in ("content-type", "content-transfer-encoding", "mime-version", "content-disposition"):
             stripped[key] = value
@@ -1020,9 +1033,15 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
             if run_label_id not in label_ids:
                 label_ids = [*label_ids, run_label_id]
             if len(raw_bytes) > 25 * 1024 * 1024:
-                logger.warning("Skipping %s: payload size (%d bytes) exceeds Gmail 25 MB limit", msg_id, len(raw_bytes))
-                skipped += 1
-                continue
+                stripped = _strip_attachments_for_retry(raw_bytes)
+                if stripped is None or len(stripped[0]) > 25 * 1024 * 1024:
+                    logger.warning("Skipping %s: payload size (%d bytes) exceeds Gmail 25 MB limit", msg_id, len(raw_bytes))
+                    skipped += 1
+                    continue
+                raw_bytes, dropped = stripped
+                logger.warning(
+                    "Stripped %d attachment(s) from %s to fit Gmail's 25 MB limit: %s", len(dropped), msg_id, ", ".join(dropped)
+                )
 
             last_call_time = _throttle_gmail_store(last_call_time)
             try:
@@ -1032,8 +1051,28 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
                 last_stored_msg_id = msg_id
                 logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
             except (HttpError, TimeoutError, ConnectionError, OSError, httplib2.error.HttpLib2Error) as e:
-                logger.error("Failed to store %s: %s (skipping message)", msg_id, e)
-                skipped += 1
+                stripped = _strip_attachments_for_retry(raw_bytes)
+                if stripped is None:
+                    logger.error("Failed to store %s: %s (skipping message)", msg_id, e)
+                    skipped += 1
+                    continue
+                stripped_bytes, dropped = stripped
+                try:
+                    last_call_time = _throttle_gmail_store(last_call_time)
+                    result = _gmail_call_with_backoff(import_message, service, stripped_bytes, label_ids=label_ids)
+                    mark_stored_in_gmail(conn, msg_id, result.get("id"))
+                    count += 1
+                    last_stored_msg_id = msg_id
+                    logger.warning(
+                        "Stored %s WITHOUT %d attachment(s) after Gmail rejected the original (%s): %s",
+                        msg_id,
+                        len(dropped),
+                        e,
+                        ", ".join(dropped),
+                    )
+                except (HttpError, TimeoutError, ConnectionError, OSError, httplib2.error.HttpLib2Error) as e2:
+                    logger.error("Failed to store %s even without attachments: %s (skipping message)", msg_id, e2)
+                    skipped += 1
 
         if (count + skipped) % PROGRESS_LOG_INTERVAL == 0:
             _log_progress("Store", count + skipped, total, start_time)
