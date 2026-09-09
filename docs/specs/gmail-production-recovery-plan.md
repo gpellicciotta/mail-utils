@@ -2,6 +2,13 @@
 
 This document outlines failure detection mechanisms, operational safeguards, and recovery procedures for `mail-utils store-in-gmail` against production mailboxes.
 
+**Record which `--db` directory a production run actually uses.** T0033's full-archive migration used
+`work/T0020-full-archive-import-and-eml-roundtrip/data/storage/work-mail`, not the `--db data/` default
+shown below - reusing an existing large database instead of building a fresh one. That deviation was
+never recorded anywhere, which caused a real investigation into an apparently missing database (nothing
+was actually lost). See `docs/specs/gmail-full-archive-migration-report.md` for the full account. Note
+the actual path used in the task file for any future full-archive run.
+
 ## Principles and Safety Invariants
 
 - Isolated write scope: `store-in-gmail` only calls `messages.import` and `labels.create`.
