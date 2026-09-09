@@ -18,6 +18,43 @@ missing database - the numbers below are the reconciled ground truth, not any si
 - Both runs completed cleanly: `sync_state.gmail_store_run_label` is empty, meaning
   `_finish_gmail_store_run` ran each time (every candidate was processed, neither run was cut short).
 
+## Source database provenance (T0020)
+
+`work-mail`, the database T0033 migrated, wasn't built for this task - it's the output of an earlier,
+separately-verified task,
+[T0020](../../tasks/T0020-full-archive-import-and-eml-roundtrip.md) (2026-08-31 to 2026-09-04), which
+built and proved out the whole import/export/round-trip pipeline this project relies on. That earlier
+work is what gives the 187,353-message count its credibility: every message and attachment in
+`work-mail` was independently proven to round-trip losslessly before T0033 ever pointed `store-in-gmail`
+at it.
+
+The pipeline, and where each artifact now lives (originally built in the
+`work/T0020-full-archive-import-and-eml-roundtrip` worktree, since copied to these top-level `data/`
+locations):
+
+- **Import** - all four real archive files in `data/inputs/` (`anubex-outlook-backup.pst`, ~25.7 GB;
+  `personal-email-backup.pst`, ~279 MB; `personal-email-backup.pcv`, ~63 MB; `anubex-friends-email.pst`,
+  ~31.8 MB) were imported with `--with-attachments --recursive` into one combined database.
+- **Store** - that combined database now lives at `data/storage/work-mail`.
+- **Export** - the same database was exported twice, to drive two independent checks: to Markdown
+  (`data/exports/work-mail-md`, for human review) and to standard RFC 5322 `.eml` files
+  (`data/exports/work-mail-eml`, to drive the round-trip test below).
+- **Re-import** - the `.eml` export was re-imported via `import-eml` into a separate database,
+  `data/storage/work-mail-roundtrip` - proving `import-eml` is the true inverse of `export --format eml`,
+  not just that the export step alone looked plausible.
+- **Verify** - `scripts/local-roundtrip-test.py` compared the original and roundtrip databases
+  message-by-message (paired by the exact preserved `X-Mail-Utils-ID`, not fuzzy matching) and
+  attachment-by-attachment (real bytes read back from each database's own attachment store, not just
+  hash strings). Getting here required fixing eight distinct parsing bugs the comparison surfaced along
+  the way (see `CHANGELOG.md`'s `vNext` section - e.g. raw transport header line breaks crashing
+  `export --format eml`, non-ASCII sender/recipient names failing to decode, unquoted `@`/`,`/`[...]`
+  characters in a display name corrupting address parsing). Once fixed, the comparison found **zero
+  differences**: all 187,353 messages and their attachments matched exactly between the original and
+  roundtrip databases.
+
+This is why T0033 could treat `work-mail`'s 187,353 messages as a trustworthy migration source without
+re-verifying them itself.
+
 ## Timeline
 
 - 2026-09-05: T0033 claimed. Full archive migration plan initialized.
