@@ -1,6 +1,6 @@
 ---
 id: T0033
-owner: "@antigravity"
+owner: "@claude"
 needs: []
 branch: task/T0033-execute-store-in-gmail-full-archive
 worktree: ./work/T0033-execute-store-in-gmail-full-archive
@@ -139,3 +139,13 @@ Ensure lossless upload with rate limiting, deduplication, and automated recovery
 
 - [2026-09-08] **[Implement]**
   Iteration 49: working through dense cluster of policy-blocked and oversized messages; 169,940 stored (90.71%) with 17,413 remaining; 162 new errors this period (total 1,204, all policy/size blocks); estimated completion in ~8.3 hours (~02:00 CEST Sep 9).
+
+- [2026-09-08] **[Implement]**
+  Run completed at 23:53:32 CEST: 187,350/187,353 candidates processed (100.0% of the live counter), final run stored 16,970 messages. Never logged to this file - antigravity ran out of credits first.
+
+- [2026-09-09] **[Verify]**
+  Claude took over from antigravity. Reconciled real state via the database directly: 186,907/187,353 stored (99.76%), 446 permanently failed (417 Gmail 400 "Invalid attachment", 29 over 25 MB) - both categories are attachment-related.
+
+- [2026-09-09] **[Verify]**
+  Resolved an apparent missing-database false alarm: the run used
+  `work/T0020-full-archive-import-and-eml-roundtrip/data/storage/work-mail/mails.db`, not the documented default `data/`. Full record, error catalogue, and root cause: [`docs/specs/gmail-full-archive-migration-report.md`](../docs/specs/gmail-full-archive-migration-report.md).

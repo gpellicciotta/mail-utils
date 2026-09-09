@@ -886,6 +886,41 @@ def _finish_gmail_store_run(conn: sqlite3.Connection) -> None:
     set_sync_state(conn, _GMAIL_STORE_RUN_LABEL_KEY, "")
 
 
+def _strip_attachments_for_retry(raw_bytes: bytes) -> tuple[bytes, list[str]] | None:
+    """Rebuild `raw_bytes` with every attachment/inline-related part removed, keeping only the
+    message's core text body plus an audit note of what was dropped - used as a fallback retry when
+    Gmail rejects a message's attachment content (400 Invalid attachment) or the message exceeds
+    Gmail's 25 MB import limit. Both failure modes are attachment-driven, so storing the message
+    without its attachment(s) is preferable to not storing it at all. Returns (stripped_bytes,
+    dropped_filenames), or None if the message has no separable attachment to drop (nothing to
+    retry with)."""
+    parsed = message_from_bytes(raw_bytes, policy=_email_policy_default)
+    dropped = [part.get_filename() or part.get_content_type() for part in parsed.iter_attachments()]
+    if not dropped:
+        return None
+
+    body = parsed.get_body(preferencelist=("html", "plain"))
+    note = (
+        f"[mail-utils] {len(dropped)} attachment(s) removed on import - Gmail rejected the original "
+        f"message or it exceeded Gmail's 25 MB import limit: {', '.join(dropped[:20])}"
+        f"{', ...' if len(dropped) > 20 else ''}"
+    )
+
+    stripped = EmailMessage(policy=_email_policy_default)
+    for key, value in parsed.items():
+        if key.lower() not in ("content-type", "content-transfer-encoding", "mime-version", "content-disposition"):
+            stripped[key] = value
+
+    if body is not None and body.get_content_type() == "text/html":
+        stripped.set_content(note + "\n", subtype="plain", charset="utf-8")
+        stripped.add_alternative(body.get_content(), subtype="html")
+    else:
+        text = body.get_content() if body is not None else ""
+        stripped.set_content(f"{text}\n\n{note}\n", subtype="plain", charset="utf-8")
+
+    return stripped.as_bytes(policy=_email_policy_default), dropped
+
+
 def _run_store_in_gmail(args: argparse.Namespace) -> None:
     _setup_logging(log_file=getattr(args, "log_file", None), debug=getattr(args, "debug", False))
     version = _get_version()
