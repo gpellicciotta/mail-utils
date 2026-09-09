@@ -20,6 +20,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
 from pathlib import Path
 
+import httplib2
 import yaml
 from googleapiclient.errors import HttpError
 
@@ -524,7 +525,7 @@ _GMAIL_STORE_MAX_CALLS_PER_SECOND = 8
 average - roughly 10 calls/sec) with headroom left for the label list/create calls sharing the
 same per-user budget."""
 
-_GMAIL_STORE_MAX_RETRIES = 5
+_GMAIL_STORE_MAX_RETRIES = 12
 
 
 def _throttle_gmail_store(last_call_time: float) -> float:
@@ -540,20 +541,26 @@ def _throttle_gmail_store(last_call_time: float) -> float:
 
 def _gmail_call_with_backoff(func, *args, **kwargs):
     """Call a Gmail API function, retrying with exponential backoff if Gmail reports a rate-limit
-    error (HTTP 429, or 403 with a rate/quota-related reason) - a transient burst (e.g. right after
-    creating several new labels) shouldn't abort an entire store-in-gmail run."""
-    delay = 1.0
+    error (HTTP 429, or 403 with a rate/quota-related reason), server errors (5xx), or transient
+    socket timeouts, DNS resolution issues, and network connection drops."""
+    delay = 2.0
     for attempt in range(1, _GMAIL_STORE_MAX_RETRIES + 1):
         try:
             return func(*args, **kwargs)
         except HttpError as e:
             status = getattr(e.resp, "status", None)
-            is_rate_limit = status == 429 or (status == 403 and "rate" in str(e).lower())
-            if not is_rate_limit or attempt == _GMAIL_STORE_MAX_RETRIES:
+            is_retryable = status == 429 or (status == 403 and "rate" in str(e).lower()) or (status is not None and 500 <= status < 600)
+            if not is_retryable or attempt == _GMAIL_STORE_MAX_RETRIES:
                 raise
-            logger.info("Gmail rate limit hit, retrying in %.0fs (attempt %d/%d)", delay, attempt, _GMAIL_STORE_MAX_RETRIES)
+            logger.info("Gmail transient API error (%s), retrying in %.0fs (attempt %d/%d)", status, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
             time.sleep(delay)
-            delay *= 2
+            delay = min(delay * 2, 60.0)
+        except (TimeoutError, ConnectionError, OSError, httplib2.error.HttpLib2Error) as e:
+            if attempt == _GMAIL_STORE_MAX_RETRIES:
+                raise
+            logger.info("Gmail transient network error (%s), retrying in %.0fs (attempt %d/%d)", e, delay, attempt, _GMAIL_STORE_MAX_RETRIES)
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)
 
 
 def _eml_tree_candidates(eml_paths: list[Path]) -> Iterator[tuple[str | None, Path, bytes, list[str]]]:
@@ -1012,12 +1019,21 @@ def _run_store_in_gmail(args: argparse.Namespace) -> None:
             label_ids = _resolve_label_ids(service, label_names, label_cache)
             if run_label_id not in label_ids:
                 label_ids = [*label_ids, run_label_id]
+            if len(raw_bytes) > 25 * 1024 * 1024:
+                logger.warning("Skipping %s: payload size (%d bytes) exceeds Gmail 25 MB limit", msg_id, len(raw_bytes))
+                skipped += 1
+                continue
+
             last_call_time = _throttle_gmail_store(last_call_time)
-            result = _gmail_call_with_backoff(import_message, service, raw_bytes, label_ids=label_ids)
-            mark_stored_in_gmail(conn, msg_id, result.get("id"))
-            count += 1
-            last_stored_msg_id = msg_id
-            logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
+            try:
+                result = _gmail_call_with_backoff(import_message, service, raw_bytes, label_ids=label_ids)
+                mark_stored_in_gmail(conn, msg_id, result.get("id"))
+                count += 1
+                last_stored_msg_id = msg_id
+                logger.info("Stored %s as Gmail message %s", msg_id, result.get("id"))
+            except (HttpError, TimeoutError, ConnectionError, OSError, httplib2.error.HttpLib2Error) as e:
+                logger.error("Failed to store %s: %s (skipping message)", msg_id, e)
+                skipped += 1
 
         if (count + skipped) % PROGRESS_LOG_INTERVAL == 0:
             _log_progress("Store", count + skipped, total, start_time)
@@ -1621,6 +1637,8 @@ def _build_eml_message(
         msg["Subject"] = subject
     if sender:
         msg["From"] = sender
+    else:
+        msg["From"] = "unknown@unknown.invalid"
     if recipient:
         msg["To"] = recipient
     if cc:
@@ -1632,6 +1650,8 @@ def _build_eml_message(
     elif internal_date_ms:
         dt = datetime.fromtimestamp(internal_date_ms / 1000, tz=timezone.utc)
         msg["Date"] = format_datetime(dt)
+    else:
+        msg["Date"] = format_datetime(datetime.fromtimestamp(0, tz=timezone.utc))
 
     msg["X-Mail-Utils-ID"] = msg_id
     if thread_id:

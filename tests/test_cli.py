@@ -261,6 +261,12 @@ def test_build_eml_message_leaves_already_valid_addresses_untouched():
     ]
 
 
+def test_build_eml_message_supplies_fallback_from_and_date_when_missing():
+    msg = _build_eml_message(sender=None, date=None, internal_date_ms=None)
+    assert msg.get("From") == "unknown@unknown.invalid"
+    assert msg.get("Date") is not None
+
+
 def test_build_eml_message_preserves_non_utf8_text_attachment_bytes_exactly(tmp_path, monkeypatch):
     """A "text/*" attachment isn't guaranteed to be UTF-8 (e.g. a real Windows-1252-encoded .txt file
     from an old Outlook archive) - EmailMessage.add_attachment() decodes "text" maintype content as a
