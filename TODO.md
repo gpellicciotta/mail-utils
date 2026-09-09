@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [?] T0033 [owner: @claude] Full archive stored in Gmail (187,353/187,353); awaiting review to integrate into main.
+*(Currently no tasks)*
 
 ### Backlog
 
