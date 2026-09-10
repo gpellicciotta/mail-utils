@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [ ] T0041 Finalize the work done as part of T0020 and T0033: further condense the summary of the work in docs/specs/gmail-full-archive-migration-report.md, then ensure all code changes made as part of these 2 tasks were merged into the main branch. If yes: drop the task branches and worktrees entirely. 
+- [~] T0041 [owner: @antigravity] Finalize the work done as part of T0020 and T0033: further condense the summary of the work in docs/specs/gmail-full-archive-migration-report.md, then ensure all code changes made as part of these 2 tasks were merged into the main branch. If yes: drop the task branches and worktrees entirely. 
   As to "condense the summary", I mean the following:
   - Remove all information from gmail-full-archive-migration-report.md that is no longer usable in the future (e.g. references to the worktrees that will no longer exist)
   - Also further **condense** the text to the essential info:
