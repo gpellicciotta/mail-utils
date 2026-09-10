@@ -32,7 +32,7 @@ python scripts/bootstrap-dev-environment.py
 
 The repository strictly separates code, configuration, local databases, and runtime logs:
 
-```
+```text
 mail-utils/
   src/mail_utils/           # Application source code
     outlook/                # Zero-dependency [MS-PST] Unicode PST parser
@@ -172,14 +172,58 @@ The resulting packages will be placed in `dist/`:
 
 ---
 
-## Continuous Integration (CI)
+## Continuous Integration & Delivery
 
-GitHub Actions runs automated checks on every push and pull request via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), on Ubuntu with Python 3.11:
+GitHub Actions runs automated checks on every push and pull request via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml):
 
 - **Lint Check**: `ruff check .`
 - **Format Check**: `ruff format --check .`
-- **Test Suite**: `pytest`
+- **Test Suite**: `pytest` across Python 3.10 and 3.11 matrix
 - **Package Build**: `python -m build`
+
+When a GitHub release is published, [`.github/workflows/publish.yml`](../.github/workflows/publish.yml) builds source and wheel distributions and attaches them as release assets.
+
+---
+
+## Release Process & Automation
+
+Releases follow Semantic Versioning. Development versions carry a `-pre` suffix in `pyproject.toml` and under the top heading in `CHANGELOG.md` (e.g. `## v3.1.2-pre`).
+
+### Creating a Release with `create-github-release.py`
+
+The `scripts/create-github-release.py` script automates the complete release process end-to-end:
+
+1. Validates preconditions (clean working tree, `gh` CLI installed and authenticated).
+2. Extracts release notes for the target version from `CHANGELOG.md`.
+3. Finalizes the version in `pyproject.toml` and `CHANGELOG.md` (removing `-pre` and stamping the release date).
+4. Builds the distribution packages in `dist/`.
+5. Commits the finalized release files and creates the git tag (`v<version>`).
+6. Pushes the commit and tag to GitHub and creates the GitHub release with attached distribution assets.
+7. Opens the next patch development version (`-pre`) in `pyproject.toml` and `CHANGELOG.md` in a follow-up commit.
+
+```shell
+# Preview the release actions without making changes
+python scripts/create-github-release.py --dry-run
+
+# Create and publish the release
+python scripts/create-github-release.py release
+```
+
+---
+
+## Release Installation
+
+To install a specific released version directly from GitHub releases without manual asset downloads, use `scripts/install-from-github-release.py`:
+
+```shell
+# Install a specific release into the current environment
+python scripts/install-from-github-release.py 3.1.1
+
+# Install globally using pipx (or pip --user fallback)
+python scripts/install-from-github-release.py 3.1.1 --global
+```
+
+The script determines the repository remote URL, resolves the release wheel asset on GitHub, and installs or upgrades the package using `pipx` (or `pip`).
 
 ---
 
