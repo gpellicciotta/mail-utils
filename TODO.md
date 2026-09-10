@@ -9,13 +9,14 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0043
+**Next ID:** 0044
 
 ---
 
 ## Next Milestone
 
-*(Currently no tasks)*
+- [~] A0043 [owner: @gemini] The GitHub workflow actions failed. Fix this.
+- [ ] A0044 [needs: A0043] Complete the failed attempt to create a v3.1.2 release (and improve the release procedure to fail earlier)
 
 ### Backlog
 
