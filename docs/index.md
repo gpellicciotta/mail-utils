@@ -10,6 +10,12 @@ Welcome to the `mail-utils` technical documentation.
 - [`emails-formats.md`](emails-formats.md) — Reference on single-message and mailbox storage formats (.eml, .msg, .mbox, .pst).
 - [`database-design.md`](database-design.md) — Why the SQLite schema's tables are shaped the way they are.
 
+## Specialized Documentation
+
+- [`specs/`](specs/) — Interface, format, and protocol specifications.
+- [`adrs/`](adrs/) — Architectural decision records explaining key choices.
+- [`issues/`](issues/) — Root cause analysis and resolution records for complex bugs.
+
 ## Design & Technical Plans
 - [`specs/gmail-store-test-plan.md`](specs/gmail-store-test-plan.md) — Comprehensive test plan for store-in-gmail live validation.
 - [`specs/gmail-production-recovery-plan.md`](specs/gmail-production-recovery-plan.md) — Production detection and recovery playbook for store-in-gmail.

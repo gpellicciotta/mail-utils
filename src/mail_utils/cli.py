@@ -168,7 +168,7 @@ def _get_version() -> str:
     try:
         return _package_version("mail-utils")
     except PackageNotFoundError:
-        return "2.3.0"
+        return "0.0.0+unknown"
 
 
 def format_severity_indicator(level: int | str | None) -> str:
