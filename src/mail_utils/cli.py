@@ -2161,48 +2161,49 @@ def _run_unschedule(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    common_parent = argparse.ArgumentParser(add_help=False)
-    common_parent.add_argument(
-        "--log-file",
-        default=argparse.SUPPRESS,
-        help="Path to operational log file (default: logs/mail-utils.log)",
+    log_file_help = "Path to operational log file (default: logs/mail-utils.log)"
+    debug_help = "Enable debug logging output"
+    verbose_help = (
+        "With --version, also print the matching CHANGELOG.md entry; with help (or no command), "
+        "also print full --help for every subcommand"
     )
-    common_parent.add_argument(
-        "--debug",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="Enable debug logging output",
-    )
+    db_help = "Directory to store this run's database (mails.db) and attachment cache (attachments/) in (default: data/)."
+
+    root_parent = argparse.ArgumentParser(add_help=False)
+    root_parent.add_argument("--log-file", default=None, help=log_file_help)
+    root_parent.add_argument("--debug", action="store_true", default=False, help=debug_help)
+    root_parent.add_argument("--verbose", action="store_true", default=False, help=verbose_help)
+    root_parent.add_argument("--db", default=None, help=db_help)
+
+    subcommand_parent = argparse.ArgumentParser(add_help=False)
+    subcommand_parent.add_argument("--log-file", default=argparse.SUPPRESS, help=log_file_help)
+    subcommand_parent.add_argument("--debug", action="store_true", default=argparse.SUPPRESS, help=debug_help)
+    subcommand_parent.add_argument("--verbose", action="store_true", default=argparse.SUPPRESS, help=verbose_help)
+    subcommand_parent.add_argument("--db", default=argparse.SUPPRESS, help=db_help)
 
     parser = argparse.ArgumentParser(
         prog="mail-utils",
         description="A lightweight, privacy-preserving, local email archive indexing and extraction utility.",
         add_help=False,
-        parents=[common_parent],
+        parents=[root_parent],
     )
     parser.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     parser.add_argument("--version", action="store_true", help="Show version and exit")
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="With --version, also print the matching CHANGELOG.md entry; with help (or no command), "
-        "also print full --help for every subcommand",
-    )
     subparsers = parser.add_subparsers(dest="command")
 
     subcommand_parsers = {}
 
-    help_cmd = subparsers.add_parser("help", parents=[common_parent], help="Show this help message and exit", add_help=False)
+    help_cmd = subparsers.add_parser(
+        "help", parents=[subcommand_parent], help="Show this help message and exit", add_help=False
+    )
     help_cmd.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
-    help_cmd.add_argument("--verbose", action="store_true", help="Also print full --help for every subcommand")
     help_cmd.add_argument("subcommand", nargs="?", default=None, help="Optional subcommand to show help for")
     subcommand_parsers["help"] = help_cmd
 
     version_cmd = subparsers.add_parser(
-        "version", parents=[common_parent], help="Show version and exit (same as --version)", add_help=False
+        "version", parents=[subcommand_parent], help="Show version and exit (same as --version)", add_help=False
     )
     version_cmd.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
-    version_cmd.add_argument("--verbose", action="store_true", help="Also print the matching CHANGELOG.md entry")
     subcommand_parsers["version"] = version_cmd
 
     filter_help = (
@@ -2210,8 +2211,6 @@ def build_parser() -> argparse.ArgumentParser:
         "Supported: label:, from:, to:, cc:, bcc:, subject:, after:YYYY/MM/DD, before:YYYY/MM/DD, "
         'has:attachment, and bare words/"quoted phrases" (subject+body substring).'
     )
-
-    db_help = "Directory to store this run's database (mails.db) and attachment cache (attachments/) in (default: data/)."
 
     account_help = (
         "Gmail account to authenticate as. A bare name resolves to <name>-account.json under data/; "
@@ -2227,7 +2226,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_cmd = subparsers.add_parser(
         "import",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Import mail from an archive file/directory, or from Gmail if no file is provided",
     )
     import_cmd.add_argument(
@@ -2245,13 +2244,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
     import_cmd.add_argument("--account", help=account_help)
-    import_cmd.add_argument("--db", help=db_help)
     import_cmd.set_defaults(func=_run_import)
     subcommand_parsers["import"] = import_cmd
 
     import_gmail_cmd = subparsers.add_parser(
         "import-gmail",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Import new mail from Gmail via the Gmail API",
     )
     import_gmail_cmd.add_argument(
@@ -2264,13 +2262,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_gmail_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
     import_gmail_cmd.add_argument("--account", help=account_help)
-    import_gmail_cmd.add_argument("--db", help=db_help)
     import_gmail_cmd.set_defaults(func=_run_import_gmail)
     subcommand_parsers["import-gmail"] = import_gmail_cmd
 
     prepare_gmail_account_cmd = subparsers.add_parser(
         "prepare-gmail-account",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Interactively authorize a Gmail account and save its credentials for later use with --account",
     )
     prepare_gmail_account_cmd.add_argument(
@@ -2287,7 +2284,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     check_gmail_account_cmd = subparsers.add_parser(
         "check-gmail-account",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Report the authenticated email, granted scopes, and mailbox size for an --account (read-only)",
     )
     check_gmail_account_cmd.add_argument("name", help="Account name (resolved the same way as --account) or an explicit file path")
@@ -2297,7 +2294,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_pst_cmd = subparsers.add_parser(
         "import-pst",
         aliases=["import-outlook"],
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Import an Outlook .pst archive's messages into the local database",
     )
     import_pst_cmd.add_argument("pst_path", help="Path to the .pst file to import")
@@ -2305,7 +2302,6 @@ def build_parser() -> argparse.ArgumentParser:
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
     import_pst_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
-    import_pst_cmd.add_argument("--db", help=db_help)
     import_pst_cmd.set_defaults(func=_run_import_pst)
     subcommand_parsers["import-pst"] = import_pst_cmd
     subcommand_parsers["import-outlook"] = import_pst_cmd
@@ -2313,7 +2309,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_tb_cmd = subparsers.add_parser(
         "import-thunderbird",
         aliases=["import-pcv"],
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Import a Mozilla Thunderbird archive (.pcv, .zip, or profile folder) into the local database",
     )
     import_tb_cmd.add_argument("archive_path", help="Path to the .pcv/.zip archive or Thunderbird profile directory to import")
@@ -2321,26 +2317,24 @@ def build_parser() -> argparse.ArgumentParser:
         "-r", "--recursive", action="store_true", help="Recursively import messages attached to incoming emails"
     )
     import_tb_cmd.add_argument("--with-attachments", action="store_true", help=with_attachments_help)
-    import_tb_cmd.add_argument("--db", help=db_help)
     import_tb_cmd.set_defaults(func=_run_import_thunderbird)
     subcommand_parsers["import-thunderbird"] = import_tb_cmd
     subcommand_parsers["import-pcv"] = import_tb_cmd
 
     import_eml_cmd = subparsers.add_parser(
         "import-eml",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Import a 'mail-utils export --format eml' directory tree into the local database",
     )
     import_eml_cmd.add_argument(
         "source_dir", help="Directory of .eml files to import, e.g. output of 'mail-utils export --format eml'"
     )
-    import_eml_cmd.add_argument("--db", help=db_help)
     import_eml_cmd.set_defaults(func=_run_import_eml)
     subcommand_parsers["import-eml"] = import_eml_cmd
 
     store_in_gmail_cmd = subparsers.add_parser(
         "store-in-gmail",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Store previously-exported (or already-indexed) mail into a live Gmail mailbox (requests write-capable scopes)",
     )
     store_in_gmail_cmd.add_argument(
@@ -2358,34 +2352,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Report what would be stored without contacting Gmail or requesting credentials"
     )
     store_in_gmail_cmd.add_argument("--account", help=account_help)
-    store_in_gmail_cmd.add_argument("--db", help=db_help)
     store_in_gmail_cmd.set_defaults(func=_run_store_in_gmail)
     subcommand_parsers["store-in-gmail"] = store_in_gmail_cmd
 
     search_cmd = subparsers.add_parser(
         "search",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Full-text search indexed messages using SQLite FTS5",
     )
     search_cmd.add_argument("query", help="Search query (supports boolean operators AND, OR, NOT, and prefix queries)")
     search_cmd.add_argument("-n", "--limit", type=int, default=20, help="Maximum number of search results to return (default: 20)")
-    search_cmd.add_argument("--db", help=db_help)
     search_cmd.set_defaults(func=_run_search)
     subcommand_parsers["search"] = search_cmd
 
     stats = subparsers.add_parser(
         "stats",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Print summary stats from the local database",
     )
     stats.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
-    stats.add_argument("--db", help=db_help)
     stats.set_defaults(func=_run_stats)
     subcommand_parsers["stats"] = stats
 
     export = subparsers.add_parser(
         "export",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Export all messages as markdown or EML files",
     )
     export.add_argument("output_dir", help="Directory to write exported files into (created if missing)")
@@ -2397,13 +2388,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Export format: 'md' (Markdown with YAML frontmatter, default) or 'eml' (standard RFC 5322 MIME format)",
     )
     export.add_argument("--filter", help=filter_help + " Evaluated locally against the database.")
-    export.add_argument("--db", help=db_help)
     export.set_defaults(func=_run_export)
     subcommand_parsers["export"] = export
 
     schedule_cmd = subparsers.add_parser(
         "schedule",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Register a recurring mail-utils command (Windows Task Scheduler or cron)",
     )
     schedule_cmd.add_argument("--job-name", default="default", help="Identifies this job (default: 'default')")
@@ -2420,7 +2410,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     unschedule_cmd = subparsers.add_parser(
         "unschedule",
-        parents=[common_parent],
+        parents=[subcommand_parent],
         help="Remove a job registered by 'schedule'",
     )
     unschedule_cmd.add_argument("--job-name", default="default", help="Which job to remove (default: 'default')")

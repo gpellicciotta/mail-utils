@@ -13,6 +13,7 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ## v3.1.2-pre
+- CLI: Support global options like --verbose and --db placed before or after any subcommand.
 - DevEx: Added `scripts/create-github-release.py` to automate the full release workflow end-to-end.
 - DevEx: Added `scripts/install-from-github-release.py` to install any released version from GitHub.
 - DevEx: All scripts now report the project version from `pyproject.toml` instead of independent hardcoded strings.

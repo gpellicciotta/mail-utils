@@ -964,10 +964,31 @@ def test_export_flag_format_rejects_invalid():
 
 def test_import_stats_export_accept_db_override():
     assert build_parser().parse_args(["import", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["--db", "work.db", "import"]).db == "work.db"
     assert build_parser().parse_args(["import-pst", "a.pst", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["--db", "work.db", "import-pst", "a.pst"]).db == "work.db"
     assert build_parser().parse_args(["import-thunderbird", "a.pcv", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["--db", "work.db", "import-thunderbird", "a.pcv"]).db == "work.db"
     assert build_parser().parse_args(["stats", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["--db", "work.db", "stats"]).db == "work.db"
     assert build_parser().parse_args(["export", "out", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["--db", "work.db", "export", "out"]).db == "work.db"
+    assert build_parser().parse_args(["search", "query", "--db", "work.db"]).db == "work.db"
+    assert build_parser().parse_args(["--db", "work.db", "search", "query"]).db == "work.db"
+
+
+def test_global_options_before_and_after_subcommands():
+    parser = build_parser()
+    assert parser.parse_args(["--debug", "stats"]).debug is True
+    assert parser.parse_args(["stats", "--debug"]).debug is True
+    assert parser.parse_args(["--log-file", "test.log", "stats"]).log_file == "test.log"
+    assert parser.parse_args(["stats", "--log-file", "test.log"]).log_file == "test.log"
+    assert parser.parse_args(["--verbose", "version"]).verbose is True
+    assert parser.parse_args(["version", "--verbose"]).verbose is True
+    assert parser.parse_args(["--verbose", "--version"]).verbose is True
+    assert parser.parse_args(["--version", "--verbose"]).verbose is True
+    assert parser.parse_args(["--verbose", "help"]).verbose is True
+    assert parser.parse_args(["help", "--verbose"]).verbose is True
 
 
 def test_schedule_subcommand_routes_and_captures_inner_command():

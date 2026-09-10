@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [~] A0042 [owner: @antigravity] Make sure global options like --verbose and --db are recognized irrespective of whether they are specified before or after the main action
+*(Currently no tasks)*
 
 ### Backlog
 
