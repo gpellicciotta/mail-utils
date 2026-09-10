@@ -10,7 +10,7 @@ split exactly.
 import hashlib
 import struct
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from email.parser import Parser
 from email.utils import getaddresses
 
@@ -220,7 +220,7 @@ def _decode_time(prop: PSTProperty) -> datetime | None:
         return None
     filetime = struct.unpack_from("<Q", prop.value, 0)[0]
     unix_100ns = filetime - _FILETIME_UNIX_EPOCH_DELTA
-    return datetime.fromtimestamp(unix_100ns / 1e7, tz=UTC)
+    return datetime.fromtimestamp(unix_100ns / 1e7, tz=timezone.utc)
 
 
 def _parse_transport_headers(text: str) -> dict:
