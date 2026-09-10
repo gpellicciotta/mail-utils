@@ -2,11 +2,12 @@
 """Create and publish a GitHub release from the current repository state.
 
 Reads the version from pyproject.toml, extracts release notes from CHANGELOG.md,
-finalizes version files if still at -pre, creates a git tag, pushes to GitHub,
-and creates a GitHub release. Then opens the next development version.
+runs pre-flight quality checks (lint, format, test, build), validates repository
+and GitHub preconditions, finalizes version files if still at -pre, creates a git tag,
+pushes to GitHub, and creates a GitHub release. Then opens the next development version.
 
 Usage:
-  python scripts/create-github-release.py [release|version|help] [--dry-run]
+  python scripts/create-github-release.py [release|version|help] [--dry-run] [--skip-checks]
 """
 
 from __future__ import annotations
@@ -24,14 +25,15 @@ from _cli_common import build_action_parser, get_project_version, print_help, pr
 PROG = "create-github-release"
 DESCRIPTION = (
     "Create and publish a GitHub release from the current repository state. "
-    "Reads version from pyproject.toml, extracts release notes from CHANGELOG.md, "
+    "Validates preconditions and runs quality checks (lint, format, test, build), "
+    "reads version from pyproject.toml, extracts release notes from CHANGELOG.md, "
     "finalizes version files if still at -pre, tags, pushes, and creates the GitHub release. "
     "Then opens the next development version."
 )
 VERSION = get_project_version()
 EXIT_CODES = [
     (0, "Success"),
-    (1, "Precondition failed (dirty tree, missing tool, bad state)"),
+    (1, "Precondition failed (dirty tree, missing tool, bad branch, unauthenticated, failing tests/linters)"),
     (2, "Release step failed"),
 ]
 
@@ -50,11 +52,11 @@ def _run(cmd: list[str], dry_run: bool) -> int:
     print(f"  $ {' '.join(cmd)}")
     if dry_run:
         return 0
-    return subprocess.run(cmd, check=False).returncode
+    return subprocess.run(cmd, check=False, cwd=REPO_ROOT).returncode
 
 
 def _run_capture(cmd: list[str]) -> str:
-    return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=REPO_ROOT).stdout.strip()
 
 
 def _read_version(pyproject: Path) -> str:
@@ -88,26 +90,29 @@ def _next_dev_version(release_ver: str) -> str:
 
 def _extract_changelog_notes(changelog: Path, release_ver: str) -> str:
     text = _read_file(changelog)
-    # Match: ## v3.1.1   or   ## v3.1.1-pre   or   ## v3.1.1 [released: ...]
-    m = re.search(rf"^## v{re.escape(release_ver)}(\s|$|-pre)", text, re.MULTILINE)
+    # Match the entire heading line: ## v3.1.2 or ## v3.1.2-pre or ## v3.1.2 [released: ...]
+    m = re.search(rf"^## v{re.escape(release_ver)}[^\n]*\n?", text, re.MULTILINE)
     if not m:
         raise SystemExit(f"[ERROR] No '## v{release_ver}' section found in CHANGELOG.md\n        Add the heading before releasing.")
     start = m.end()
     next_h = re.search(r"^## ", text[start:], re.MULTILINE)
     end = start + next_h.start() if next_h else len(text)
-    return text[start:end].strip()
+    notes = text[start:end].strip()
+    if not notes:
+        raise SystemExit(f"[ERROR] Release notes for 'v{release_ver}' in CHANGELOG.md are empty.")
+    return notes
 
 
 def _finalize_changelog_heading(changelog: Path, release_ver: str, today: str, dry_run: bool) -> None:
     text = _read_file(changelog)
     replacement = f"## v{release_ver} [released: {today}]"
-    new_text = re.sub(rf"^## v{re.escape(release_ver)}-pre\b", replacement, text, flags=re.MULTILINE)
+    new_text = re.sub(rf"^## v{re.escape(release_ver)}(?:-pre)?(?=\s*$)", replacement, text, flags=re.MULTILINE)
     if new_text == text:
         # Already finalized; verify the heading exists at all
         if not re.search(rf"^## v{re.escape(release_ver)}\b", text, re.MULTILINE):
             raise SystemExit(f"[ERROR] No '## v{release_ver}' or '## v{release_ver}-pre' in CHANGELOG.md")
         return
-    print(f"  [edit] CHANGELOG.md: '## v{release_ver}-pre' -> '{replacement}'")
+    print(f"  [edit] CHANGELOG.md: heading -> '{replacement}'")
     if not dry_run:
         _write_file(changelog, new_text)
 
@@ -133,7 +138,97 @@ def _get_github_repo() -> str:
     return m.group(1)
 
 
-def release(dry_run: bool) -> int:
+def _get_dirty_files() -> set[str]:
+    res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True, cwd=REPO_ROOT)
+    files = set()
+    for line in res.stdout.splitlines():
+        if not line:
+            continue
+        path_part = line[2:].strip()
+        if " -> " in path_part:
+            path_part = path_part.split(" -> ", 1)[1]
+        if path_part:
+            files.add(path_part)
+    return files
+
+
+def _validate_preconditions(release_ver: str, needs_finalize: bool) -> int:
+    # 1. Check working tree
+    dirty_files = _get_dirty_files()
+    allowed = {"pyproject.toml", "CHANGELOG.md"} if needs_finalize else set()
+    unexpected = dirty_files - allowed
+    if unexpected:
+        print(f"[ERROR] Uncommitted changes in: {', '.join(sorted(unexpected))}")
+        print("        Commit or stash them before releasing.")
+        return 1
+
+    # 2. Check current branch
+    try:
+        branch = _run_capture(["git", "branch", "--show-current"])
+        if branch != "main":
+            print(f"[ERROR] Releases must be cut from branch 'main' (currently on '{branch}')")
+            return 1
+    except Exception as exc:
+        print(f"[ERROR] Could not determine current git branch: {exc}")
+        return 1
+
+    # 3. Check gh CLI availability and authentication
+    try:
+        _run_capture(["gh", "--version"])
+    except Exception:
+        print("[ERROR] 'gh' CLI is not installed — see https://cli.github.com/")
+        return 1
+
+    auth_res = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, check=False)
+    if auth_res.returncode != 0:
+        print("[ERROR] 'gh' CLI is not authenticated — run 'gh auth login' before releasing.")
+        return 1
+
+    # 4. Check remote sync and tag existence
+    try:
+        _run_capture(["git", "fetch", "origin", "main", "--tags"])
+    except Exception as exc:
+        print(f"[ERROR] Failed to fetch origin: {exc}")
+        return 1
+
+    remote_tags = _run_capture(["git", "ls-remote", "--tags", "origin", f"refs/tags/v{release_ver}"])
+    if remote_tags:
+        print(f"[ERROR] Tag 'v{release_ver}' already exists on remote origin.")
+        return 1
+
+    # 5. Check if GitHub release already exists
+    gh_view = subprocess.run(["gh", "release", "view", f"v{release_ver}"], capture_output=True, text=True, check=False)
+    if gh_view.returncode == 0:
+        print(f"[ERROR] GitHub release 'v{release_ver}' already exists.")
+        return 1
+
+    return 0
+
+
+def _run_quality_checks() -> int:
+    print("--- Pre-flight Quality Checks ---")
+    checks = [
+        ("Linter (ruff check)", [sys.executable, "-m", "ruff", "check", "."]),
+        ("Formatter (ruff format)", [sys.executable, "-m", "ruff", "format", "--check", "."]),
+        ("Test suite (pytest)", [sys.executable, "-m", "pytest"]),
+        ("Package build (build)", [sys.executable, "-m", "build"]),
+    ]
+    for name, cmd in checks:
+        print(f"  Running {name}...")
+        res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+        if res.returncode != 0:
+            print(f"[ERROR] Quality check failed: {name}")
+            if res.stdout:
+                print(res.stdout.strip())
+            if res.stderr:
+                print(res.stderr.strip())
+            return 1
+        print(f"  ✓ {name} passed")
+    print()
+    return 0
+
+
+def release(dry_run: bool, skip_checks: bool = False) -> int:
     pyproject = REPO_ROOT / "pyproject.toml"
     changelog = REPO_ROOT / "CHANGELOG.md"
     today = date.today().strftime("%Y-%m-%d")
@@ -148,22 +243,16 @@ def release(dry_run: bool) -> int:
     print(f"Dry run         : {dry_run}")
     print()
 
-    # Check working tree
-    dirty_out = _run_capture(["git", "status", "--porcelain"])
-    dirty_files = {ln[3:].strip() for ln in dirty_out.splitlines()} if dirty_out else set()
-    allowed = {"pyproject.toml", "CHANGELOG.md"} if needs_finalize else set()
-    unexpected = dirty_files - allowed
-    if unexpected:
-        print(f"[ERROR] Uncommitted changes in: {', '.join(sorted(unexpected))}")
-        print("        Commit or stash them before releasing.")
-        return 1
+    # Precondition validation
+    precondition_code = _validate_preconditions(release_ver, needs_finalize)
+    if precondition_code != 0:
+        return precondition_code
 
-    # Check gh CLI
-    try:
-        _run_capture(["gh", "--version"])
-    except Exception:
-        print("[ERROR] 'gh' CLI is not installed — see https://cli.github.com/")
-        return 1
+    # Quality checks (run early before modifying anything)
+    if not skip_checks and not dry_run:
+        quality_code = _run_quality_checks()
+        if quality_code != 0:
+            return quality_code
 
     repo = _get_github_repo()
     notes = _extract_changelog_notes(changelog, release_ver)
@@ -189,7 +278,7 @@ def release(dry_run: bool) -> int:
 
     # Step 2: tag and push
     print(f"--- Step 2: Tag and push v{release_ver} ---")
-    if _run(["git", "tag", f"v{release_ver}"], dry_run) != 0:
+    if _run(["git", "tag", "-f", f"v{release_ver}"], dry_run) != 0:
         return 2
     if _run(["git", "push", "origin", "main"], dry_run) != 0:
         return 2
@@ -225,6 +314,7 @@ def release(dry_run: bool) -> int:
 def main() -> int:
     parser = build_action_parser(PROG, DESCRIPTION, ["release", "version", "help"], "release")
     parser.add_argument("--dry-run", action="store_true", help="Print every step without making any changes")
+    parser.add_argument("--skip-checks", action="store_true", help="Skip pre-flight quality checks (lint, format, test, build)")
     args = parser.parse_args()
 
     if args.version or args.action == "version":
@@ -234,7 +324,7 @@ def main() -> int:
         print_help(PROG, VERSION, DESCRIPTION, parser, EXIT_CODES)
         return 0
 
-    return release(dry_run=args.dry_run)
+    return release(dry_run=args.dry_run, skip_checks=args.skip_checks)
 
 
 if __name__ == "__main__":

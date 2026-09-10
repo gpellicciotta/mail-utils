@@ -193,12 +193,12 @@ Releases follow Semantic Versioning. Development versions carry a `-pre` suffix 
 
 The `scripts/create-github-release.py` script automates the complete release process end-to-end:
 
-1. Validates preconditions (clean working tree, `gh` CLI installed and authenticated).
-2. Extracts release notes for the target version from `CHANGELOG.md`.
-3. Finalizes the version in `pyproject.toml` and `CHANGELOG.md` (removing `-pre` and stamping the release date).
-4. Builds the distribution packages in `dist/`.
+1. Validates preconditions (clean working tree, branch is `main`, `gh` CLI installed and authenticated, no existing remote tag or release).
+2. Runs pre-flight quality checks (`ruff check`, `ruff format --check`, `pytest`, `python -m build`).
+3. Extracts release notes for the target version from `CHANGELOG.md`.
+4. Finalizes the version in `pyproject.toml` and `CHANGELOG.md` (removing `-pre` and stamping the release date).
 5. Commits the finalized release files and creates the git tag (`v<version>`).
-6. Pushes the commit and tag to GitHub and creates the GitHub release with attached distribution assets.
+6. Pushes the commit and tag to GitHub and creates the GitHub release.
 7. Opens the next patch development version (`-pre`) in `pyproject.toml` and `CHANGELOG.md` in a follow-up commit.
 
 ```shell
@@ -207,6 +207,9 @@ python scripts/create-github-release.py --dry-run
 
 # Create and publish the release
 python scripts/create-github-release.py release
+
+# Create and publish while skipping pre-flight checks
+python scripts/create-github-release.py release --skip-checks
 ```
 
 ---
