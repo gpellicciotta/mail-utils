@@ -13,6 +13,11 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ## v3.1.0-pre
+- DevEx: Added `license`, `[project.urls]`, and pinned `[tool.ruff.lint]` rules to `pyproject.toml`; aligned version to `3.1.0-pre`.
+- DevEx: Upgraded CI to test Python 3.10 and 3.11 matrix, added `permissions: contents: read`, and archived dist artifacts.
+- DevEx: Added `publish.yml` GitHub Actions workflow to build and upload release assets on GitHub release publication.
+- Docs: Added Guidelines section to `docs/index.md` linking general, Python, coordinating-work, and Markdown guideline docs.
+- DevEx: Added coverage outputs (`.coverage`, `htmlcov/`) and improved `*.log` glob to `**/*.log` in `.gitignore`.
 - DevEx: Aligned CHANGELOG heading format, version fallback, doc structure, CI, and scripts with python-project-template.
 - BackEnd: Retry a store-in-gmail failure with attachments stripped instead of skipping the message.
 - BackEnd: Skip store-in-gmail messages exceeding Gmail's 25 MB limit instead of crashing the run.

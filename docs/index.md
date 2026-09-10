@@ -27,9 +27,18 @@ Welcome to the `mail-utils` technical documentation.
 - [`reverse-import-plan.md`](reverse-import-plan.md) — Feasibility study for restoring exported mail back into Gmail/Outlook/Thunderbird.
 - [`parallel-pst-import-plan.md`](parallel-pst-import-plan.md) — Design for an opt-in multi-process `import-pst --parallel N` mode (backlog, not yet built).
 
+## Guidelines
+
+This project follows the cross-project
+[Development Guidelines](https://github.com/gpellicciotta/dev-guidelines), in particular its
+[general guidelines](https://github.com/gpellicciotta/dev-guidelines/blob/main/guidelines/general-guidelines.md),
+[Python guidelines](https://github.com/gpellicciotta/dev-guidelines/blob/main/guidelines/python-guidelines.md),
+[coordinating work guidelines](https://github.com/gpellicciotta/dev-guidelines/blob/main/guidelines/coordinating-work-guidelines.md),
+and
+[Markdown guidelines](https://github.com/gpellicciotta/dev-guidelines/blob/main/guidelines/markdown-guidelines.md).
+
 ## Root References
 - [`README.md`](../README.md) — Project overview and quickstart links.
 - [`LICENSE.md`](../LICENSE.md) — Project license.
 - [`CHANGELOG.md`](../CHANGELOG.md) — Version history and release notes.
 - [`TODO.md`](../TODO.md) — Backlog and upcoming roadmap.
-- [Development Guidelines](https://github.com/gpellicciotta/dev-guidelines) — Cross-project development guidelines.

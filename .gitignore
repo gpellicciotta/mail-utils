@@ -1,5 +1,5 @@
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 venv/
 *.egg-info/
@@ -9,6 +9,11 @@ bin/
 .claude/
 .pytest_cache/
 .ruff_cache/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
 
 # IDE/editor
 .vscode/
@@ -24,7 +29,7 @@ token.json
 # Local data
 *.db
 logs/
-*.log
+**/*.log
 data/
 export/
 exports/
