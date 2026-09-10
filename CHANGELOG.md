@@ -12,6 +12,8 @@ A summarized overview of all changes, per version of this project.
 
 ---
 
+## v3.1.3-pre
+
 ## v3.1.2 [released: 2026-09-10]
 - CLI: Support global options like --verbose and --db placed before or after any subcommand.
 - DevEx: Added `scripts/create-github-release.py` to automate the full release workflow end-to-end.
