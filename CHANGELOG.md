@@ -13,6 +13,10 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ## v3.1.2-pre
+- DevEx: Added `scripts/create-github-release.py` to automate the full release workflow end-to-end.
+- DevEx: Added `scripts/install-from-github-release.py` to install any released version from GitHub.
+- DevEx: All scripts now report the project version from `pyproject.toml` instead of independent hardcoded strings.
+- DevEx: Removed `scripts/deploy-to-production.py` as it has no meaning in this project.
 
 ## v3.1.1 [released: 2026-09-10]
 - Build: Fixed Python 3.10 import error in `outlook/messages.py` caused by `datetime.UTC` (Python 3.11+); replaced with `timezone.utc`.
