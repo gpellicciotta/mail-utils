@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [ ] A0044 Complete the failed attempt to create a v3.1.2 release (and improve the release procedure to fail earlier)
+- [~] A0044 [owner: @gemini] Complete the failed attempt to create a v3.1.2 release (and improve the release procedure to fail earlier)
 
 ### Backlog
 
