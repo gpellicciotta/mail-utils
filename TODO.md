@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [~] T0040 [owner: @antigravity] Align project with latest guidelines and python-project-template.
+- [~] T0040 [owner: @antigravity] Reopen: close remaining template/guideline compliance gaps (pyproject license+urls+ruff-lint, version -pre suffix, CI matrix+permissions+artifacts, publish workflow, docs index guidelines section, .gitignore coverage).
 
 ### Backlog
 
