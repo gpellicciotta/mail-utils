@@ -110,7 +110,7 @@ def _finalize_changelog_heading(changelog: Path, release_ver: str, today: str, d
         if not re.search(rf"^## v{re.escape(release_ver)}\b", text, re.MULTILINE):
             raise SystemExit(f"[ERROR] No '## v{release_ver}' or '## v{release_ver}-pre' in CHANGELOG.md")
         return
-    print(f"  [edit] CHANGELOG.md: '## v{release_ver}-pre' → '{replacement}'")
+    print(f"  [edit] CHANGELOG.md: '## v{release_ver}-pre' -> '{replacement}'")
     if not dry_run:
         _write_file(changelog, new_text)
 
