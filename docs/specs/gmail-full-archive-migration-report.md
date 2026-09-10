@@ -1,242 +1,244 @@
-# Gmail Full-Archive Migration Report (T0033)
+# Gmail Full-Archive Migration Report (T0020 and T0033)
 
-This document is the full execution record for `store-in-gmail`'s first production run: migrating the
-complete local archive into the `gio-rw` Gmail account (`giovanni.pellicciotta@gmail.com`). It exists
-because the run spanned several days, several agent handoffs, and one investigation into an apparently
-missing database - the numbers below are the reconciled ground truth, not any single log excerpt.
+This report covers local archive preparation in T0020 and the production Gmail migration in T0033.
+The destination was account `gio-rw` (`giovanni.pellicciotta@gmail.com`).
+
+The sources are [T0020's task report](../../tasks/T0020-full-archive-import-and-eml-roundtrip.md)
+and [T0033's task report](../../tasks/T0033-execute-store-in-gmail-full-archive.md).
+T0020's detailed execution record survives in Git at commit `d42a6f6`, before its condensation in `3614049`.
+Read that version with:
+
+```text
+git show d42a6f6:tasks/T0020-full-archive-import-and-eml-roundtrip.md
+```
 
 ## Summary
 
-- Candidates: 187,353 messages (sourced from Outlook `.pst` and Thunderbird `.pcv` archives, previously
-  imported into a local database).
-- **All 187,353 messages (100%) are now stored in Gmail.** The bulk migration stored 186,907
-  (99.76%) by 2026-09-08 23:53:32; the remaining 446 (0.24%) initially failed Gmail's attachment
-  validation and were recovered on 2026-09-09 by retrying with attachments stripped - see
-  [Attachment-stripped retry](#attachment-stripped-retry).
-- Target account confirmed live (2026-09-09, post-cleanup): 204,025 messages / 199,095 threads in
-  `gio-rw` (`giovanni.pellicciotta@gmail.com`).
-- Both runs completed cleanly: `sync_state.gmail_store_run_label` is empty, meaning
-  `_finish_gmail_store_run` ran each time (every candidate was processed, neither run was cut short).
+- T0020 imported four archives with attachments and recursive extraction, producing 187,353 unique local messages.
+- The full local roundtrip found zero body or attachment differences under the comparator's documented normalization rules.
+  Address exceptions remained; see [Source database provenance](#source-database-provenance-t0020).
+- T0033 recorded all 187,353 messages as stored in Gmail after cleanup on 2026-09-09.
+  This is message-count completion; some Gmail copies have attachments removed and their MIME bodies rebuilt.
+- Bulk migration stored 186,907 messages (99.76%) by 2026-09-08 23:53:32 UTC.
+  Cleanup recovered the remaining 446 (0.24%).
+- The previous report recorded 204,025 messages and 199,095 threads in the destination account after cleanup.
+  Those mailbox-wide totals are absent from the task reports and were not independently rechecked during this review.
+- T0033's task file remains `needs-review`, with no completion date.
+  Its execution log records successful migration while explicitly leaving code integration pending human review.
 
 ## Source database provenance (T0020)
 
-`work-mail`, the database T0033 migrated, wasn't built for this task - it's the output of an earlier,
-separately-verified task,
-[T0020](../../tasks/T0020-full-archive-import-and-eml-roundtrip.md) (2026-08-31 to 2026-09-04), which
-built and proved out the whole import/export/round-trip pipeline this project relies on. That earlier
-work is what gives the 187,353-message count its credibility: every message and attachment in
-`work-mail` was independently proven to round-trip losslessly before T0033 ever pointed `store-in-gmail`
-at it.
+T0020 ran from 2026-08-31 through 2026-09-04.
+It implemented `import-eml` and `scripts/local-roundtrip-test.py`, then exercised the complete import/export/reimport pipeline.
 
-The pipeline, and where each artifact now lives (originally built in the
-`work/T0020-full-archive-import-and-eml-roundtrip` worktree, since copied to these top-level `data/`
-locations):
+The user subsequently relocated the original inputs, production database, and mail exports under
+`C:\Dev-Projects\mail-utils\data`.
+Paths below distinguish current artifacts from historical validation locations.
 
-- **Import** - all four real archive files in `data/inputs/` (`anubex-outlook-backup.pst`, ~25.7 GB;
-  `personal-email-backup.pst`, ~279 MB; `personal-email-backup.pcv`, ~63 MB; `anubex-friends-email.pst`,
-  ~31.8 MB) were imported with `--with-attachments --recursive` into one combined database.
-- **Store** - that combined database now lives at `data/storage/work-mail`.
-- **Export** - the same database was exported twice, to drive two independent checks: to Markdown
-  (`data/exports/work-mail-md`, for human review) and to standard RFC 5322 `.eml` files
-  (`data/exports/work-mail-eml`, to drive the round-trip test below).
-- **Re-import** - the `.eml` export was re-imported via `import-eml` into a separate database,
-  `data/storage/work-mail-roundtrip` - proving `import-eml` is the true inverse of `export --format eml`,
-  not just that the export step alone looked plausible.
-- **Verify** - `scripts/local-roundtrip-test.py` compared the original and roundtrip databases
-  message-by-message (paired by the exact preserved `X-Mail-Utils-ID`, not fuzzy matching) and
-  attachment-by-attachment (real bytes read back from each database's own attachment store, not just
-  hash strings). Getting here required fixing eight distinct parsing bugs the comparison surfaced along
-  the way (see `CHANGELOG.md`'s `vNext` section - e.g. raw transport header line breaks crashing
-  `export --format eml`, non-ASCII sender/recipient names failing to decode, unquoted `@`/`,`/`[...]`
-  characters in a display name corrupting address parsing). Once fixed, the comparison found **zero
-  differences**: all 187,353 messages and their attachments matched exactly between the original and
-  roundtrip databases.
+- Import: all four inputs exist under `data/inputs/`.
+  Sizes below are rounded from their current byte lengths, using binary units.
+  - `anubex-outlook-backup.pst`: 25.69 GiB.
+  - `personal-email-backup.pst`: 278.77 MiB.
+  - `personal-email-backup.pcv`: 62.75 MiB.
+  - `anubex-friends-email.pst`: 31.77 MiB.
 
-This is why T0033 could treat `work-mail`'s 187,353 messages as a trustworthy migration source without
-re-verifying them itself.
+- Store: the production database is `data/storage/work-mail/mails.db`.
+  Its attachment store is `data/storage/work-mail/attachments/`.
+  Use `--db data/storage/work-mail`; neither `--db data/` nor `--db data/storage/` identifies that database.
+
+- Export: the relocated Markdown export is `data/exports/work-mail-md/`.
+  T0020 also produced a full EML export, historically named `data/exports/work-mail-eml/` inside its worktree.
+  That full EML directory was not found at either the historical or proposed relocated path during this review.
+  The existing `data/exports/work-mail-smoke-eml/` is a separate smoke-test artifact.
+
+- Reimport: T0020 imported the EML export into a separate roundtrip database.
+  That database still exists at
+  `work/T0020-full-archive-import-and-eml-roundtrip/data/storage/work-mail-roundtrip/mails.db`.
+  It was not found at the previously stated relocated path, `data/storage/work-mail-roundtrip/`.
+
+- Verify: the comparator paired messages by preserved `X-Mail-Utils-ID` and compared attachment bytes from each database's store.
+  Body comparisons normalized line endings and trailing newlines; HTML comparisons also normalized whitespace.
+  This was a fidelity check with accepted transformations, rather than byte-identical equality of every message field.
+
+The last full comparison covered 187,353 messages and reported 156 address-field findings, with zero body or attachment findings.
+The detailed record ultimately classified 151 as formatting/encoding differences and three as already-invalid spam addresses.
+The remaining two exposed a real bracketed-display-name parsing bug.
+That fix passed direct checks against the affected messages and a fresh 3,542-message integration cycle.
+The full 187,353-message comparison was not rerun after that final fix, following the user's explicit instruction.
+
+A Hebrew/`bezeq` mailing-list cluster remained an accepted, incompletely investigated address exception.
+The detailed record identifies 21 CC findings in that cluster.
+Consequently, neither “zero differences across all fields” nor unconditional losslessness accurately describes T0020's final evidence.
 
 ## Timeline
 
-- 2026-09-05: T0033 claimed. Full archive migration plan initialized.
-- 2026-09-06: OAuth verified for `gio-rw`; 187,353 total candidates confirmed, of which 76,295 were
-  already marked stored (carried over from earlier `store-in-gmail` pilot activity in T0032/T0031, before
-  T0033 itself started uploading).
-- 2026-09-06 to 2026-09-08: Iterative resumable runs, progress logged roughly hourly (`git log
-  task/T0033-execute-store-in-gmail-full-archive` has ~34 progress commits). Four code fixes landed
-  during this window to harden the run against real-world failures:
-  - Exponential backoff retries for transient network timeouts/server errors.
-  - `HttpLib2Error` handling and a larger retry buffer for DNS drops.
-  - Retry attempts extended to twelve, with a 60-second backoff cap.
-  - Pre-emptive skip for messages exceeding Gmail's 25 MB import limit, plus catching unsendable
-    payload errors instead of crashing.
-- 2026-09-08 ~17:09 CEST: host server restart killed the upload process mid-run at 170,350 stored
-  (90.9%); relaunched 17:12 CEST and resumed cleanly from the local DB checkpoint - no duplicate
-  uploads, confirming the dedup-by-`gmail_store_state` design worked as intended under a real crash.
-- 2026-09-08 15:12:38 to 23:53:32 (final run, 31,254.4s / ~8h 41m): 16,970 newly stored, 170,383 skipped
-  (already-stored dedup plus this run's own permanent failures), ending at 187,350/187,353 in the live
-  progress counter.
-- 2026-09-08 23:53:32: `store-in-gmail` process logged its completion summary and exited. No further
-  mail-utils activity is logged again until the next morning.
-- 2026-09-09 06:08-06:59: a `stats`/`check-gmail-account` check (run by the antigravity agent, per its
-  own account-mismatch retry pattern in the log) discovered `data/mails.db` missing at the documented
-  default path and re-verified the live account totals. No further task-file/TODO.md update followed -
-  antigravity ran out of credits at this point and Claude took over the investigation.
-- 2026-09-09 10:01-10:06: 10-message pilot of the new attachment-stripped retry, all 10 recovered.
-- 2026-09-09 (targeted completion run, 2,768.8s / ~46 min): all remaining 436 messages retried via a
-  script querying only the still-unstored rows directly (avoiding a 187k-row rescan) - **436/436
-  recovered, 0 permanent failures**. Combined with the pilot: all 446 originally-failed messages are now
-  stored. `mails.db`'s `gmail_store_state` table has 187,353 rows, matching `messages` exactly.
+Dates without times follow the task records. Timed migration log entries below use UTC unless explicitly marked CEST.
 
-## The "missing database" false alarm
+- `2026-08-31`: T0020 was claimed; `import-eml` was implemented with preserved identifiers, attachment content, and internal timestamps.
+  Initial validation passed 218 tests, with two skipped.
+  After authorization, archive import began; the smallest PST exposed unsupported ANSI format, creating dependency T0021.
 
-`docs/specs/gmail-production-recovery-plan.md` documents `--db data/` (the project default) as the run's
-database location. The actual production run was pointed at
-`work/T0020-full-archive-import-and-eml-roundtrip/data/storage/work-mail/mails.db` (5.4 GB) instead -
-reusing T0020's existing full-archive database rather than building a fresh one under `data/`. That
-database was never lost; the recovery-plan doc and the task file simply never recorded the real path,
-so both antigravity's own morning check and Claude's independent investigation looked in the wrong place
-and (briefly, and incorrectly) suspected data loss. `docs/specs/gmail-production-recovery-plan.md` should
-be corrected to reference the actual path, or the run should be pointed at the documented default on any
-future full-archive migration, so this doesn't recur.
+- `2026-09-01`: A separate small-archive smoke test ran while the large PST import continued.
+  It exposed header unfolding, non-ASCII address decoding, attachment size/encoding, and unquoted-display-name problems.
 
-No evidence in the log suggests the database was ever deleted or corrupted - mail-utils itself never
-deletes its own database file, and the file's contents (187,353 messages, then 186,907
-`gmail_store_state` rows, now 187,353 after the cleanup below) are fully consistent with the log's own
-reported progress.
+- `2026-09-02`: Investigation stopped the slowing large import after approximately 31.5 hours.
+  Per-message FTS5 maintenance was the dominant bottleneck; bulk index rebuilding and transaction batching were implemented.
+  A subsequent complete large-PST import processed 186,475 entries in 3,049.8 seconds (50.8 minutes).
+  Diagnostic writes had also contaminated the working database; synthetic rows were removed and affected source content was reimported.
+
+- `2026-09-02`: T0021 added ANSI PST support, T0026 enabled recursive PST extraction, and T0027 fixed comma-separated display names.
+  A fresh three-small-archive cycle passed with 3,542 unique messages.
+  T0024's parallel-import implementation remained deferred after the single-process performance improvement.
+
+- `2026-09-03`: All four archives produced 187,353 unique messages.
+  Export and comparison hit memory exhaustion from loading complete message bodies simultaneously.
+  Streaming fixes enabled full Markdown and EML exports.
+  The first full comparison reported 1,504 findings; focused reparsing and fixes reduced the subset result to 133.
+  That subset count was not a final full-archive result.
+
+- `2026-09-04`: Fresh full cycles reduced address findings from 246 to 156, with zero body or attachment findings.
+  The final bracketed-display-name fix passed affected-message checks and a 3,542-message rerun.
+  T0020 closed with accepted address exceptions and no further full-scale rerun; 263 tests passed, with two skipped.
+
+- `2026-09-05`: T0033 was claimed and its production migration plan initialized.
+  Missing From/Date fallbacks and initial transient-error backoff were committed that day.
+
+- `2026-09-06`: OAuth was verified for `gio-rw`; T0033 reported 187,353 candidates and a 76,295 already-stored baseline.
+  That baseline's precise derivation is not preserved in the task report.
+  Attribution to T0031/T0032 pilots is unsupported: T0031 tested a disposable account, and T0032 documented recovery procedures.
+  DNS/`HttpLib2Error` handling, twelve retry attempts, and the local payload-size guard were committed by this date.
+
+- `2026-09-06 to 2026-09-08`: The bulk run continued with periodic monitoring and transient network failures.
+  Many hourly task entries called the CLI's processed counter “stored”; those counts include skipped candidates.
+
+- `2026-09-08 ~17:09 CEST`: The task report records a host restart interrupting the upload at 170,350 processed candidates.
+  The last preceding log activity was at 15:01:49 UTC (17:01:49 CEST); the exact interruption time is uncertain.
+  Relaunch occurred at 15:12:38 UTC (17:12:38 CEST), using existing storage checkpoints.
+
+- `2026-09-08 15:12:38–23:53:32 UTC`: The final bulk invocation stored 16,970 messages and skipped 170,383.
+  Its completion summary accounts for all 187,353 candidates.
+  The last periodic progress line, 187,350/187,353, was not the completion total.
+
+- `2026-09-08 23:53:32 UTC` (`2026-09-09 01:53:32 CEST`): Bulk migration completed with 186,907 stored and 446 unresolved.
+
+- `2026-09-09`: The handoff investigation reconciled storage counts and resolved an apparent missing-database alarm.
+  The production run had used T0020's worktree database instead of the documented default.
+  That historical path discrepancy predates the user's relocation of the production database into top-level `data/storage/work-mail/`.
+
+- `2026-09-09`: Attachment-retry support passed the recorded suite of 276 tests, with two skipped.
+  A 10-message pilot and targeted 436-message run recovered all 446 failures.
+  T0033 recorded 187,353 storage-state rows matching its message count, while retaining pending integration status.
 
 ## Error catalogue
 
-As of 2026-09-08 23:53:32, every one of the 446 permanently unstored messages fell into one of two
-mutually exclusive, deterministic categories - confirmed by cross-referencing the local database's
-`gmail_store_state` gap against the log's error text. **All 446 were subsequently recovered** by the
-attachment-stripped retry below; this section documents *why* they originally failed, not their current
-state:
+T0033 reconciled the 446 messages unresolved after bulk migration into two categories:
 
-- **417 messages: Gmail API `400 Invalid attachment`** (`reason: invalidArgument`). Gmail's
-  `messages.import` endpoint rejected the message's MIME structure, most likely due to malformed or
-  non-conformant attachment encoding inherited from very old Outlook `.pst` entries (see
-  [Gmail's attachment guidance](https://support.google.com/mail/answer/6590), referenced directly in the
-  API's own error response). Retried identically on each subsequent run (the same ~417 messages recur
-  every time, never succeeding as-is), confirming this is a deterministic per-message rejection, not a
-  transient fault - resolved only once the offending attachment(s) were removed before import.
-- **29 messages: payload exceeds Gmail's 25 MB import limit.** Caught pre-emptively by mail-utils'
-  own size check before even calling the API (added specifically for this run - see Timeline above).
+- 417 messages received Gmail API `400 Invalid attachment` responses.
+  The exact reason for each attachment rejection was not established.
+  The linked [Gmail attachment guidance](https://support.google.com/mail/answer/6590) describes blocked file types and archive contents.
+  It does not establish malformed MIME encoding as the cause.
 
-Across the full log history (all iterations combined, including repeated retries of the same
-still-failing messages on each successive run): 1,459 `ERROR`-level "Failed to store ... (skipping
-message)" entries and 55 `WARN`-level oversized-payload skips were logged in total. The unique-message
-counts above (417 and 29) are what matters for final disposition; the larger totals simply reflect the
-same messages being retried on every run until this report's investigation confirmed the retries were
-futile.
+- 29 messages exceeded mail-utils' local payload threshold of `25 * 1024 * 1024` bytes (25 MiB).
+  They were skipped before an API call, so this category does not demonstrate a Gmail rejection.
+
+The previous wording called the second category “Gmail's 25 MB import limit.”
+That conflated the implementation's local guard with the service limit.
+The [Gmail import reference](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/import)
+currently documents a 150 MB maximum message size.
+This review corrects the historical description; it does not change the application threshold.
+
+The earlier report counted 1,459 error-level failed-store entries and 55 oversized-payload warnings across repeated attempts.
+Those are log-event totals, rather than unique failed messages; they should not replace the reconciled 417 + 29 count.
 
 ## Attachment-stripped retry
 
-Both failure categories are attachment-driven, so a targeted fix - retry each of the 446 with its
-attachments stripped, keeping the message body, headers, and an audit note of what was removed - was
-implemented (`_strip_attachments_for_retry` in `cli.py`) and run against all 446:
+T0033 added `_strip_attachments_for_retry` in [cli.py](../../src/mail_utils/cli.py).
+The task report records 10/10 pilot recoveries followed by 436/436 targeted recoveries, with no remaining failures.
 
-- 10-message pilot (2026-09-09 10:01-10:06): **10/10 recovered**.
-- Full completion run against the remaining 436 (2026-09-09, 2,768.8s / ~46 min, via a targeted
-  script querying only the still-unstored rows directly rather than re-scanning the full 187,353-row
-  table): **436/436 recovered, 0 permanent failures**.
-- **Result: 446/446 (100%) recovered.** 417 needed at least one attachment actually removed (931
-  attachment files dropped in total, ~2.2 per message on average); the other 29 (the oversized-payload
-  category) succeeded immediately once mail-utils' own pre-emptive size check stripped them before ever
-  calling the Gmail API.
-- Every stripped message keeps its original headers, subject, and body verbatim, with one line prepended
-  noting how many attachments were removed and why - the original attachment bytes remain in the local
-  attachment cache and are still recoverable from there (or via `export --format eml`) if ever needed;
-  they are simply not present in the Gmail copy.
+The [failure ledger](gmail-full-archive-migration-failed-messages.md) contains 446 rows:
 
-See the [Failed Messages Ledger](#failed-messages-ledger) below for the per-message outcome, and the
-Execution Log in
-[`tasks/T0033-execute-store-in-gmail-full-archive.md`](../../tasks/T0033-execute-store-in-gmail-full-archive.md)
-for the task-level summary.
+- 417 rows record attachments dropped, totaling 931 recorded attachments.
+- 29 rows say “recovered on retry (succeeded without modification).”
+
+These outcome counts happen to match the original failure-category sizes.
+The ledger does not identify those 29 unchanged successes as the 29 original oversized messages.
+Nor does it establish whether “without modification” overlooked any preprocessing in the targeted script.
+The previous report's one-to-one mapping between failure categories and recovery mechanisms was therefore unsupported.
+
+The retry helper rebuilds the MIME message, copying non-content headers and choosing HTML preferentially over plain text.
+For plain-only mail, it appends the audit note.
+For HTML mail, it keeps the HTML body and supplies the note as the plain-text alternative.
+Original MIME headers and alternative-body structure are not preserved verbatim, and stripped inline images cannot render from their removed parts.
+
+The helper leaves the source database and attachment store unchanged.
+Removed attachment bytes remain available locally for later export.
+This means T0033 achieved full message-count coverage, while narrowing its original lossless-upload goal for affected Gmail copies.
 
 ## Performance
 
-Two figures matter here and they are not the same thing: **active processing time** (time the
-`store-in-gmail` process actually spent throttled-calling the Gmail API) versus **calendar time**
-(wall-clock span including idle gaps between sessions, restarts, and agent handoffs). Reporting only
-the calendar figure would understate the throughput; reporting only the active figure would hide how
-long the whole exercise actually took end-to-end.
+The CLI's progress count is `stored + skipped`.
+Skipped candidates include already-stored messages and failures, so progress percentages cannot establish successful storage totals.
 
-A terminology note first, because it explains an apparent discrepancy in the source data: the CLI's own
-`Store progress: X/Y messages` line reports `X = count + skipped` - candidates *examined*, not candidates
-*stored* (`skipped` bags both already-stored dedup skips and this run's own permanent failures together).
-The hourly task-log entries written during the run (e.g. "170,350 stored (90.9%)") were transcribed
-straight from that line, so they are actually **processed** counts, not **stored** counts - they overstate
-true storage progress by however many permanent failures had already accumulated at that point. The
-figures below correct for this, using only values that are independently verifiable: the final
-`gmail_store_state` row count (queried directly) and each run's own end-of-run completion summary (which
-reports true `stored`/`skipped` separately, not the ambiguous progress-line total).
+- Reconciliation: 187,353 candidates = 186,907 bulk stores + 446 cleanup recoveries.
+- Calendar span: T0033's claim at 2026-09-05 00:05:45 CEST to bulk completion at 2026-09-09 01:53:32 CEST.
+  This is approximately four days, one hour, and 48 minutes; cleanup occurred afterward.
+- Segment A: first log at 2026-09-06 15:21:24 UTC through last activity at 2026-09-08 15:01:49 UTC.
+  The observed interval is 171,625 seconds (47 hours, 40 minutes).
+- Segment B: 2026-09-08 15:12:38–23:53:32 UTC.
+  The completion summary reports 31,254.4 seconds and 16,970 new stores: 0.543 messages/second.
+  The 170,383 skips reconcile as 169,937 previously stored messages plus 446 failures.
+- **[Estimation]** Combined observed runtime is 202,879.4 seconds, approximately 56 hours and 21 minutes.
+  Using the reported 76,295 baseline gives approximately 110,612 new stores at 0.545 messages/second.
+  This baseline was not independently verified; the result must not be labeled “verified new stores.”
+- Reported cleanup durations: 290.9 seconds for the pilot and 2,768.8 seconds for the remaining 436 messages.
+  Together, that is 3,059.7 seconds (approximately 51 minutes), or 0.146 recovered messages/second.
+  These timings come from the earlier summary and are not specified in T0033's task report.
 
-- **Verified reconciliation:** 187,353 candidates = 186,907 stored + 446 permanently failed as of
-  2026-09-08 23:53:32 (exact - see [Error catalogue](#error-catalogue)); all 446 later recovered, so the
-  database now shows 187,353 = 187,353 stored + 0 failed.
-- **Calendar span:** T0033 claimed 2026-09-05 00:05:45 CEST -> final bulk-store completion
-  2026-09-09 01:53:32 CEST = **~4 days 1h 48m**.
-- **Active processing time, bulk migration** (two continuous segments, separated by the 2026-09-08
-  server restart):
-  - Segment A: 2026-09-06 15:21:24 -> 2026-09-08 15:01:49 UTC (killed by the restart) = 171,625s
-    (~47h 40m). Its "170,350 stored" task-log entry is a *processed* figure; the true stored count
-    entering segment B (derived below) was 169,937, so segment A actually stored approximately
-    169,937 minus its own starting baseline (~76,295, itself a self-reported progress-log figure and
-    the one number in this section not independently re-verified) = **~93,642 messages**, roughly
-    **0.546 msg/s**.
-  - Segment B: 2026-09-08 15:12:38 -> 23:53:32 UTC (clean completion) = 31,254.4s (~8h 41m). Its own
-    completion line is exact and self-consistent: 16,970 stored + 170,383 skipped = 187,353 (the full
-    candidate count, confirming it rescanned the whole table from message #1 rather than resuming from
-    an index) = **0.543 msg/s**. Working backward, stored-before-segment-B = 186,907 - 16,970 =
-    **169,937**; of segment B's 170,383 skips, 169,937 were already-stored dedup and 446 were
-    permanent-failure skips (413 already known from segment A, 33 newly discovered during segment B
-    itself) - 169,937 + 446 + 16,970 = 187,353, which closes exactly.
-  - Combined active runtime: 202,879.4s (**~56h 21m**) for 186,907 - 76,295 = **110,612 verified new
-    stores**, averaging **~0.545 msg/s** (~1,963 messages/hour). This throughput is dominated by the
-    per-message Gmail API throttle (`_throttle_gmail_store`, ~1/s) plus building each candidate's MIME
-    representation from the local database - not by network latency or backoff retries, which were rare.
-- **Active processing time, attachment-stripped cleanup** (2026-09-09, this report's own fix):
-  - 10-message pilot: 290.9s for 10 recovered (0.034 msg/s) - dominated by having to scan/skip the
-    187k-row table via the normal `store-in-gmail` CLI path to reach 10 targets, not by the API calls
-    themselves.
-  - Full 436-message completion: 2,768.8s (~46 min) for 436 recovered, **0.157 msg/s** - roughly 3.5x
-    slower per-message than the bulk migration despite having zero table-scan overhead (a direct SQL
-    query selected only the 436 target rows up front), because most of these messages (the 407 in the
-    "invalid attachment" category) needed *two* throttled API calls each - the original attempt, which
-    Gmail was already known to reject, followed by the stripped retry - while the remainder (the
-    oversized-payload category) needed only one, having been stripped pre-emptively before ever calling
-    the API.
-  - Combined cleanup: 3,059.7s (~51 min) recovering all 446, **0.146 msg/s** overall.
+These intervals include scanning, MIME construction, network calls, throttling, and retries.
+The records do not isolate those costs sufficiently to attribute throughput chiefly to throttling or exclude network latency.
+Likewise, they do not establish an exact one-call/two-call breakdown for the cleanup categories.
 
 ## Finding the imported mail in Gmail
 
-Every message `store-in-gmail` writes gets two kinds of Gmail label, both applied via
-`users.labels.create`/`messages.import`'s `labelIds`:
+The application applies a run-tracking label and labels derived from each message's source folders.
+An interrupted or capped invocation reuses the persisted run label.
+A complete scan clears that local label state, even if individual messages failed.
 
-1. **A run-tracking label**, unique to the invocation that stored it, named
-   `mail-utils-store-in-gmail-<UTC timestamp>`. This is the fastest way to find "everything mail-utils
-   ever imported" as one Gmail search:
-   - Bulk migration (187,353 candidates, 2026-09-04 22:10 -> 2026-09-08 23:53 UTC, surviving the
-     2026-09-08 server restart since the label is persisted in `sync_state` until a run finishes
-     uninterrupted): search Gmail for
-     `label:mail-utils-store-in-gmail-2026-09-04T22-10-55Z`.
-   - Today's attachment-stripped cleanup (446 messages, 2026-09-09): search Gmail for
-     `label:mail-utils-store-in-gmail-2026-09-09T10-01-37Z`.
-   - Both together: `label:mail-utils-store-in-gmail-2026-09-04T22-10-55Z OR label:mail-utils-store-in-gmail-2026-09-09T10-01-37Z`.
-2. **The message's original folder label(s)**, translated from its source mailbox (e.g. an Outlook
-   folder path or Thunderbird folder), created in Gmail if they didn't already exist there. These are
-   what let you browse imported mail by its original folder structure rather than as one undifferentiated
-   dump - e.g. Gmail's left-hand label list will show the recreated folder hierarchy alongside the two
-   run labels above.
+The earlier report recorded these production labels:
 
-None of the imported mail lands in the Gmail inbox as "new" - `neverMarkSpam=True` is set but nothing
-forces `INBOX` placement, so it's only visible via label/search, not by scrolling the inbox. This was a
-deliberate design choice (see `docs/reverse-import-plan.md`) so a 187k-message import doesn't bury
-everyday mail.
+- Bulk migration: `label:mail-utils-store-in-gmail-2026-09-04T22-10-55Z`.
+- Cleanup: `label:mail-utils-store-in-gmail-2026-09-09T10-01-37Z`.
+- Combined search:
+  `label:mail-utils-store-in-gmail-2026-09-04T22-10-55Z OR label:mail-utils-store-in-gmail-2026-09-09T10-01-37Z`.
+
+These searches select the named runs; they do not establish coverage of every historical mail-utils invocation.
+Source-folder labels provide another way to browse the imported archive.
+
+The implementation does not explicitly add `INBOX` and requests `neverMarkSpam=True`.
+However, the [import API](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/import)
+performs delivery scanning and classification.
+Those settings alone do not substantiate the previous guarantee that no imported message can appear in the inbox.
+
+## Review findings and remaining uncertainties
+
+The 2026-09-09 review corrected the timeline, provenance, and interpretation of the recorded results.
+
+- T0020's condensed report obscures the detailed record's accepted address differences and limited final rerun.
+  Its historical Completion Record also ambiguously groups 151 formatting findings and three invalid-source findings.
+  The preceding explicit decision entry resolves the accounting as 151 + 3 + 2 = 156.
+- T0033's hourly entries confuse processed candidates with successful stores.
+  One entry also calls 66.03% “surpassing two-thirds”; two-thirds is approximately 66.67%.
+- T0033 records successful execution but remains `needs-review`; its task entry is absent from `TODO.md`.
+  Migration completion and integration status are separate facts.
+- An empty `gmail_store_run_label` establishes cleared run state, not a history proving that two particular invocations completed.
+  Completion summaries and storage reconciliation provide the relevant evidence.
+- Current artifact inspection confirms the relocated source database, attachment directory, input archives, and Markdown export.
+  It also finds the roundtrip database in the old worktree and no full EML export at either documented location.
+- No Gmail calls or fresh full-archive comparison were performed during this documentation review.
+  Read-only attempts to open the relocated SQLite database failed with “unable to open database file.”
+  The final storage totals therefore remain attributed to T0033's recorded reconciliation.
 
 ## Failed Messages Ledger
 
-Every one of the 446 messages that initially failed Gmail's `messages.import` validation, with its
-original date, subject, and how it was recovered, is listed in a separate companion file:
-[`gmail-full-archive-migration-failed-messages.md`](gmail-full-archive-migration-failed-messages.md).
-All 446 succeeded on the attachment-stripped retry (2026-09-09); none remain unstored.
+The [companion ledger](gmail-full-archive-migration-failed-messages.md) lists each initially unresolved message and its recorded recovery outcome.
+All 446 are recorded as recovered; the attachment-preservation qualifications above still apply.
