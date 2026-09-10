@@ -2193,9 +2193,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommand_parsers = {}
 
-    help_cmd = subparsers.add_parser(
-        "help", parents=[subcommand_parent], help="Show this help message and exit", add_help=False
-    )
+    help_cmd = subparsers.add_parser("help", parents=[subcommand_parent], help="Show this help message and exit", add_help=False)
     help_cmd.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
     help_cmd.add_argument("subcommand", nargs="?", default=None, help="Optional subcommand to show help for")
     subcommand_parsers["help"] = help_cmd

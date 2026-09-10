@@ -91,10 +91,7 @@ def _extract_changelog_notes(changelog: Path, release_ver: str) -> str:
     # Match: ## v3.1.1   or   ## v3.1.1-pre   or   ## v3.1.1 [released: ...]
     m = re.search(rf"^## v{re.escape(release_ver)}(\s|$|-pre)", text, re.MULTILINE)
     if not m:
-        raise SystemExit(
-            f"[ERROR] No '## v{release_ver}' section found in CHANGELOG.md\n"
-            "        Add the heading before releasing."
-        )
+        raise SystemExit(f"[ERROR] No '## v{release_ver}' section found in CHANGELOG.md\n        Add the heading before releasing.")
     start = m.end()
     next_h = re.search(r"^## ", text[start:], re.MULTILINE)
     end = start + next_h.start() if next_h else len(text)
