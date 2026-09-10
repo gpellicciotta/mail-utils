@@ -13,6 +13,7 @@ A summarized overview of all changes, per version of this project.
 ---
 
 ## v3.1.3-pre
+- DevEx: Added pre-flight quality and state checks to release script for earlier failure detection.
 
 ## v3.1.2 [released: 2026-09-10]
 - CLI: Support global options like --verbose and --db placed before or after any subcommand.
