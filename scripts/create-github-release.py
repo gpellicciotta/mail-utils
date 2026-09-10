@@ -19,7 +19,7 @@ from pathlib import Path
 
 # Allow importing _cli_common from the same scripts/ directory.
 sys.path.insert(0, str(Path(__file__).parent))
-from _cli_common import APP_AUTHOR, build_action_parser, print_help, print_version
+from _cli_common import build_action_parser, get_project_version, print_help, print_version
 
 PROG = "create-github-release"
 DESCRIPTION = (
@@ -28,7 +28,7 @@ DESCRIPTION = (
     "finalizes version files if still at -pre, tags, pushes, and creates the GitHub release. "
     "Then opens the next development version."
 )
-VERSION = "1.0.0"
+VERSION = get_project_version()
 EXIT_CODES = [
     (0, "Success"),
     (1, "Precondition failed (dirty tree, missing tool, bad state)"),

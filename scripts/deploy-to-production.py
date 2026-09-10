@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import sys
 
-from _cli_common import build_action_parser, print_help, print_version
+from _cli_common import build_action_parser, get_project_version, print_help, print_version
 
 PROG = "deploy-to-production"
 DESCRIPTION = "Placeholder deployment script — customize for your target environment."
-VERSION = "0.1.0"
+VERSION = get_project_version()
 EXIT_CODES = [(0, "Success"), (1, "Deployment failed")]
 
 

@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _cli_common import build_action_parser, print_help, print_version
+from _cli_common import build_action_parser, get_project_version, print_help, print_version
 
 PROG = "install-from-github-release"
 DESCRIPTION = (
@@ -26,7 +26,7 @@ DESCRIPTION = (
     "Use --global to install system-wide via pipx (preferred for CLI tools) "
     "or pip --user as a fallback."
 )
-VERSION = "1.0.0"
+VERSION = get_project_version()
 EXIT_CODES = [
     (0, "Success"),
     (1, "Bad arguments or missing tools"),

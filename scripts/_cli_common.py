@@ -8,8 +8,25 @@ from __future__ import annotations
 import argparse
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
+from pathlib import Path
 
 APP_AUTHOR = "Giovanni Pellicciotta"
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def get_project_version() -> str:
+    """Read the version from pyproject.toml so all scripts self-report consistently."""
+    import re
+
+    try:
+        text = (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "0.0.0+unknown"
 
 
 def get_mail_utils_version() -> str:
