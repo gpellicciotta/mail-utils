@@ -12,7 +12,9 @@ A summarized overview of all changes, per version of this project.
 
 ---
 
-## v3.1.0-pre
+## v3.1.2-pre
+
+## v3.1.1 [released: 2026-09-10]
 - Build: Fixed Python 3.10 import error in `outlook/messages.py` caused by `datetime.UTC` (Python 3.11+); replaced with `timezone.utc`.
 - DevEx: Added `license`, `[project.urls]`, and pinned `[tool.ruff.lint]` rules to `pyproject.toml`; aligned version to `3.1.0-pre`.
 - DevEx: Upgraded CI to test Python 3.10 and 3.11 matrix, added `permissions: contents: read`, and archived dist artifacts.
