@@ -3,16 +3,17 @@
 A summarized overview of all changes, per version of this project.
 
 > Entries will be added in reverse chronological order, so with the most recent at the top.
-> 
+>
 > Status codes used are:
-> - `[in development]` - actively being developed
+> - `-pre` - actively being developed
 > - `[{{date}}]` - frozen/finalized on {{date}}
 > - `[released: {{date}}]` - released to package manager or production on {{date}}
-> - `[broken]` - considered broken and not be used
+> - `[broken]` - considered broken and should not be used
 
 ---
 
-### vNext
+## v3.1.0-pre
+- DevEx: Aligned CHANGELOG heading format, version fallback, doc structure, CI, and scripts with python-project-template.
 - BackEnd: Retry a store-in-gmail failure with attachments stripped instead of skipping the message.
 - BackEnd: Skip store-in-gmail messages exceeding Gmail's 25 MB limit instead of crashing the run.
 - BackEnd: Add exponential backoff retries, up to twelve attempts, for transient network and server errors during store-in-gmail.
