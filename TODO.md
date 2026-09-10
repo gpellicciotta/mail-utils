@@ -9,13 +9,13 @@ An overview of all tasks and their planning.
 > Owner: `@name` shown only when active/blocked/needs-review.
 > Dependencies: `(needs Tnnnn)` shown only when unresolved.
 
-**Next ID:** 0042
+**Next ID:** 0043
 
 ---
 
 ## Next Milestone
 
-*(Currently no tasks)*
+- [ ] A0042 Make sure global options like --verbose and --db are recognized irrespective of whether they are specified before or after the main action
 
 ### Backlog
 
