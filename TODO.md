@@ -15,7 +15,7 @@ An overview of all tasks and their planning.
 
 ## Next Milestone
 
-- [ ] T0040 Update mail-utils to comply with latest sets of guidelines and be as close as possible to the existing python-project-template.
+- [~] T0040 [owner: @antigravity] Align project with latest guidelines and python-project-template.
 
 ### Backlog
 
